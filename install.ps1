@@ -35,13 +35,11 @@ $ProjectRoot | Out-File -Encoding ASCII (Join-Path $AideHome ".project_path")
 
 New-Item -ItemType Directory -Force -Path $AideBin | Out-Null
 
-# Create aide.bat: sets title, starts daemon, runs TUI
+# Create aide.bat
 $batContent = @"
 @echo off
 title Aide Agent
 cd /d $ProjectRoot
-REM Start daemon minimized, if pythonw available
-where pythonw >NUL 2>&1 && start "" /min pythonw shell\tray_daemon.py
 uv run python shell\main.py
 "@
 [System.IO.File]::WriteAllText((Join-Path $AideBin "aide.bat"), $batContent, [System.Text.Encoding]::ASCII)

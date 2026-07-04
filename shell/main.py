@@ -31,29 +31,35 @@ def _ensure_event_loop_policy() -> None:
 
 
 def _set_console_icon() -> None:
-    """设置控制台窗口图标为 Aide.ico（仅 Windows）。"""
+    """设置控制台窗口标题和图标（仅 Windows）。"""
     if sys.platform != "win32":
         return
     try:
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
         ico = Path(__file__).parent.parent / "Aide.ico"
         if not ico.exists():
             return
-        WM_SETICON = 0x0080
-        ICON_SMALL = 0
-        ICON_BIG = 1
-        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+
+        # 1. 设置标题（先设，后面 FindWindow 要用）
+        kernel32.SetConsoleTitleW("Aide Agent")
+
+        # 2. 获取控制台窗口句柄
+        hwnd = kernel32.GetConsoleWindow()
+        if not hwnd:
+            # 回退：通过标题查找
+            hwnd = user32.FindWindowW(None, "Aide Agent")
         if not hwnd:
             return
-        hicon = ctypes.windll.user32.LoadImageW(
-            None, str(ico), 1, 32, 32, 0x00000010
-        )
+
+        # 3. 加载图标并设置
+        hicon = user32.LoadImageW(None, str(ico), 1, 32, 32, 0x00000010)
         if not hicon:
             return
-        # 设置小图标（标题栏）和大图标（Alt+Tab）
-        ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
-        ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
+        user32.SendMessageW(hwnd, 0x0080, 0, hicon)  # ICON_SMALL
+        user32.SendMessageW(hwnd, 0x0080, 1, hicon)  # ICON_BIG
     except Exception:
-        pass  # 非关键，静默失败
+        pass
 
 
 def main() -> None:
