@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Aide Agent 启动脚本 (Linux/macOS)
+# 用法: aide [--background] [--help]
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [[ "${1:-}" == "--help" ]]; then
+    echo "Aide Agent — 本地个人 AI 管家"
+    echo ""
+    echo "用法: aide [选项]"
+    echo ""
+    echo "选项:"
+    echo "  --background   启动后最小化到系统托盘"
+    echo "  --help         显示此帮助"
+    exit 0
+fi
+
+BACKGROUND=""
+[[ "${1:-}" == "--background" ]] && BACKGROUND="--background"
+
+# 1) PyInstaller 构建产物
+if [[ -x "$SCRIPT_DIR/Aide" ]]; then
+    exec "$SCRIPT_DIR/Aide" $BACKGROUND
+elif [[ -x "$SCRIPT_DIR/../dist/Aide/Aide" ]]; then
+    exec "$SCRIPT_DIR/../dist/Aide/Aide" $BACKGROUND
+fi
+
+# 2) 源码运行
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ -f "$PROJECT_ROOT/shell/main.py" && -f "$PROJECT_ROOT/pyproject.toml" ]]; then
+    exec uv run python shell/main.py $BACKGROUND
+fi
+
+# 3) 回退
+if command -v uv &>/dev/null; then
+    exec uv run python -m shell.main $BACKGROUND
+fi
+
+echo "错误: 找不到 Aide 安装。" >&2
+exit 1

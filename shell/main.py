@@ -2,10 +2,12 @@
 
 用法:
     uv run python shell/main.py
+    uv run python shell/main.py --background    # 后台启动（最小化到托盘）
 
 开发时从项目根目录运行，core/ 和 ui/ 需要在 Python path 中。
 """
 
+import argparse
 import asyncio
 import sys
 from pathlib import Path
@@ -37,12 +39,23 @@ def _ensure_event_loop_policy() -> None:
 
 def main() -> None:
     """启动 Aide Agent Textual 终端。"""
+    parser = argparse.ArgumentParser(
+        prog="aide",
+        description="Aide Agent — 本地个人 AI 管家",
+    )
+    parser.add_argument(
+        "--background", "--tray",
+        action="store_true",
+        help="启动后最小化到系统托盘",
+    )
+    args = parser.parse_args()
+
     _ensure_event_loop_policy()
 
     # 初始化 ~/.aide/ 目录结构（幂等，含旧配置迁移）
     ensure_aide_root()
 
-    app = AideApp()
+    app = AideApp(start_in_tray=args.background)
     app.run()
 
 

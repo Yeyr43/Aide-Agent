@@ -53,6 +53,35 @@ uv run python shell/main.py
 
 ## 快速开始
 
+### 安装 `aide` 命令（可选）
+
+将 `aide` 加入 PATH，之后在终端输入 `aide` 即可启动：
+
+```powershell
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File scripts/install.ps1
+
+# 安装后重新打开终端
+aide                  # 正常启动
+aide --background     # 后台启动（最小化到托盘）
+```
+
+```bash
+# Linux / macOS
+sudo cp bin/aide /usr/local/bin/aide
+chmod +x /usr/local/bin/aide
+```
+
+### 后台运行
+
+```
+aide --background
+```
+
+启动后自动最小化到系统托盘，右键托盘图标可显示窗口或退出。适合设为开机自启。
+
+### 冷启动向导
+
 首次启动会进入冷启动向导，引导你：
 
 1. 选择语言（中文/English）

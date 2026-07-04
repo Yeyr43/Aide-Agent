@@ -51,6 +51,10 @@ class AideApp(App):
 
     CSS_PATH = "app.tcss"
 
+    def __init__(self, start_in_tray: bool = False) -> None:
+        super().__init__()
+        self._start_in_tray = start_in_tray
+
     def compose(self) -> ComposeResult:
         yield Static("", id="session-label")
         yield MessageList(id="messages")
@@ -114,13 +118,17 @@ class AideApp(App):
         # P5: 如果已有可用的 LLM 配置，跳过向导直接进入首页
         if has_existing_config():
             self.push_screen(HomeScreen())
-            return
-
-        if is_cold_start():
+        elif is_cold_start():
             await self.push_screen_wait(OnboardingScreen())
             # 冷启动完成 → 重新加载配置（settings.json 刚被写入）
             self._reload_after_onboarding()
-        self.push_screen(HomeScreen())
+            self.push_screen(HomeScreen())
+        else:
+            self.push_screen(HomeScreen())
+
+        # 后台模式：启动完成后最小化到托盘
+        if self._start_in_tray:
+            self.action_hide_to_tray()
 
     def _reload_after_onboarding(self) -> None:
         """冷启动完成后重新加载配置和 provider。
