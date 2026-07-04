@@ -64,7 +64,6 @@ hiddenimports = [
     "pygments.lexers.markup",
     "pygments.lexers.shell",
     "pygments.lexers.javascript",
-    "pygments.lexers.json",
     "pygments.formatters",
     "pygments.styles",
     # httpx
