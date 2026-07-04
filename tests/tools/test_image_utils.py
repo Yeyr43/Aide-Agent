@@ -161,7 +161,7 @@ class TestOpenWithOS:
     def test_win32_path(self, tmp_path):
         p = tmp_path / "test.png"
         Image.new("RGB", (10, 10)).save(p)
-        with patch("os.startfile") as mock_startfile:
+        with patch("os.startfile", create=True) as mock_startfile:
             result = open_with_os(p)
             # Windows 上调用 os.startfile，其他平台调用 Popen
             if sys.platform == "win32":

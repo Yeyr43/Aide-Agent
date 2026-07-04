@@ -93,5 +93,5 @@ def can_use_tray() -> bool:
             gi.require_version("Gtk", "3.0")
             from gi.repository import Gtk  # noqa: F401
         return True
-    except (ImportError, ValueError):
+    except (ImportError, ValueError, Exception):
         return False

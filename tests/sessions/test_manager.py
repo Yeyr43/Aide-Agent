@@ -117,7 +117,7 @@ class TestRollback:
                 {"to_turn": 2, "compressed_at": "t1", "overview_md": "## 会话概览\n- 早期话题"},
             ], ensure_ascii=False, indent=2), encoding="utf-8",
         )
-        (session_dir / "overview.md").write_text("## 会话概览\n- 最新话题")
+        (session_dir / "overview.md").write_text("## 会话概览\n- 最新话题", encoding="utf-8")
 
         mgr = SessionManager(tmp_path / "sessions")
         mgr.rollback(session_dir, 2)
