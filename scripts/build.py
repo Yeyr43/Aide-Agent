@@ -88,32 +88,26 @@ def verify_output() -> None:
 
 
 def copy_launchers() -> None:
-    """将启动脚本复制到 dist 目录。"""
+    """Copy launcher scripts to dist directory."""
     import shutil
 
-    bin_dir = PROJECT_ROOT / "bin"
     dist_dir = DIST_DIR / "Aide"
 
-    scripts = {
-        "aide.ps1": "aide.ps1",
-        "aide": "aide",
-    }
-
-    for src_name, dst_name in scripts.items():
-        src = bin_dir / src_name
+    # Copy launcher scripts from project root
+    for name in ("aide.ps1", "aide"):
+        src = PROJECT_ROOT / name
         if src.exists():
-            dst = dist_dir / dst_name
-            shutil.copy2(src, dst)
-            print(f"  已复制启动脚本: {dst_name}")
+            shutil.copy2(src, dist_dir / name)
+            print(f"  Copied launcher: {name}")
 
-    # Windows: 同时创建 aide.bat
+    # Windows: create aide.bat wrapper
     bat = dist_dir / "aide.bat"
     bat.write_text(
         '@echo off\r\n'
-        f'powershell -ExecutionPolicy Bypass -File "%~dp0aide.ps1" %*\r\n',
+        'powershell -ExecutionPolicy Bypass -File "%~dp0aide.ps1" %*\r\n',
         encoding="ascii",
     )
-    print("  已创建启动脚本: aide.bat")
+    print("  Created launcher: aide.bat")
 
 
 def main() -> None:

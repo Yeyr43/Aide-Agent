@@ -58,8 +58,8 @@ uv run python shell/main.py
 将 `aide` 加入 PATH，之后在终端输入 `aide` 即可启动：
 
 ```powershell
-# Windows PowerShell
-powershell -ExecutionPolicy Bypass -File scripts/install.ps1
+# Windows PowerShell（在项目根目录运行）
+powershell -ExecutionPolicy Bypass -File install.ps1
 
 # 安装后重新打开终端
 aide                  # 正常启动
@@ -68,7 +68,7 @@ aide --background     # 后台启动（最小化到托盘）
 
 ```bash
 # Linux / macOS
-sudo cp bin/aide /usr/local/bin/aide
+sudo cp aide /usr/local/bin/aide
 chmod +x /usr/local/bin/aide
 ```
 

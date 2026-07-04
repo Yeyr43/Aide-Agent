@@ -1,10 +1,10 @@
 # Aide Agent Installer
-# Usage: powershell -ExecutionPolicy Bypass -File scripts/install.ps1
+# Usage: powershell -ExecutionPolicy Bypass -File install.ps1
 param([switch]$Uninstall)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectRoot = (Get-Item (Join-Path $ScriptDir "..")).FullName
+$ProjectRoot = (Get-Item $ScriptDir).FullName
 $AideHome = if ($env:AIDE_HOME) { $env:AIDE_HOME } else { Join-Path $env:USERPROFILE ".aide" }
 $AideBin = Join-Path $AideHome "bin"
 
@@ -21,9 +21,7 @@ if ($Uninstall) {
         Write-Host "  Deleted: $AideBin"
     }
     $pathFile = Join-Path $AideHome ".project_path"
-    if (Test-Path $pathFile) {
-        Remove-Item $pathFile
-    }
+    if (Test-Path $pathFile) { Remove-Item $pathFile }
     Write-Host "Done. Restart terminal to apply."
     exit 0
 }
@@ -37,7 +35,7 @@ $ProjectRoot | Out-File -Encoding ASCII (Join-Path $AideHome ".project_path")
 
 # Create bin directory and copy launcher
 New-Item -ItemType Directory -Force -Path $AideBin | Out-Null
-Copy-Item -Force (Join-Path $ProjectRoot "bin\aide.ps1") $AideBin
+Copy-Item -Force (Join-Path $ProjectRoot "aide.ps1") $AideBin
 Write-Host "  Copied aide.ps1 to $AideBin"
 
 # Create aide.bat wrapper
@@ -59,4 +57,4 @@ Write-Host "Install complete! Restart terminal and type 'aide' to start."
 Write-Host "  aide              - normal start"
 Write-Host "  aide --background - start minimized to tray"
 Write-Host ""
-Write-Host "Uninstall: powershell -ExecutionPolicy Bypass -File $ProjectRoot\scripts\install.ps1 -Uninstall"
+Write-Host "Uninstall: powershell -ExecutionPolicy Bypass -File $ProjectRoot\install.ps1 -Uninstall"

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Aide Agent Launcher (Linux/macOS)
+# Usage: ./aide               # from project root
+#        aide --background    # start minimized to tray
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT=""
+
+# Case 1: script is in project root
+if [[ -f "$SCRIPT_DIR/shell/main.py" && -f "$SCRIPT_DIR/pyproject.toml" ]]; then
+    PROJECT_ROOT="$SCRIPT_DIR"
+fi
+
+# Case 2: read from ~/.aide/.project_path
+if [[ -z "$PROJECT_ROOT" && -f "$HOME/.aide/.project_path" ]]; then
+    PROJECT_ROOT="$(cat "$HOME/.aide/.project_path")"
+fi
+
+if [[ -z "$PROJECT_ROOT" ]]; then
+    echo "Error: Cannot find Aide project. Run install.ps1 from the project directory." >&2
+    exit 1
+fi
+
+BACKGROUND=""
+[[ "${1:-}" == "--background" ]] && BACKGROUND="--background"
+
+# Check for pre-built binary
+if [[ -x "$PROJECT_ROOT/dist/Aide/Aide" ]]; then
+    exec "$PROJECT_ROOT/dist/Aide/Aide" $BACKGROUND
+fi
+
+# Source mode
+cd "$PROJECT_ROOT"
+exec uv run python shell/main.py $BACKGROUND
