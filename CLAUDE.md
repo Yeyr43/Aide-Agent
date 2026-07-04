@@ -172,7 +172,6 @@ ui/
 │   │   └── status_bar.py   # Token 可视化条 + 模型名
 │   ├── command_handler.py  # 命令执行 + 确认流处理器
 │   └── tray/            # pystray 系统托盘
-└── headless.py          # HeadlessUI 骨架 — 社区 API 预留（P4 Batch 1）
 
 shell/main.py            # 入口
 ```
@@ -250,7 +249,6 @@ sessions/{YYYYMMDD_HHMMSS}/
 
 - **AgentKernel**（`core/kernel/agent.py`）— 零 UI 依赖，编排 LLM/session/context/plugins。通过 `ExecutorUI` Protocol 回调 UI 层
 - **UIBridge**（`ui/textual_app/bridge.py`）— 实现 `ExecutorUI` Protocol，桥接 Kernel → Textual 部件
-- **HeadlessUI**（`ui/headless.py`）— 纯 CLI 调用接口预留，供社区构建 Web UI / Desktop GUI
 
 ## 插件系统
 
@@ -318,8 +316,10 @@ sessions/{YYYYMMDD_HHMMSS}/
 | **P3** | ✓ | 首页 + 暗主题 + 状态栏 + 托盘 + Markdown 高亮 + 命令面板 |
 | **P4 Batch 1** | ✓ | Kernel/UI 分离、插件系统、Config 迁移、目录重组 |
 | **P4 Batch 2** | ✓ | 自动加载插件、命令面板 / // 分离、Prompt 模板优化、TOOLS_PROMPT 不可变 |
+| **P4 Batch 3** | ✓ | 全量审计（53 问题修复）、开源准备（README/MIT/CI）、PyInstaller 打包、`uv.lock` 提交、三平台 CI |
+| **P5** | 🔧 维护 | bug 修复、跨平台适配、性能优化、社区反馈 |
 
-505 测试全部通过。
+660 测试全部通过。
 
 ## Prompt 体系
 
