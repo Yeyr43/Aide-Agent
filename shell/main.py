@@ -3,11 +3,10 @@
 用法:
     uv run python shell/main.py
     aide
-
-启动后自动最小化到系统托盘，点击托盘图标显示窗口。
 """
 
 import asyncio
+import ctypes
 import sys
 from pathlib import Path
 
@@ -31,10 +30,31 @@ def _ensure_event_loop_policy() -> None:
             pass
 
 
+def _set_console_icon() -> None:
+    """设置控制台窗口图标为 Aide.ico（仅 Windows）。"""
+    if sys.platform != "win32":
+        return
+    try:
+        ico = Path(__file__).parent.parent / "Aide.ico"
+        if not ico.exists():
+            return
+        WM_SETICON = 0x0080
+        ICON_SMALL = 0
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        hicon = ctypes.windll.user32.LoadImageW(
+            None, str(ico), 1, 0, 0, 0x00000010 | 0x00000040
+        )
+        if hwnd and hicon:
+            ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
+    except Exception:
+        pass  # 非关键，静默失败
+
+
 def main() -> None:
     """启动 Aide Agent。"""
     _ensure_event_loop_policy()
     ensure_aide_root()
+    _set_console_icon()
     app = AideApp()
     app.run()
 
