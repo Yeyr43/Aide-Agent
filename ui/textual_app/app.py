@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 class AideApp(App):
     """Aide Agent P3 — 前端。"""
 
-    TITLE = "Aide"
+    TITLE = "Aide Agent"
 
     BINDINGS = [
         ("escape", "go_home", t("app.return_home")),
