@@ -115,6 +115,43 @@ def _decorate_console() -> None:
         pass
 
 
+# ── 守护进程 ──────────────────────────────────────────────────────────────────
+
+_DAEMON_LOCK = aide_dir() / "daemon.pid"
+
+
+def _ensure_daemon() -> None:
+    """确保托盘守护进程在后台运行。已运行则跳过。"""
+    if _DAEMON_LOCK.exists():
+        try:
+            pid = int(_DAEMON_LOCK.read_text().strip())
+            if _pid_alive(pid):
+                return  # 已在运行
+        except (ValueError, OSError):
+            pass
+
+    import subprocess
+    daemon = Path(__file__).parent / "tray_daemon.py"
+    if not daemon.exists():
+        return
+
+    if sys.platform == "win32":
+        # pythonw: 无控制台窗口
+        pythonw = Path(sys.executable).parent / "pythonw.exe"
+        if not pythonw.exists():
+            pythonw = sys.executable
+        subprocess.Popen(
+            [str(pythonw), str(daemon)],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+    else:
+        subprocess.Popen(
+            [sys.executable, str(daemon)],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+
 # ── 入口 ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -125,6 +162,7 @@ def main() -> None:
         return
 
     _decorate_console()
+    _ensure_daemon()
 
     from ui.textual_app.app import AideApp
     app = AideApp()

@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import atexit
+import os
 import signal
 import subprocess
 import sys
@@ -110,6 +112,12 @@ class TrayDaemon:
 
 
 def main() -> None:
+    # Write PID for single-instance detection
+    pid_file = Path.home() / ".aide" / "daemon.pid"
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()))
+    atexit.register(lambda: pid_file.unlink(missing_ok=True))
+
     TrayDaemon().run()
 
 
