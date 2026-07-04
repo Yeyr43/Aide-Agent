@@ -12,20 +12,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 
-def _make_icon(size: int = 64) -> Image.Image:
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+def _load_icon() -> Image.Image:
+    """加载托盘图标，优先 Aide.ico，回退到程序生成。"""
+    ico = Path(__file__).parent.parent / "Aide.ico"
+    if ico.exists():
+        return Image.open(ico)
+    # Fallback: generate simple icon
+    from PIL import ImageDraw
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    margin = 4
-    draw.ellipse(
-        [margin, margin, size - margin, size - margin],
-        fill=(30, 30, 50, 255),
-        outline=(100, 150, 200, 255),
-        width=2,
-    )
-    draw.text((size // 2 - 8, size // 2 - 10), "A", fill=(180, 220, 255, 255))
+    draw.ellipse([4, 4, 60, 60], fill=(30, 30, 50, 255), outline=(100, 150, 200, 255), width=2)
+    draw.text((24, 22), "A", fill=(180, 220, 255, 255))
     return img
 
 
@@ -96,7 +96,7 @@ class TrayDaemon:
     def run(self) -> None:
         import pystray
 
-        icon = _make_icon()
+        icon = _load_icon()
         menu = pystray.Menu(
             pystray.MenuItem("Show Window", self._on_show, default=True),
             pystray.MenuItem("Hide Window", self._on_hide),

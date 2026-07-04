@@ -20,6 +20,8 @@ datas = [
     (str(PROJECT_ROOT / "core" / "plugins" / "templates"), "core/plugins/templates"),
     # 默认 MCP 配置
     (str(PROJECT_ROOT / "mcp" / "servers.json"), "mcp"),
+    # 应用图标
+    (str(PROJECT_ROOT / "Aide.ico"), "."),
 ]
 
 # ONNX 模型（构建前由 scripts/build.py 下载到 models/）
@@ -115,7 +117,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=True,       # Textual TUI 需要终端
-    icon=None,
+    icon=str(PROJECT_ROOT / "Aide.ico"),
 )
 
 coll = COLLECT(

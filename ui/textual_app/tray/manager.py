@@ -2,15 +2,19 @@
 
 pystray.Icon.run() 是阻塞调用，在独立 daemon 线程中运行。
 所有菜单回调通过 app.call_from_thread() 桥接到 Textual 的 asyncio 事件循环。
+
+注意：AideApp 已不再使用此模块（托盘由 shell/tray_daemon.py 管理），
+此模块仅保留供未来可能的嵌入式场景。
 """
 
 from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from ..platform import IS_MACOS, IS_LINUX, can_use_tray
 
@@ -20,25 +24,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _make_icon(size: int = 64) -> Image.Image:
-    """生成简单托盘图标：深色圆形 + 'A' 字母。"""
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+def _load_icon() -> Image.Image:
+    """加载托盘图标，优先 Aide.ico，回退到程序生成。"""
+    ico = Path(__file__).parent.parent.parent.parent / "Aide.ico"
+    if ico.exists():
+        return Image.open(ico)
+    # Fallback
+    from PIL import ImageDraw
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-
-    margin = 4
-    # 圆形背景
-    draw.ellipse(
-        [margin, margin, size - margin, size - margin],
-        fill=(30, 30, 50, 255),
-        outline=(100, 150, 200, 255),
-        width=2,
-    )
-    # 字母 "A"
-    draw.text(
-        (size // 2 - 8, size // 2 - 10),
-        "A",
-        fill=(180, 220, 255, 255),
-    )
+    draw.ellipse([4, 4, 60, 60], fill=(30, 30, 50, 255), outline=(100, 150, 200, 255), width=2)
+    draw.text((24, 22), "A", fill=(180, 220, 255, 255))
     return img
 
 
@@ -69,7 +65,7 @@ class TrayManager:
             )
             return
 
-        icon = _make_icon()
+        icon = _load_icon()
 
         menu = pystray.Menu(
             pystray.MenuItem("显示窗口", self._on_show, default=True),
