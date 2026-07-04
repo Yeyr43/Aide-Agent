@@ -6,7 +6,6 @@ P4 Batch 2: 封装散落在 AideApp 中的 10+ 个会话相关属性。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 
 @dataclass
@@ -16,7 +15,6 @@ class SessionContext:
     由 AideApp 持有，chat_worker / command handlers 通过它访问会话状态。
     """
     is_ensured: bool = False
-    session_dir: Path | None = None
     name: str = ""
     turn: int = 0
     conversation: list[dict] = field(default_factory=list)
@@ -30,7 +28,6 @@ class SessionContext:
     def reset(self) -> None:
         """重置为初始状态（删除会话后调用）。"""
         self.is_ensured = False
-        self.session_dir = None
         self.name = ""
         self.turn = 0
         self.conversation.clear()

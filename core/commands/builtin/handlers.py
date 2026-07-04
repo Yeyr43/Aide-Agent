@@ -150,6 +150,8 @@ async def _handle_profile_rollback(args: str) -> str:
 
 @_cmd("compact", t("cmd.compact.desc"))
 async def handle_compress(app: Any, args: str) -> str:
+    """kind="maintenance" — CommandHandler 在 handler 执行前已启动 compress_worker，
+    此函数实际不会被调用，仅作为 COMMANDS dict 注册锚点。"""
     return "__COMPRESS__"
 
 
@@ -334,13 +336,15 @@ async def handle_tools(app: Any, args: str) -> str:
 
 @_cmd("update", t("cmd.update.desc"))
 async def handle_update(app: Any, args: str) -> str:
-    """触发 prompt 更新（整合 pending 条目）。实际逻辑在 app 层处理。"""
+    """kind="maintenance" — CommandHandler 在 handler 执行前已启动 profile_update_worker，
+    此函数实际不会被调用，仅作为 COMMANDS dict 注册锚点。"""
     return "__PROFILE_UPDATE__"
 
 
 @_cmd("clear", t("cmd.clear.desc"))
 async def handle_clear(app: Any, args: str) -> str:
-    """触发会话删除确认流程。"""
+    """kind="confirm" — CommandHandler 在 handler 执行前已进入确认流，
+    此函数实际不会被调用，仅作为 COMMANDS dict 注册锚点。"""
     return "__CLEAR_CONFIRM__"
 
 
@@ -487,7 +491,7 @@ def register_builtin_commands(registry: Any) -> None:
     ))
     registry.register(CommandDefinition(
         name="/update", description=t("cmd.update.desc"),
-        handler=handle_update,
+        handler=handle_update, kind="maintenance",
     ))
     registry.register(CommandDefinition(
         name="/clear", description=t("cmd.clear.desc"),

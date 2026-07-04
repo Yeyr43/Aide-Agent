@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from textual import on
 from textual.app import ComposeResult
@@ -16,18 +15,6 @@ from core.setup import aide_dir
 
 CONFIG_DIR = aide_dir() / "config"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
-
-_CLEAR_IDS = [
-    "api-field-hint-name", "api-field-name",
-    "api-field-hint-provider", "api-field-provider",
-    "api-field-hint-model", "api-field-model",
-    "api-field-hint-apikey", "api-field-apikey",
-    "api-field-hint-baseurl", "api-field-baseurl",
-    "api-field-hint-ctx", "api-field-ctx",
-    "api-field-vision-toggle",
-    "api-btn-save", "api-btn-cancel",
-    "api-hint-newline",
-]
 
 
 class ApiConfigScreen(Screen):

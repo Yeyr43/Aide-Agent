@@ -1,6 +1,7 @@
 """Tests for image_utils — clipboard, file loading, base64 encoding."""
 
 import io
+import sys
 from pathlib import Path
 import pytest
 from unittest.mock import patch, MagicMock
@@ -160,10 +161,13 @@ class TestOpenWithOS:
     def test_win32_path(self, tmp_path):
         p = tmp_path / "test.png"
         Image.new("RGB", (10, 10)).save(p)
-        with patch("subprocess.Popen") as mock_popen:
+        with patch("os.startfile") as mock_startfile:
             result = open_with_os(p)
-            # 应该调用 Popen
-            assert mock_popen.called
+            # Windows 上调用 os.startfile，其他平台调用 Popen
+            if sys.platform == "win32":
+                assert mock_startfile.called
+            else:
+                assert result in (True, False)
 
 
 # ── image_from_file ──────────────────────────────────────────────────

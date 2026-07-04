@@ -78,6 +78,9 @@ class MCPAdapter:
         self._servers: dict[str, MCPServerConfig] = {}
         self._transports: dict[str, StdioTransport | HTTPTransport] = {}
         self._tool_cache: dict[str, list[ToolDefinition]] = {}
+        # aide_tool_name → (server_name, original_tool_name) 映射
+        # 用于 execute_aide_tool 可靠反查，避免 split("_", 2) 歧义
+        self._tool_mapping: dict[str, tuple[str, str]] = {}
         # 熔断器
         self._breaker = CircuitBreaker(threshold=3)
         # 健康监控（延迟初始化，需要 self 引用）
@@ -103,6 +106,10 @@ class MCPAdapter:
                 pass
         self._servers.pop(name, None)
         self._tool_cache.pop(name, None)
+        # 清理 tool mapping（移除该服务端的所有映射）
+        for aide_name in list(self._tool_mapping):
+            if self._tool_mapping[aide_name][0] == name:
+                del self._tool_mapping[aide_name]
         return True
 
     def list_servers(self) -> list[MCPServerConfig]:
@@ -281,6 +288,8 @@ class MCPAdapter:
         for rt in raw_tools:
             tool_name = rt.get("name", "unknown")
             aide_name = f"mcp_{server_prefix}_{tool_name}"
+            # 记录映射，用于 execute_aide_tool 可靠反查
+            self._tool_mapping[aide_name] = (name, tool_name)
 
             params = rt.get("inputSchema", {})
             if not isinstance(params, dict):
@@ -395,12 +404,16 @@ class MCPAdapter:
         if not aide_tool_name.startswith("mcp_"):
             return None
 
-        parts = aide_tool_name.split("_", 2)
-        if len(parts) < 3:
-            return t("mcp.invalid_tool_name", name=aide_tool_name)
-
-        server_name = parts[1]
-        tool_name = parts[2]
+        mapping = self._tool_mapping.get(aide_tool_name)
+        if mapping is not None:
+            server_name, tool_name = mapping
+        else:
+            # fallback: 从工具名解析（兼容未经过 discover 的工具名）
+            parts = aide_tool_name.split("_", 2)
+            if len(parts) < 3:
+                return t("mcp.invalid_tool_name", name=aide_tool_name)
+            server_name = parts[1]
+            tool_name = parts[2]
         return await self.call_tool(server_name, tool_name, arguments)
 
     # ── 全部工具汇总 ────────────────────────────────────────────────
@@ -417,7 +430,8 @@ class MCPAdapter:
             for tool in tools:
                 # 用工厂函数正确捕获闭包变量
                 server_name = name
-                original_name = tool.name.split("_", 2)[-1] if tool.name.startswith("mcp_") else tool.name
+                mapping = self._tool_mapping.get(tool.name, (name, tool.name))
+                original_name = mapping[1]
 
                 def _make_execute(s: str, t: str):
                     async def _execute(args: dict, _s=s, _t=t) -> str:

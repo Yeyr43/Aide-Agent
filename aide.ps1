@@ -25,7 +25,8 @@ if (-not $projectRoot) {
 $host.ui.RawUI.WindowTitle = "Aide Agent"
 
 # Set console icon via Win32 (Windows only)
-if ($env:OS) {
+# $IsWindows = pwsh 6+; $env:OS = Windows PowerShell 5.1 fallback
+if ($IsWindows -or $env:OS) {
     $icoPath = Join-Path $projectRoot "Aide.ico"
     if (Test-Path $icoPath) {
         Add-Type @"

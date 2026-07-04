@@ -518,17 +518,17 @@ git commit -m "feat(p4): JsonStore accepts base_dir parameter"
 - [ ] **Step 1: 创建所有新目录和 __init__.py**
 
 ```bash
-mkdir -p d:/SEAI/Aide/core/kernel
-mkdir -p d:/SEAI/Aide/core/context
-mkdir -p d:/SEAI/Aide/core/tools/builtin
-mkdir -p d:/SEAI/Aide/core/tools/mcp
-mkdir -p d:/SEAI/Aide/core/commands/builtin
-mkdir -p d:/SEAI/Aide/core/plugins
-mkdir -p d:/SEAI/Aide/core/memory
-mkdir -p d:/SEAI/Aide/core/sessions
-mkdir -p d:/SEAI/Aide/tests/kernel
-mkdir -p d:/SEAI/Aide/tests/plugins
-mkdir -p d:/SEAI/Aide/tests/commands
+mkdir -p <project-root>/core/kernel
+mkdir -p <project-root>/core/context
+mkdir -p <project-root>/core/tools/builtin
+mkdir -p <project-root>/core/tools/mcp
+mkdir -p <project-root>/core/commands/builtin
+mkdir -p <project-root>/core/plugins
+mkdir -p <project-root>/core/memory
+mkdir -p <project-root>/core/sessions
+mkdir -p <project-root>/tests/kernel
+mkdir -p <project-root>/tests/plugins
+mkdir -p <project-root>/tests/commands
 ```
 
 - [ ] **Step 2: 给每个新包写带 docstring 的 __init__.py**
@@ -564,8 +564,8 @@ git commit -m "feat(p4): scaffold new directory structure for kernel/context/plu
 - [ ] **Step 1: 复制（不删除）文件**
 
 ```bash
-cp d:/SEAI/Aide/core/executor/loop.py d:/SEAI/Aide/core/kernel/fc_loop.py
-cp d:/SEAI/Aide/core/executor/state.py d:/SEAI/Aide/core/kernel/state.py
+cp <project-root>/core/executor/loop.py <project-root>/core/kernel/fc_loop.py
+cp <project-root>/core/executor/state.py <project-root>/core/kernel/state.py
 ```
 
 - [ ] **Step 2: 更新 fc_loop.py 的 import 路径**
@@ -635,9 +635,9 @@ git commit -m "refactor(p4): move executor to kernel with shim"
 - [ ] **Step 1: 复制文件到新位置**
 
 ```bash
-cp d:/SEAI/Aide/core/context_manager/assembler.py d:/SEAI/Aide/core/context/pipeline.py
-cp d:/SEAI/Aide/core/context_manager/ingester.py d:/SEAI/Aide/core/context/ingester.py
-cp d:/SEAI/Aide/core/context_manager/compactor.py d:/SEAI/Aide/core/context/compactor.py
+cp <project-root>/core/context_manager/assembler.py <project-root>/core/context/pipeline.py
+cp <project-root>/core/context_manager/ingester.py <project-root>/core/context/ingester.py
+cp <project-root>/core/context_manager/compactor.py <project-root>/core/context/compactor.py
 ```
 
 - [ ] **Step 2: 从 pipeline.py 提取 relevance.py**
@@ -797,10 +797,10 @@ git commit -m "refactor(p4): move context_manager to context, extract relevance 
 - [ ] **Step 1: 复制文件**
 
 ```bash
-cp d:/SEAI/Aide/core/prompt_manager/capture.py d:/SEAI/Aide/core/memory/capture.py
-cp d:/SEAI/Aide/core/prompt_manager/entries.py d:/SEAI/Aide/core/memory/entries.py
-cp d:/SEAI/Aide/core/prompt_manager/updater.py d:/SEAI/Aide/core/memory/updater.py
-cp d:/SEAI/Aide/core/prompt_manager/topic_tracker.py d:/SEAI/Aide/core/memory/tracker.py
+cp <project-root>/core/prompt_manager/capture.py <project-root>/core/memory/capture.py
+cp <project-root>/core/prompt_manager/entries.py <project-root>/core/memory/entries.py
+cp <project-root>/core/prompt_manager/updater.py <project-root>/core/memory/updater.py
+cp <project-root>/core/prompt_manager/topic_tracker.py <project-root>/core/memory/tracker.py
 ```
 
 - [ ] **Step 2: 更新各文件内部 import**
@@ -882,12 +882,12 @@ git commit -m "refactor(p4): move prompt_manager to memory with shim"
 - [ ] **Step 1: 移动文件**
 
 ```bash
-cp d:/SEAI/Aide/core/tools/read_file.py d:/SEAI/Aide/core/tools/builtin/read_file.py
-cp d:/SEAI/Aide/core/tools/write_file.py d:/SEAI/Aide/core/tools/builtin/write_file.py
-cp d:/SEAI/Aide/core/tools/run_shell.py d:/SEAI/Aide/core/tools/builtin/run_shell.py
-cp d:/SEAI/Aide/core/tools/search_memory.py d:/SEAI/Aide/core/tools/builtin/search_memory.py
-cp d:/SEAI/Aide/core/tools/web_search.py d:/SEAI/Aide/core/tools/builtin/web_search.py
-cp d:/SEAI/Aide/core/tools/plugin_protocol.py d:/SEAI/Aide/core/tools/protocol.py
+cp <project-root>/core/tools/read_file.py <project-root>/core/tools/builtin/read_file.py
+cp <project-root>/core/tools/write_file.py <project-root>/core/tools/builtin/write_file.py
+cp <project-root>/core/tools/run_shell.py <project-root>/core/tools/builtin/run_shell.py
+cp <project-root>/core/tools/search_memory.py <project-root>/core/tools/builtin/search_memory.py
+cp <project-root>/core/tools/web_search.py <project-root>/core/tools/builtin/web_search.py
+cp <project-root>/core/tools/plugin_protocol.py <project-root>/core/tools/protocol.py
 ```
 
 - [ ] **Step 2: 更新 builtin/__init__.py**
@@ -941,7 +941,7 @@ git commit -m "refactor(p4): move tools into builtin/ subpackage, rename plugin_
 - [ ] **Step 1: 复制 handlers.py**
 
 ```bash
-cp d:/SEAI/Aide/ui/textual_app/commands/handlers.py d:/SEAI/Aide/core/commands/builtin/handlers.py
+cp <project-root>/ui/textual_app/commands/handlers.py <project-root>/core/commands/builtin/handlers.py
 ```
 
 - [ ] **Step 2: 创建 CommandRegistry 和 Router**
@@ -2782,8 +2782,8 @@ def register(api: PluginAPI) -> None:
 ```bash
 # 示例插件在 ~/.aide/ 下，不在 git 管理范围
 # 把模板放在项目中，install 时复制
-mkdir -p d:/SEAI/Aide/core/plugins/templates/hello-plugin
-# 将上述两个文件写入 d:/SEAI/Aide/core/plugins/templates/hello-plugin/
+mkdir -p <project-root>/core/plugins/templates/hello-plugin
+# 将上述两个文件写入 <project-root>/core/plugins/templates/hello-plugin/
 
 git add core/plugins/templates/
 git commit -m "feat(p4): add hello-plugin example template"
@@ -3205,22 +3205,22 @@ git commit -m "feat(p4): add headless CLI entry skeleton for community API"
 
 ```bash
 # 检查是否还有 from core.executor import 的引用（排除 __init__.py shim）
-cd d:/SEAI/Aide && grep -r "from core.executor" --include="*.py" | grep -v "__init__.py"
+cd <project-root> && grep -r "from core.executor" --include="*.py" | grep -v "__init__.py"
 # 应该为空或只有 __init__.py 自身
 ```
 
 - [ ] **Step 2: 删除旧源文件，保留 shim __init__.py**
 
 ```bash
-rm d:/SEAI/Aide/core/executor/loop.py
-rm d:/SEAI/Aide/core/executor/state.py
-rm d:/SEAI/Aide/core/context_manager/assembler.py
-rm d:/SEAI/Aide/core/context_manager/ingester.py
-rm d:/SEAI/Aide/core/context_manager/compactor.py
-rm d:/SEAI/Aide/core/prompt_manager/capture.py
-rm d:/SEAI/Aide/core/prompt_manager/entries.py
-rm d:/SEAI/Aide/core/prompt_manager/updater.py
-rm d:/SEAI/Aide/core/prompt_manager/topic_tracker.py
+rm <project-root>/core/executor/loop.py
+rm <project-root>/core/executor/state.py
+rm <project-root>/core/context_manager/assembler.py
+rm <project-root>/core/context_manager/ingester.py
+rm <project-root>/core/context_manager/compactor.py
+rm <project-root>/core/prompt_manager/capture.py
+rm <project-root>/core/prompt_manager/entries.py
+rm <project-root>/core/prompt_manager/updater.py
+rm <project-root>/core/prompt_manager/topic_tracker.py
 ```
 
 - [ ] **Step 3: 更新 shim __init__.py — 改为纯 re-export**

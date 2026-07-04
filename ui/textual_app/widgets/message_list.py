@@ -5,9 +5,12 @@
 双击消息框复制内容到剪贴板。
 """
 
+import logging
 import time
 from rich.markdown import Markdown as RichMarkdown
 from rich.markup import escape
+
+logger = logging.getLogger(__name__)
 from rich.panel import Panel
 from rich.text import Text
 from textual.containers import VerticalScroll
@@ -85,7 +88,7 @@ class MessageWidget(Static):
             import pyperclip
             pyperclip.copy(text)
         except Exception:
-            pass
+            logger.warning("clipboard copy failed", exc_info=True)
 
 
 class MessageList(VerticalScroll):
@@ -194,7 +197,15 @@ class MessageList(VerticalScroll):
                 ai_msg.add_class("ai-message")
                 self.mount(ai_msg)
             except Exception:
-                pass
+                logger.warning("Markdown rendering failed, falling back to plain text",
+                               exc_info=True)
+                # 渲染失败时回退到纯文本显示
+                ai_msg = MessageWidget(
+                    full,
+                    renderable=Panel(full, border_style="#555555"),
+                )
+                ai_msg.add_class("ai-message")
+                self.mount(ai_msg)
 
         self._ai_stream = None
         self._ai_buffer = ""
@@ -283,20 +294,6 @@ class MessageList(VerticalScroll):
 
 
 # ── 多模态 content 解析 ─────────────────────────────────────────────────
-
-def _format_image_placeholder(data_url: str) -> str:
-    """从 data URL 提取图片信息，生成可读占位符。"""
-    try:
-        from core.llm_gateway.image_utils import data_url_to_image, get_image_size_kb
-        kb = get_image_size_kb(data_url)
-        img = data_url_to_image(data_url)
-        if img is not None:
-            w, h = img.size
-            return f"[🖼 Image: {w}×{h}, {kb:.0f}KB]"
-    except Exception:
-        pass
-    return "[🖼 Image attached]"
-
 
 def _parse_multimodal_content(content) -> tuple[str, list[str]]:
     """解析多模态 content，提取文本和图片 data URL。

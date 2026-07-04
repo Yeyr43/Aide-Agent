@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import os
 import re
 import sys
 from pathlib import Path
@@ -213,7 +212,7 @@ class PluginHost:
             return None
 
         # 安全门：world-writable（仅 POSIX，Windows 权限模型不同）
-        if os.name != "nt":
+        if sys.platform != "win32":
             try:
                 if entry_file.stat().st_mode & 0o002:
                     logger.warning(f"拒绝加载插件 {plugin_id}: 文件可被他人写入")

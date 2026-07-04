@@ -143,11 +143,6 @@ _EN_LONG_MEMORY_PATTERNS = [
     r'(?i)(?:I\s+(?:live\s+in|work\s+(?:at|as|in|for|with)|am\s+a)\s+[\w\s]{4,80})',
 ]
 
-# —— 辅助：AI 确认信号 ——
-_CONFIRMATION_PATTERNS = [
-    r'(?:明白|了解|理解|收到|好的，?我会|记住了|已记录|got\s+it|understood|noted|will\s+do|I\'ll\s+remember)',
-]
-
 
 # ── CaptureEngine ────────────────────────────────────────────────────
 

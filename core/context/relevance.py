@@ -388,7 +388,7 @@ def _extract_topics(text: str, max_topics: int = 3) -> list[str]:
             # 只保留纯中文片段（不含 ASCII、数字、标点）
             if not re.fullmatch(r'[一-鿿]+', frag):
                 continue
-            if frag in STOP_WORDS:
+            if frag in _ZH_STOP_WORDS:
                 continue
             fragments.append(frag)
 

@@ -46,7 +46,7 @@ Screen {
 }
 
 #input:focus { border: solid #c8c8c0; }
-#input.maitenance { border: solid #e0c878; }
+#input.maintenance { border: solid #e0c878; }
 
 CommandPalette {
     display: none;

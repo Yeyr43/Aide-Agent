@@ -12,7 +12,6 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static, ListView, ListItem
 from textual.message import Message
-from textual.events import Click
 
 from core.commands.builtin.handlers import COMMANDS
 from core.locale import t
@@ -155,16 +154,9 @@ class CommandPalette(Vertical):
 
         self.add_class("-visible")
 
-    def show(self) -> None:
-        """显示面板。"""
-        self.add_class("-visible")
-
     def hide(self) -> None:
         """隐藏面板。"""
         self.remove_class("-visible")
-
-    def is_visible(self) -> bool:
-        return self.has_class("-visible")
 
     def compose(self) -> ComposeResult:
         yield ListView()

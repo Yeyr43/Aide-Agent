@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import atexit
 import os
-import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -61,20 +60,24 @@ class TrayDaemon:
         if self._tui_process is not None and self._tui_process.poll() is None:
             return
         cmd = self._get_tui_command()
-        flags = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
-        self._tui_process = subprocess.Popen(
-            cmd, cwd=str(self._project_root), creationflags=flags,
-        )
+        if sys.platform == "win32":
+            self._tui_process = subprocess.Popen(
+                cmd, cwd=str(self._project_root),
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+        else:
+            self._tui_process = subprocess.Popen(
+                cmd, cwd=str(self._project_root),
+                start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
 
     def _kill_tui(self) -> None:
         if self._tui_process is None or self._tui_process.poll() is not None:
             self._tui_process = None
             return
         try:
-            if sys.platform == "win32":
-                self._tui_process.terminate()
-            else:
-                self._tui_process.send_signal(signal.SIGTERM)
+            self._tui_process.terminate()
             self._tui_process.wait(timeout=5)
         except (subprocess.TimeoutExpired, OSError):
             self._tui_process.kill()

@@ -1,10 +1,12 @@
-"""ContextPipeline — 组装四层上下文为 LLM messages 列表。
+"""ContextPipeline — 组装六层上下文为 LLM messages 列表。
 
-四层：
+六层：
   1. Soul（agent/soul.md）— 始终首条 system 消息
-  2. 动态 prompt（agent/*.md）— Jaccard 相关性过滤
-  3. 会话总览（overview.md）— 有则注入
-  4. 窗口上下文（cache.json）— 最近 8 轮全文 + 早期轮次合并总览
+  2. Tools Prompt（不可变常量）— 工具列表 + 使用策略
+  3. 技能上下文（插件 ContextProvider）— 按需注入
+  4. 动态 prompt（agent/*.md）— Jaccard 相关性过滤
+  5. 会话总览（overview.md）— 有则注入
+  6. 窗口上下文（cache.json）— 最近 N 轮全文 + 早期轮次合并总览
 
 内存缓存 Soul + prompt 文件，避免重复读盘。
 """

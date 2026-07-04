@@ -19,6 +19,5 @@ Thumbs.db
 
 # 开发工具配置
 .claude/
-.github/
 .superpowers/
 .pytest_cache/

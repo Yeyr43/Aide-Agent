@@ -14,8 +14,8 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..storage import JsonStore
-from ..locale import t
+from core.storage import JsonStore
+from core.locale import t
 
 from core.setup import aide_dir
 

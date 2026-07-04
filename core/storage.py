@@ -13,11 +13,14 @@
 
 import asyncio
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
 
 from core.setup import aide_dir
+
+logger = logging.getLogger(__name__)
 
 
 class JsonStore:

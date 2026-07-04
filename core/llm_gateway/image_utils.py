@@ -169,12 +169,13 @@ def open_with_os(file_path: str | Path) -> bool:
     Returns:
         True 如果成功启动
     """
+    import os
     import subprocess
     import sys
     path = str(file_path)
     try:
         if sys.platform == "win32":
-            subprocess.Popen(["start", "", path], shell=True)
+            os.startfile(path)
         elif sys.platform == "darwin":
             subprocess.Popen(["open", path])
         else:

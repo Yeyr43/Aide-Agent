@@ -86,14 +86,6 @@ class CommandHandler:
         except Exception as e:
             msg_list.add_error(t("ui.cmd_handler.cmd_failed", e=e))
 
-    def show_help(self, msg_list: MessageList, text: str) -> None:
-        """显示 / 命令帮助列表。"""
-        msg_list.add_user_message(text)
-        hints = [t("ui.cmd_handler.available")]
-        for cmd_def in self._app._cmd_registry.list_all():
-            hints.append(f"  {cmd_def.name} — {cmd_def.description}")
-        msg_list.add_command_result("\n".join(hints))
-
     # ── 维护模式 ───────────────────────────────────────────────────
 
     def _start_maintenance(self, input_box: InputBox, cmd_def) -> None:
@@ -101,7 +93,7 @@ class CommandHandler:
         label = cmd_def.name.lstrip("/")
         input_box.disabled = True
         input_box.placeholder = f"*{label}...*"
-        input_box.add_class("maitenance")
+        input_box.add_class("maintenance")
         self._app._session.is_maintenance = True
         if cmd_def.name == "/compact":
             self._app.compress_worker()
@@ -114,7 +106,7 @@ class CommandHandler:
         input_box = self._app.query_one("#input", InputBox)
         input_box.disabled = False
         input_box._placeholder = t("ui.widget.input_placeholder")
-        input_box.remove_class("maitenance")
+        input_box.remove_class("maintenance")
         input_box.focus()
 
     # ── Rollback / Clear ───────────────────────────────────────────

@@ -35,8 +35,6 @@ from .bridge import UIBridge
 from .session_context import SessionContext
 from .command_handler import CommandHandler
 
-logger = logging.getLogger(__name__)
-
 
 class AideApp(App):
     """Aide Agent P3 — 前端。"""
@@ -440,9 +438,7 @@ class AideApp(App):
     # ── P3: 系统托盘 ─────────────────────────────────────────────────
 
     async def on_unmount(self) -> None:
-        """应用关闭时停止托盘和 MCP 资源。"""
-        if hasattr(self, '_tray'):
-            self._tray.stop()
+        """应用关闭时停止 MCP 资源。"""
         if hasattr(self, '_mcp_adapter'):
             self._mcp_adapter.stop_watcher()
             self._mcp_adapter.stop_health_check()
