@@ -3,13 +3,6 @@ Aide Agent Launcher (PowerShell)
 Usage: .\aide.ps1   # from project root (before install)
        aide          # after running install.ps1
 #>
-param([switch]$Help)
-
-if ($Help) {
-    Write-Host "Aide Agent - Local AI Assistant"
-    Write-Host "Usage: aide"
-    exit 0
-}
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
@@ -17,7 +10,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = $null
 
 # Case 1: script is in project root
-if ((Test-Path (Join-Path $ScriptDir "shell\main.py")) -and
+if ((Test-Path (Join-Path $ScriptDir "shell\tray_daemon.py")) -and
     (Test-Path (Join-Path $ScriptDir "pyproject.toml"))) {
     $projectRoot = $ScriptDir
 }
@@ -35,18 +28,17 @@ if (-not $projectRoot) {
     exit 1
 }
 
-# Check for pre-built binary first
-$exePath = Join-Path $projectRoot "dist\Aide\Aide.exe"
-if (Test-Path $exePath) {
-    & $exePath
-    exit $LASTEXITCODE
-}
-
-# Source mode: uv run from project root
 Push-Location $projectRoot
 try {
-    & uv run python shell/main.py
-    exit $LASTEXITCODE
+    # Use pythonw.exe (no console) for the tray daemon
+    $pythonHome = Split-Path -Parent (Get-Command python).Source
+    $pythonw = Join-Path $pythonHome "pythonw.exe"
+    if (-not (Test-Path $pythonw)) {
+        # Fallback: use regular python
+        $pythonw = (Get-Command python).Source
+    }
+
+    Start-Process -WindowStyle Hidden -FilePath $pythonw -ArgumentList "shell/tray_daemon.py"
 } finally {
     Pop-Location
 }

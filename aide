@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT=""
 
 # Case 1: script is in project root
-if [[ -f "$SCRIPT_DIR/shell/main.py" && -f "$SCRIPT_DIR/pyproject.toml" ]]; then
+if [[ -f "$SCRIPT_DIR/shell/tray_daemon.py" && -f "$SCRIPT_DIR/pyproject.toml" ]]; then
     PROJECT_ROOT="$SCRIPT_DIR"
 fi
 
@@ -20,11 +20,5 @@ if [[ -z "$PROJECT_ROOT" ]]; then
     exit 1
 fi
 
-# Check for pre-built binary
-if [[ -x "$PROJECT_ROOT/dist/Aide/Aide" ]]; then
-    exec "$PROJECT_ROOT/dist/Aide/Aide"
-fi
-
-# Source mode
 cd "$PROJECT_ROOT"
-exec uv run python shell/main.py
+nohup uv run python shell/tray_daemon.py > /dev/null 2>&1 &

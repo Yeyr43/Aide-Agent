@@ -31,8 +31,6 @@ from .widgets.command_palette import CommandPalette
 from .widgets.status_bar import StatusBar
 from .screens.onboarding import OnboardingScreen
 from .screens.home import HomeScreen, SessionSelected, NewSessionRequested
-from .tray import TrayManager
-from .platform import hide_console
 from .bridge import UIBridge
 from .session_context import SessionContext
 from .command_handler import CommandHandler
@@ -99,19 +97,15 @@ class AideApp(App):
         self._session = SessionContext()
         self._last_usage: TokenUsage | None = None  # 来自 ChatResult 的 token 用量
 
-        # ── 状态栏 + 托盘 + 冷启动引导 ──
+        # ── 状态栏 + 冷启动引导 ──
         status_bar = self.query_one("#status-bar", StatusBar)
         status_bar.update_info(model=self._model_name, api_name=self._api_name)
-
-        self._tray = TrayManager(self)
-        self._tray.start()
 
         self._startup_worker()
 
     @work(exclusive=True, thread=False)
     async def _startup_worker(self) -> None:
-        """启动 worker：智能跳过已有配置 → 冷启动检查 → 引导 → 首页。
-        启动完成后自动最小化到系统托盘。"""
+        """启动 worker：智能跳过已有配置 → 冷启动检查 → 引导 → 首页。"""
         if has_existing_config():
             self.push_screen(HomeScreen())
         elif is_cold_start():
@@ -120,9 +114,6 @@ class AideApp(App):
             self.push_screen(HomeScreen())
         else:
             self.push_screen(HomeScreen())
-
-        # 默认后台模式：启动完成后最小化到托盘
-        self.action_hide_to_tray()
 
     def _reload_after_onboarding(self) -> None:
         """冷启动完成后重新加载配置和 provider。
@@ -456,18 +447,6 @@ class AideApp(App):
             self._mcp_adapter.stop_health_check()
         if hasattr(self, '_store'):
             await self._store.close()
-
-    def action_restore(self) -> None:
-        """恢复窗口（从托盘）。"""
-        try:
-            self.screen.refresh()
-        except Exception:
-            pass
-
-    def action_hide_to_tray(self) -> None:
-        """隐藏到托盘。各平台尽力隐藏控制台/终端窗口。"""
-        hide_console()
-        self.notify(t("app.tray_hidden"))
 
     # ── 全局快捷键 ───────────────────────────────────────────────────
 
