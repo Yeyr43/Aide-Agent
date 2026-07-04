@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+uv.lock
+config/config.json
+
+# PyInstaller 构建产物
+dist/
+build/
+*.spec.bak
+
+# ONNX 模型（构建时下载，不提交）
+models/all-MiniLM-L6-v2/
+
+# OS
+.DS_Store
+Thumbs.db

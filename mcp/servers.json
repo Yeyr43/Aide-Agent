@@ -1,0 +1,16 @@
+[
+  {
+    "name": "filesystem",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+    "enabled": false,
+    "_note": "MCP 文件系统服务端 — 提供标准化的文件操作工具（读/写/列目录/搜索/移动）。需要 Node.js 和 npx。将 enabled 改为 true 启用。"
+  },
+  {
+    "name": "git",
+    "command": "npx",
+    "args": ["-y", "gitnexus-mcp"],
+    "enabled": false,
+    "_note": "Git MCP 服务端 — 提供 git status/log/diff/blame 等操作。需要项目已安装 gitnexus。将 enabled 改为 true 启用。"
+  }
+]

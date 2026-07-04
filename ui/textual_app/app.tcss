@@ -1,0 +1,97 @@
+Screen {
+    background: #0c0c0c;
+}
+
+#session-label {
+    height: 1;
+    padding: 0 2;
+    background: #0c0c0c;
+    color: #888888;
+}
+
+#messages {
+    height: 1fr;
+    padding: 1 2;
+    scrollbar-size: 0 0;
+}
+
+.user-message {
+    margin: 1 0 0 8;
+    background: #0c0c0c;
+}
+
+.ai-message {
+    margin: 1 8 0 0;
+    background: #0c0c0c;
+}
+
+.error-message { margin: 1 4; }
+.system-message { margin: 1 4; }
+.cmd-message { margin: 1 4; }
+
+#bottom-area {
+    dock: bottom;
+    height: auto;
+    background: #0c0c0c;
+}
+
+#input {
+    margin: 0 2 1 2;
+    border: solid #555555;
+    background: #121212;
+    color: #c8c8c0;
+    max-height: 5;
+    scrollbar-size: 0 0;
+    padding: 0 1;
+}
+
+#input:focus { border: solid #c8c8c0; }
+#input.maitenance { border: solid #e0c878; }
+
+CommandPalette {
+    display: none;
+    height: auto;
+    max-height: 7;
+    margin: 0 2 0 2;
+    border: solid #555555;
+    background: #121212;
+    padding: 0 1;
+    scrollbar-size: 0 0;
+}
+
+CommandPalette.-visible { display: block; }
+
+CommandPalette ListView {
+    height: auto;
+    max-height: 6;
+    background: #121212;
+}
+
+CommandPalette ListView > ListItem {
+    padding: 0 1;
+    color: #888888;
+}
+
+CommandPalette ListView > ListItem.-highlight {
+    background: #1a2a3a;
+    color: #c8c8c0;
+}
+
+CommandPalette Static { color: #888888; }
+
+#status-bar {
+    dock: bottom;
+    height: 1;
+    background: #0c0c0c;
+    color: #888888;
+    padding: 0 2;
+}
+
+#status-left {
+    width: 1fr;
+    overflow: hidden;
+}
+
+#status-right {
+    width: auto;
+}

@@ -1,0 +1,27 @@
+# Auto-detect text files, normalize line endings to LF on commit
+* text=auto
+
+# Python files: force LF
+*.py text eol=lf
+
+# TOML/YAML/JSON/Markdown: force LF
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+
+# Shell scripts: force LF
+*.sh text eol=lf
+
+# TCS (Textual CSS): force LF
+*.tcss text eol=lf
+
+# Binary files: don't touch
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.lock binary
