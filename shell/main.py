@@ -7,7 +7,6 @@
 第二次运行 aide 时，不会启动新实例，而是激活已有窗口。
 """
 
-import asyncio
 import atexit
 import ctypes
 import os
@@ -24,14 +23,6 @@ if not is_bundled():
 from core.setup import aide_dir, ensure_aide_root
 
 _LOCK_FILE = aide_dir() / "aide.pid"
-
-
-def _ensure_event_loop_policy() -> None:
-    if sys.platform == "win32":
-        try:
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        except Exception:
-            pass
 
 
 # ── 单实例锁 ────────────────────────────────────────────────────────────────
@@ -127,7 +118,6 @@ def _decorate_console() -> None:
 # ── 入口 ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    _ensure_event_loop_policy()
     ensure_aide_root()
 
     if not _acquire_lock():
