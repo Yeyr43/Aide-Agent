@@ -38,8 +38,8 @@ New-Item -ItemType Directory -Force -Path $AideBin | Out-Null
 Copy-Item -Force (Join-Path $ProjectRoot "aide.ps1") $AideBin
 Write-Host "  Copied aide.ps1 to $AideBin"
 
-# Create aide.bat wrapper
-$batContent = "@echo off`r`npowershell -ExecutionPolicy Bypass -File `"$AideBin\aide.ps1`" %*`r`n"
+# Create aide.bat wrapper (sets window title before launching)
+$batContent = "@echo off`r`ntitle Aide Agent`r`npowershell -ExecutionPolicy Bypass -File `"$AideBin\aide.ps1`" %*`r`n"
 [System.IO.File]::WriteAllText((Join-Path $AideBin "aide.bat"), $batContent, [System.Text.Encoding]::ASCII)
 Write-Host "  Created aide.bat"
 
