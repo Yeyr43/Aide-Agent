@@ -1,13 +1,12 @@
 """Aide Tray Daemon — 独立托盘守护进程。
 
 后台常驻（Windows: pythonw.exe 无控制台），管理托盘图标。
-"Show Window" → 弹出 Textual TUI，"Hide" → 关闭 TUI。
+"Show Window" → 若 TUI 未运行则打开新终端。
 关闭 TUI 终端 ≠ 退出程序，托盘持续运行。
 """
 
 from __future__ import annotations
 
-import os
 import signal
 import subprocess
 import sys
@@ -31,35 +30,34 @@ def _make_icon(size: int = 64) -> Image.Image:
 
 
 class TrayDaemon:
-    """托盘守护进程 — 唯一的后台常驻进程。"""
+    """托盘守护进程。"""
 
     def __init__(self) -> None:
         self._tui_process: subprocess.Popen | None = None
-        self._icon = None  # pystray.Icon
+        self._icon = None
+
+    @property
+    def _project_root(self) -> Path:
+        return Path(__file__).parent.parent
 
     # ── TUI 子进程管理 ──────────────────────────────────────────────────
 
     def _get_tui_command(self) -> list[str]:
-        """返回启动 TUI 的命令行。兼容源码运行和 PyInstaller 打包。"""
-        # PyInstaller: dist/Aide/Aide.exe
-        exe = Path(__file__).parent.parent / "dist" / "Aide" / "Aide.exe"
+        exe = self._project_root / "dist" / "Aide" / "Aide.exe"
         if sys.platform != "win32":
-            exe = Path(__file__).parent.parent / "dist" / "Aide" / "Aide"
+            exe = self._project_root / "dist" / "Aide" / "Aide"
         if exe.exists():
             return [str(exe)]
-
-        # 源码模式: uv run python shell/main.py
         return ["uv", "run", "python", "shell/main.py"]
 
     def _spawn_tui(self) -> None:
         if self._tui_process is not None and self._tui_process.poll() is None:
-            return  # 已在运行
-
+            return
         cmd = self._get_tui_command()
-        proj = Path(__file__).parent.parent
-
         flags = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
-        self._tui_process = subprocess.Popen(cmd, cwd=str(proj), creationflags=flags)
+        self._tui_process = subprocess.Popen(
+            cmd, cwd=str(self._project_root), creationflags=flags,
+        )
 
     def _kill_tui(self) -> None:
         if self._tui_process is None or self._tui_process.poll() is not None:
@@ -102,7 +100,7 @@ class TrayDaemon:
         )
 
         self._icon = pystray.Icon("Aide Agent", icon, menu=menu)
-        self._spawn_tui()  # 默认弹出 TUI
+        # 不自动弹窗 — TUI 由 aide 启动脚本在当前终端运行
         self._icon.run()
 
 
