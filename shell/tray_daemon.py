@@ -47,7 +47,12 @@ class TrayDaemon:
         if sys.platform != "win32":
             exe = self._project_root / "dist" / "Aide" / "Aide"
         if exe.exists():
+            if sys.platform == "win32":
+                return ["cmd", "/c", f"title Aide Agent && {exe}"]
             return [str(exe)]
+        # Source mode
+        if sys.platform == "win32":
+            return ["cmd", "/c", "title Aide Agent && uv run python shell/main.py"]
         return ["uv", "run", "python", "shell/main.py"]
 
     def _spawn_tui(self) -> None:

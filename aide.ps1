@@ -32,6 +32,7 @@ if (-not $daemonRunning) {
 }
 
 # 2) Run TUI in current terminal
+$host.ui.RawUI.WindowTitle = "Aide Agent"
 Push-Location $projectRoot
 try {
     & uv run python shell/main.py
