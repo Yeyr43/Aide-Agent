@@ -21,6 +21,33 @@ if (-not $projectRoot) {
     exit 1
 }
 
+# 0) Set console title and icon before starting
+$host.ui.RawUI.WindowTitle = "Aide Agent"
+
+# Set console icon via Win32 (Windows only)
+if ($env:OS) {
+    $icoPath = Join-Path $projectRoot "Aide.ico"
+    if (Test-Path $icoPath) {
+        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class ConsoleIcon {
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")] public static extern IntPtr LoadImage(IntPtr hInst, string name, int type, int cx, int cy, uint fuLoad);
+    [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, int wParam, IntPtr lParam);
+}
+"@
+        $hwnd = [ConsoleIcon]::GetConsoleWindow()
+        if ($hwnd -ne [IntPtr]::Zero) {
+            $hIcon = [ConsoleIcon]::LoadImage([IntPtr]::Zero, $icoPath, 1, 32, 32, 0x10)
+            if ($hIcon -ne [IntPtr]::Zero) {
+                [ConsoleIcon]::SendMessage($hwnd, 0x80, 0, $hIcon) | Out-Null  # ICON_SMALL
+                [ConsoleIcon]::SendMessage($hwnd, 0x80, 1, $hIcon) | Out-Null  # ICON_BIG
+            }
+        }
+    }
+}
+
 # 1) Start daemon in background (if not already running)
 $daemonRunning = Get-Process -Name "pythonw" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -like "*tray_daemon*" }
@@ -32,8 +59,6 @@ if (-not $daemonRunning) {
 }
 
 # 2) Run TUI in current terminal
-[Console]::Title = "Aide Agent"
-Write-Host -NoNewline ([char]0x1B + "]2;Aide Agent" + [char]0x07)
 Push-Location $projectRoot
 try {
     & uv run python shell/main.py

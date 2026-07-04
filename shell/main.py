@@ -40,12 +40,18 @@ def _set_console_icon() -> None:
             return
         WM_SETICON = 0x0080
         ICON_SMALL = 0
+        ICON_BIG = 1
         hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if not hwnd:
+            return
         hicon = ctypes.windll.user32.LoadImageW(
-            None, str(ico), 1, 0, 0, 0x00000010 | 0x00000040
+            None, str(ico), 1, 32, 32, 0x00000010
         )
-        if hwnd and hicon:
-            ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
+        if not hicon:
+            return
+        # 设置小图标（标题栏）和大图标（Alt+Tab）
+        ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
+        ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
     except Exception:
         pass  # 非关键，静默失败
 
