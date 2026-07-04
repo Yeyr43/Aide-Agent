@@ -24,8 +24,13 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Show environment
+        run: |
+          uv run python --version
+          uv run python -c "import sys; print(f'Platform: {sys.platform}')"
+
       - name: Run tests
-        run: uv run pytest tests/ -q
+        run: uv run pytest tests/ -q --tb=short
 
   build:
     needs: test

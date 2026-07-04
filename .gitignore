@@ -2,7 +2,6 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
-uv.lock
 config/config.json
 
 # PyInstaller 构建产物
