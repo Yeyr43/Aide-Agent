@@ -1,5 +1,44 @@
 # Aide Agent 开发工作记录
 
+## 2026-07-04 — 开源 + 独立分发打包
+
+- **日期**：2026-07-04
+- **聚焦**：开源准备 + PyInstaller 独立分发 + 资源路径改造
+- **测试**：660 tests 全通过
+
+### 交付清单
+
+| # | 类别 | 文件 | 说明 |
+|---|------|------|------|
+| 1 | 开源 | `LICENSE` | MIT 许可证 |
+| 2 | 开源 | `README.md` | 项目简介、安装、特性、技术栈 |
+| 3 | 开源 | `.github/workflows/build.yml` | CI 三平台自动构建 + Release |
+| 4 | 资源 | `core/resources.py` (**新**) | `is_bundled()` / `get_resource_path()` 统一 dev/bundle 路径 |
+| 5 | 资源 | `shell/main.py` | sys.path guard: `if not is_bundled()` |
+| 6 | 资源 | `core/setup.py` | 插件模板 → `get_resource_path()`，MCP 种子逻辑 |
+| 7 | 资源 | `core/tools/mcp/adapter.py` | MCP 默认目录 → `~/.aide/mcp/` |
+| 8 | 资源 | `core/context/embeddings.py` | 优先 bundle 模型，回退下载 |
+| 9 | 打包 | `Aide.spec` | PyInstaller 配置 — hidden imports, datas, excludes |
+| 10 | 打包 | `scripts/build.py` | 构建脚本 — 下载 ONNX 模型 + PyInstaller + 验证 |
+| 11 | 打包 | `pyproject.toml` | dev 依赖加 `pyinstaller>=6.0.0` |
+| 12 | 配置 | `.gitignore` | + dist/ build/ models/ |
+
+### 构建产物
+
+- **dist/Aide/Aide.exe** — Windows 独立可执行文件
+- **总大小**: 211 MB（含 Python 3.14 + onnxruntime + ONNX 23MB 模型）
+- **ONNX 模型**: all-MiniLM-L6-v2 (88 MB on disk, 384-dim)
+- **内置数据**: app.tcss, plugin templates, MCP servers.json
+
+### 架构决策
+
+- PyInstaller `--onedir` 模式（非 onefile）— 启动快、可调试
+- 模型不进 git → `.gitignore`，CI/构建脚本下载
+- dev 模式不受影响 — 所有改动向后兼容
+- GitHub Releases 优先（非 PyPI），Aide 是桌面 TUI 应用
+
+---
+
 ## 2026-06-29 — v1.0 → v1.1 方案微调
 
 ### 技术栈调整

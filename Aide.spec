@@ -9,8 +9,8 @@
 import sys
 from pathlib import Path
 
-# ── 项目根 ──
-PROJECT_ROOT = Path(__file__).parent.absolute()
+# ── 项目根（SPECPATH = spec 文件所在目录） ──
+PROJECT_ROOT = Path(SPECPATH)
 
 # ── 数据文件 ──
 datas = [
@@ -40,6 +40,7 @@ hiddenimports = [
     "textual.binding",
     "textual.keys",
     "textual._xterm_parser",
+    "textual._path",
     # onnxruntime 原生后端
     "onnxruntime.capi",
     "onnxruntime.capi.onnxruntime_pybind11_state",
@@ -54,6 +55,7 @@ hiddenimports = [
     "PIL.Image",
     "PIL.ImageDraw",
     "PIL.ImageGrab",
+    "PIL._imaging",
     # Pygments 词法分析器（动态加载）
     "pygments.lexers",
     "pygments.lexers.python",
@@ -65,9 +67,10 @@ hiddenimports = [
     "pygments.styles",
     # httpx
     "httpcore",
+    "httpcore._async",
     # ddgs
     "ddgs",
-    # asyncio
+    # asyncio / multiprocessing
     "asyncio",
     "multiprocessing",
 ]
@@ -100,26 +103,25 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
+# ── onedir: EXE 只含脚本和 pyz，数据文件放 COLLECT ──
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="Aide",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=[],
     console=True,       # Textual TUI 需要终端
     icon=None,
 )
 
-# ── onedir 输出 ──
 coll = COLLECT(
     exe,
     a.binaries,
+    a.zipfiles,
     a.datas,
     strip=False,
     upx=True,
