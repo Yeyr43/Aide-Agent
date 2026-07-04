@@ -1,8 +1,6 @@
 <#
 Aide Agent Launcher (PowerShell)
 Usage: aide [--background] [--help]
-
-Install: Run scripts/install.ps1 to add aide to PATH.
 #>
 param(
     [switch]$Background,
@@ -13,8 +11,6 @@ if ($Help) {
     Write-Host "Aide Agent - Local AI Assistant"
     Write-Host ""
     Write-Host "Usage: aide [options]"
-    Write-Host ""
-    Write-Host "Options:"
     Write-Host "  --background   Start minimized to system tray"
     Write-Host "  --help         Show this help"
     exit 0
@@ -22,37 +18,43 @@ if ($Help) {
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-# 1) PyInstaller build: Aide.exe in same dir or ../dist/Aide/
-$exePaths = @(
-    (Join-Path $ScriptDir "Aide.exe"),
-    (Join-Path $ScriptDir "..\dist\Aide\Aide.exe")
-)
-foreach ($exe in $exePaths) {
-    if (Test-Path $exe) {
-        $exeArgs = @()
-        if ($Background) { $exeArgs += "--background" }
-        & $exe @exeArgs
-        exit $LASTEXITCODE
+# Try to find project root from .project_path file (written by install script)
+$projectRoot = $null
+$pathFile = Join-Path $ScriptDir "..\.project_path"
+if (Test-Path $pathFile) {
+    $projectRoot = (Get-Content $pathFile -Raw).Trim()
+}
+
+# If no .project_path, try relative to script location
+if (-not $projectRoot) {
+    $candidate = Join-Path $ScriptDir "..\.."
+    if ((Test-Path (Join-Path $candidate "shell\main.py")) -and
+        (Test-Path (Join-Path $candidate "pyproject.toml"))) {
+        $projectRoot = $candidate
     }
 }
 
-# 2) Source install: project root with shell/main.py + pyproject.toml
-$projectRoot = Join-Path $ScriptDir ".."
-if ((Test-Path (Join-Path $projectRoot "shell\main.py")) -and
-    (Test-Path (Join-Path $projectRoot "pyproject.toml"))) {
-    $uvArgs = @("run", "python", "shell/main.py")
-    if ($Background) { $uvArgs += "--background" }
-    & uv @uvArgs
-    exit $LASTEXITCODE
+if ($projectRoot) {
+    # Check for pre-built binary first
+    $exePath = Join-Path $projectRoot "dist\Aide\Aide.exe"
+    if (Test-Path $exePath) {
+        $exeArgs = @()
+        if ($Background) { $exeArgs += "--background" }
+        & $exePath @exeArgs
+        exit $LASTEXITCODE
+    }
+
+    # Source mode: uv run from project root
+    Push-Location $projectRoot
+    try {
+        $uvArgs = @("run", "python", "shell/main.py")
+        if ($Background) { $uvArgs += "--background" }
+        & uv @uvArgs
+        exit $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
 }
 
-# 3) Try global uv as last resort
-try {
-    $uvArgs = @("run", "python", "-m", "shell.main")
-    if ($Background) { $uvArgs += "--background" }
-    & uv @uvArgs
-    exit $LASTEXITCODE
-} catch {
-    Write-Error "Cannot find Aide installation. Run 'uv sync' in the project directory, or download a pre-built release."
-    exit 1
-}
+Write-Error "Cannot find Aide project. Run scripts/install.ps1 from the project directory."
+exit 1

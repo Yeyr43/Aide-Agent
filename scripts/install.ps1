@@ -4,8 +4,7 @@ param([switch]$Uninstall)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectRoot = Join-Path $ScriptDir ".."
-$BinDir = Join-Path $ProjectRoot "bin"
+$ProjectRoot = (Get-Item (Join-Path $ScriptDir "..")).FullName
 $AideHome = if ($env:AIDE_HOME) { $env:AIDE_HOME } else { Join-Path $env:USERPROFILE ".aide" }
 $AideBin = Join-Path $AideHome "bin"
 
@@ -21,6 +20,10 @@ if ($Uninstall) {
         Remove-Item -Recurse -Force $AideBin
         Write-Host "  Deleted: $AideBin"
     }
+    $pathFile = Join-Path $AideHome ".project_path"
+    if (Test-Path $pathFile) {
+        Remove-Item $pathFile
+    }
     Write-Host "Done. Restart terminal to apply."
     exit 0
 }
@@ -29,16 +32,17 @@ Write-Host "Installing aide command..."
 Write-Host "  Project: $ProjectRoot"
 Write-Host "  Target: $AideBin"
 
-New-Item -ItemType Directory -Force -Path $AideBin | Out-Null
+# Save project location
+$ProjectRoot | Out-File -Encoding ASCII (Join-Path $AideHome ".project_path")
 
-# Copy launcher scripts
-Copy-Item -Force (Join-Path $BinDir "aide.ps1") $AideBin
+# Create bin directory and copy launcher
+New-Item -ItemType Directory -Force -Path $AideBin | Out-Null
+Copy-Item -Force (Join-Path $ProjectRoot "bin\aide.ps1") $AideBin
 Write-Host "  Copied aide.ps1 to $AideBin"
 
 # Create aide.bat wrapper
-$batPath = Join-Path $AideBin "aide.bat"
 $batContent = "@echo off`r`npowershell -ExecutionPolicy Bypass -File `"$AideBin\aide.ps1`" %*`r`n"
-[System.IO.File]::WriteAllText($batPath, $batContent, [System.Text.Encoding]::ASCII)
+[System.IO.File]::WriteAllText((Join-Path $AideBin "aide.bat"), $batContent, [System.Text.Encoding]::ASCII)
 Write-Host "  Created aide.bat"
 
 # Add to user PATH
@@ -55,4 +59,4 @@ Write-Host "Install complete! Restart terminal and type 'aide' to start."
 Write-Host "  aide              - normal start"
 Write-Host "  aide --background - start minimized to tray"
 Write-Host ""
-Write-Host "Uninstall: powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Uninstall"
+Write-Host "Uninstall: powershell -ExecutionPolicy Bypass -File $ProjectRoot\scripts\install.ps1 -Uninstall"
