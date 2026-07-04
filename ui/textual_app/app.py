@@ -45,6 +45,7 @@ class AideApp(App):
 
     BINDINGS = [
         ("escape", "go_home", t("app.return_home")),
+        ("ctrl+q", "noop", "Ctrl+Q disabled"),
     ]
 
     CSS_PATH = "app.tcss"
@@ -463,8 +464,7 @@ class AideApp(App):
         """判断当前是否已在首页。"""
         return any(isinstance(s, HomeScreen) for s in self.screen_stack)
 
-    def action_quit(self) -> None:
-        """退出应用。"""
-        if hasattr(self, '_tray'):
-            self._tray.stop()
-        self.exit()
+    @staticmethod
+    def action_noop() -> None:
+        """空操作（禁用 Ctrl+Q 退出）。"""
+        pass
