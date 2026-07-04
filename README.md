@@ -62,8 +62,7 @@ uv run python shell/main.py
 powershell -ExecutionPolicy Bypass -File install.ps1
 
 # 安装后重新打开终端
-aide                  # 正常启动
-aide --background     # 后台启动（最小化到托盘）
+aide    # 启动（自动最小化到托盘，右键托盘图标操作）
 ```
 
 ```bash
@@ -72,13 +71,18 @@ sudo cp aide /usr/local/bin/aide
 chmod +x /usr/local/bin/aide
 ```
 
-### 后台运行
+### 使用方式
 
 ```
-aide --background
+aide
 ```
 
-启动后自动最小化到系统托盘，右键托盘图标可显示窗口或退出。适合设为开机自启。
+启动后自动最小化到系统托盘。右键托盘图标：
+- **显示窗口** — 打开终端界面进行对话
+- **隐藏到托盘** — 最小化到后台
+- **退出** — 完全退出
+
+适合设为开机自启。
 
 ### 冷启动向导
 

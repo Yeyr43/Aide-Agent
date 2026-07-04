@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 # Aide Agent Launcher (Linux/macOS)
-# Usage: ./aide               # from project root
-#        aide --background    # start minimized to tray
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -22,14 +20,11 @@ if [[ -z "$PROJECT_ROOT" ]]; then
     exit 1
 fi
 
-BACKGROUND=""
-[[ "${1:-}" == "--background" ]] && BACKGROUND="--background"
-
 # Check for pre-built binary
 if [[ -x "$PROJECT_ROOT/dist/Aide/Aide" ]]; then
-    exec "$PROJECT_ROOT/dist/Aide/Aide" $BACKGROUND
+    exec "$PROJECT_ROOT/dist/Aide/Aide"
 fi
 
 # Source mode
 cd "$PROJECT_ROOT"
-exec uv run python shell/main.py $BACKGROUND
+exec uv run python shell/main.py

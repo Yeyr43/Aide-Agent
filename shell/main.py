@@ -2,12 +2,11 @@
 
 用法:
     uv run python shell/main.py
-    uv run python shell/main.py --background    # 后台启动（最小化到托盘）
+    aide
 
-开发时从项目根目录运行，core/ 和 ui/ 需要在 Python path 中。
+启动后自动最小化到系统托盘，点击托盘图标显示窗口。
 """
 
-import argparse
 import asyncio
 import sys
 from pathlib import Path
@@ -24,38 +23,19 @@ from ui.textual_app.app import AideApp
 
 
 def _ensure_event_loop_policy() -> None:
-    """确保 Windows 上使用 SelectorEventLoop。
-
-    Python 3.8+ 在 Windows 上默认 ProactorEventLoop，不支持
-    asyncio.create_subprocess_shell()，导致 run_shell 工具崩溃。
-    macOS/Linux 默认策略无需修改。
-    """
+    """确保 Windows 上使用 SelectorEventLoop。"""
     if sys.platform == "win32":
         try:
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         except Exception:
-            pass  # 某些环境可能已经设置过
+            pass
 
 
 def main() -> None:
-    """启动 Aide Agent Textual 终端。"""
-    parser = argparse.ArgumentParser(
-        prog="aide",
-        description="Aide Agent — 本地个人 AI 管家",
-    )
-    parser.add_argument(
-        "--background", "--tray",
-        action="store_true",
-        help="启动后最小化到系统托盘",
-    )
-    args = parser.parse_args()
-
+    """启动 Aide Agent。"""
     _ensure_event_loop_policy()
-
-    # 初始化 ~/.aide/ 目录结构（幂等，含旧配置迁移）
     ensure_aide_root()
-
-    app = AideApp(start_in_tray=args.background)
+    app = AideApp()
     app.run()
 
 

@@ -51,10 +51,6 @@ class AideApp(App):
 
     CSS_PATH = "app.tcss"
 
-    def __init__(self, start_in_tray: bool = False) -> None:
-        super().__init__()
-        self._start_in_tray = start_in_tray
-
     def compose(self) -> ComposeResult:
         yield Static("", id="session-label")
         yield MessageList(id="messages")
@@ -114,21 +110,19 @@ class AideApp(App):
 
     @work(exclusive=True, thread=False)
     async def _startup_worker(self) -> None:
-        """启动 worker：智能跳过已有配置 → 冷启动检查 → 引导 → 首页。"""
-        # P5: 如果已有可用的 LLM 配置，跳过向导直接进入首页
+        """启动 worker：智能跳过已有配置 → 冷启动检查 → 引导 → 首页。
+        启动完成后自动最小化到系统托盘。"""
         if has_existing_config():
             self.push_screen(HomeScreen())
         elif is_cold_start():
             await self.push_screen_wait(OnboardingScreen())
-            # 冷启动完成 → 重新加载配置（settings.json 刚被写入）
             self._reload_after_onboarding()
             self.push_screen(HomeScreen())
         else:
             self.push_screen(HomeScreen())
 
-        # 后台模式：启动完成后最小化到托盘
-        if self._start_in_tray:
-            self.action_hide_to_tray()
+        # 默认后台模式：启动完成后最小化到托盘
+        self.action_hide_to_tray()
 
     def _reload_after_onboarding(self) -> None:
         """冷启动完成后重新加载配置和 provider。

@@ -54,7 +54,5 @@ if ($userPath -notlike "*$AideBin*") {
 
 Write-Host ""
 Write-Host "Install complete! Restart terminal and type 'aide' to start."
-Write-Host "  aide              - normal start"
-Write-Host "  aide --background - start minimized to tray"
 Write-Host ""
 Write-Host "Uninstall: powershell -ExecutionPolicy Bypass -File $ProjectRoot\install.ps1 -Uninstall"
