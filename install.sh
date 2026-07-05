@@ -32,16 +32,29 @@ echo "[OK] git: $(git --version | head -1)"
 if ! command -v uv &>/dev/null; then
     echo "Installing uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.cargo/bin:$PATH"
+    # uv installs to ~/.local/bin (newer) or ~/.cargo/bin (legacy)
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
 echo "[OK] uv: $(uv --version)"
 
 # ── Clone / Update ────────────────────────────────────
+# Detect if running from a local Aide source tree
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+_IS_LOCAL_SOURCE=false
+if [ -f "$SCRIPT_DIR/shell/main.py" ] && [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
+    _IS_LOCAL_SOURCE=true
+fi
+
 if [ -d "$INSTALL_DIR/.git" ]; then
     echo "Updating existing install at $INSTALL_DIR..."
     git -C "$INSTALL_DIR" fetch origin
     git -C "$INSTALL_DIR" checkout "$BRANCH"
     git -C "$INSTALL_DIR" pull origin "$BRANCH"
+elif [ "$_IS_LOCAL_SOURCE" = true ] && [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
+    echo "Copying from local source ($SCRIPT_DIR)..."
+    mkdir -p "$INSTALL_DIR"
+    cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR"/
+    cp -r "$SCRIPT_DIR"/.git "$INSTALL_DIR"/.git 2>/dev/null || true
 else
     echo "Cloning to $INSTALL_DIR..."
     git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
