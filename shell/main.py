@@ -62,16 +62,25 @@ def _bring_to_front(title: str) -> bool:
 
 
 def _acquire_lock() -> bool:
-    """尝试获取单实例锁。已有人持锁则激活其窗口并返回 False。"""
+    """尝试获取单实例锁。已有人持锁则激活其窗口并返回 False。
+    非 Windows 平台无法激活前台窗口 — 强制替换旧实例。
+    """
     if _LOCK_FILE.exists():
         try:
             pid = int(_LOCK_FILE.read_text().strip())
             if _pid_alive(pid):
                 # 已有实例运行中 → 激活窗口
-                _bring_to_front("Aide Agent")
-                return False
-            # 僵尸锁（进程已死）→ 删除
-            _LOCK_FILE.unlink(missing_ok=True)
+                if _bring_to_front("Aide Agent"):
+                    return False
+                # 非 Windows 无法激活窗口 → 终止旧实例
+                try:
+                    os.kill(pid, 15)  # SIGTERM
+                except OSError:
+                    pass
+                _LOCK_FILE.unlink(missing_ok=True)
+            else:
+                # 僵尸锁（进程已死）→ 删除
+                _LOCK_FILE.unlink(missing_ok=True)
         except (ValueError, OSError):
             _LOCK_FILE.unlink(missing_ok=True)
 

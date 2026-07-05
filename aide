@@ -27,9 +27,11 @@ fi
 
 cd "$PROJECT_ROOT"
 
-# 1) Start daemon in background (if not already running)
-if ! pgrep -f "tray_daemon.py" > /dev/null 2>&1; then
-    nohup uv run python shell/tray_daemon.py > /dev/null 2>&1 &
+# 1) Start daemon in background (if not already running; skip in headless/WSL)
+if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    if ! pgrep -f "tray_daemon.py" > /dev/null 2>&1; then
+        nohup uv run python shell/tray_daemon.py > /dev/null 2>&1 &
+    fi
 fi
 
 # 2) Run TUI in current terminal
