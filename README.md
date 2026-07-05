@@ -6,42 +6,39 @@
 
 > 本地个人 AI 管家 — 不是"能做多少事"，而是"越用越懂你"。
 
-Aide 是一款运行在你电脑上的终端 AI 助手。所有对话和记忆留在本地，隐私不外泄。基于 Textual TUI 框架，支持 OpenAI / Ollama 等多种 LLM 后端。
-
-## 特性
-
-- **终端原生** — 基于 Textual 构建，纯暗主题，键盘驱动
-- **多模型支持** — OpenAI 兼容 API、Ollama 本地模型、自定义 base URL
-- **16 个内置命令** — `/help` `/profile` `/compact` `/export` `/import` `/session` `/memory` `/tools` `/plugin` `/update` `/clear` `/rollback` `/mcp` `/api` `/model` `/language`
-- **10 个内置工具** — 文件读写、Shell 执行、Web 搜索、代码搜索、剪贴板读写
-- **六层上下文** — Soul 人设 → 工具提示 → 技能上下文 → 动态 Prompt → 会话总览 → 窗口上下文
-- **记忆系统** — 自动截获偏好/工作流/长记忆，LLM 回溯整合
-- **插件系统** — Openclaw 兼容 Manifest，支持 Python 插件和 Markdown 技能
-- **MCP 协议** — 支持 stdio + HTTP Transport，健康检查 + 自动重连
-- **语义搜索** — ONNX embedding（all-MiniLM-L6-v2），TF-IDF + 语义混合排序
-- **跨平台** — Windows / macOS / Linux，系统托盘常驻
+Aide 是一款运行在你电脑上的终端 AI 助手。所有对话和记忆留在本地，隐私不外泄。基于 Textual TUI 框架，纯暗主题，键盘驱动。
 
 ## 安装
 
 ### 一键安装（推荐）
 
 ```powershell
-# Windows PowerShell（需要 git + uv）
+# Windows
 irm https://raw.githubusercontent.com/Yeyr43/Aide-Agent/main/install.ps1 | iex
 ```
 
-脚本自动完成：clone 仓库 → 安装依赖 → 配 PATH。重开终端后输入 `aide` 启动。
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/Yeyr43/Aide-Agent/main/install.sh | bash
+```
+
+脚本自动处理：clone → 装依赖 → 配 PATH。重开终端，输入 `aide` 启动。
+
+> 前置条件：[git](https://git-scm.com) + [uv](https://docs.astral.sh/uv/)
 
 ### 二进制下载（无需 Python）
 
-从 [GitHub Releases](https://github.com/Yeyr43/Aide-Agent/releases) 下载对应平台的压缩包，解压后运行安装脚本：
+从 [GitHub Releases](https://github.com/Yeyr43/Aide-Agent/releases) 下载对应平台压缩包，解压后运行安装脚本：
 
-- **Windows**: 右键 `install.ps1` → "使用 PowerShell 运行"
-- **macOS / Linux**: `bash install.sh`
+| 平台 | 操作 |
+|------|------|
+| Windows | 右键 `install.ps1` → "使用 PowerShell 运行" |
+| macOS | `bash install.sh` |
+| Linux | `bash install.sh` |
 
-安装后在终端输入 `Aide`（Windows）或 `aide`（macOS/Linux）启动。
+重开终端，输入 `aide` 启动。
 
-### 源码手动安装（开发者）
+### 源码手动运行
 
 ```bash
 git clone https://github.com/Yeyr43/Aide-Agent.git
@@ -50,102 +47,64 @@ uv sync
 uv run python shell/main.py
 ```
 
-> 需要 Python 3.13+、[uv](https://docs.astral.sh/uv/) 和 git。
+## 使用
 
-## 平台支持
+### 首次启动
 
-| 平台 | 状态 | 备注 |
-|------|------|------|
-| Windows 11 | ✅ 完整支持 | 默认 SelectorEventLoop |
-| macOS | ✅ 完整支持 | pystray 需 `pyobjc-framework-Quartz` |
-| Linux | ✅ 完整支持 | pystray 需 GTK3 + AppIndicator |
+冷启动向导引导你完成：语言选择 → 角色模板 → API 配置 → 个性化设置。4 步走完即可开始对话。
 
-## 快速开始
+### 输入 `/` 打开命令面板
 
-### 安装 `aide` 命令（可选）
+| 命令 | 说明 |
+|------|------|
+| `/help` | 列出所有命令 |
+| `/profile` | 查看当前 Soul + 动态 Prompt |
+| `/compact` | 压缩当前会话上下文 |
+| `/session list` | 查看历史会话 |
+| `/memory` | 查看记忆条目状态 |
+| `/tools` | 列出已注册工具 |
+| `/plugin list` | 查看插件 |
+| `/api add` | 添加 API 配置 |
+| `/model` | 切换模型 |
+| `/language` | 切换语言 |
+| `/export` / `/import` | 导出/导入数据 |
+| `/clear` | 清空会话 |
+| `/rollback` | 回滚到指定轮次 |
 
-将 `aide` 加入 PATH，之后在终端输入 `aide` 即可启动：
+输入 `//` 弹出技能命令面板。
 
-```powershell
-# Windows PowerShell（在项目根目录运行）
-powershell -ExecutionPolicy Bypass -File install.ps1
+### 系统托盘
 
-# 安装后重新打开终端
-aide    # 启动（自动最小化到托盘，右键托盘图标操作）
-```
+启动后自动最小化到托盘。右键托盘图标：
 
-```bash
-# Linux / macOS
-sudo cp aide /usr/local/bin/aide
-chmod +x /usr/local/bin/aide
-```
-
-### 使用方式
-
-```
-aide
-```
-
-启动后自动最小化到系统托盘。右键托盘图标：
-- **显示窗口** — 打开终端界面进行对话
+- **显示窗口** — 展开终端界面
 - **隐藏到托盘** — 最小化到后台
 - **退出** — 完全退出
 
 适合设为开机自启。
 
-### 冷启动向导
+## 特性
 
-首次启动会进入冷启动向导，引导你：
+- **终端原生 TUI** — Textual 全栈框架，纯暗主题 (`#0c0c0c`)，键盘驱动
+- **多模型** — OpenAI 兼容 API / Ollama 本地 / 自定义 base URL
+- **六层上下文** — Soul 人设 → 工具提示 → 技能 → 动态 Prompt → 会话总览 → 窗口上下文
+- **记忆系统** — 自动截获偏好/工作流/长记忆，`/profile update` 触发 LLM 回溯整合
+- **插件系统** — Python 插件 + Markdown 技能，自动发现加载
+- **MCP 协议** — stdio + HTTP Transport，健康检查 + 自动重连
+- **语义搜索** — ONNX embedding（all-MiniLM-L6-v2, 384-dim），TF-IDF + 语义混合排序
+- **跨平台** — Windows / macOS / Linux
 
-1. 选择语言（中文/English）
-2. 选择角色模板（开发者/写作者/管理者）
-3. 配置 LLM（OpenAI / Ollama / 自定义）
-4. 个性化设置（称呼/个性/工作风格）
+## 平台支持
 
-完成后即可开始对话。
-
-### 常用命令
-
-| 命令 | 说明 |
+| 平台 | 备注 |
 |------|------|
-| `/api add <name> <provider> <model> <key>` | 添加 API 配置 |
-| `/model <name>` | 切换模型 |
-| `/plugin list` | 查看插件状态 |
-| `/session list` | 查看历史会话 |
-| `/compact` | 压缩当前会话上下文 |
-| `/profile` | 查看当前 Soul + Prompt |
-| `/help` | 列出所有命令 |
-
-输入 `/` 弹出命令面板，输入 `//` 弹出技能命令面板。
+| Windows 11 | ✅ 完整支持 |
+| macOS | ✅ 需 `pyobjc-framework-Quartz`（一键安装自动处理） |
+| Linux | ✅ 需 GTK3 + AppIndicator（`apt install python3-gi gir1.2-gtk-3.0 gir1.2-appindicator3-0.1`） |
 
 ## 技术栈
 
-- **Python 3.13+** — 异步优先（asyncio）
-- **Textual 0.80+** — 终端 UI 框架
-- **ONNX Runtime** — 语义嵌入（all-MiniLM-L6-v2, 384-dim）
-- **Pydantic 2** — 数据验证
-- **JSON 文件系统** — 零依赖存储（Write-Actor 并发模型）
-- **pystray** — 系统托盘
-- **Pygments** — 代码语法高亮
-
-## 项目结构
-
-```
-core/           # 内核（零 UI 依赖）
-├── kernel/     # Agent 门面 + FC 循环
-├── llm_gateway/# OpenAI / Ollama 适配器
-├── context/    # 六层上下文管线
-├── memory/     # 记忆截获 + 整合
-├── commands/   # 命令路由 + 16 个内置命令
-├── plugins/    # 插件系统（Manifest + Host + SDK）
-├── tools/      # 10 个内置工具 + MCP 适配
-└── sessions/   # 会话管理
-
-ui/
-└── textual_app/   # Textual TUI（app + screens + widgets）
-
-shell/main.py    # 入口
-```
+Python 3.13+ · Textual 0.80+ · ONNX Runtime · Pydantic 2 · pystray · Pygments · httpx · ddgs
 
 ## 开源协议
 
