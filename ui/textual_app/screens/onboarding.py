@@ -403,7 +403,9 @@ class OnboardingScreen(Screen):
                     "supports_vision": bool(supports_vision),
                 }
                 Config.save_api_config(apiname, api_cfg)
-                Config.set_active_api_name(apiname)
+                # 必须在 settings dict 也写上 active_api，否则后面的
+                # write_text 会覆盖 set_active_api_name 的写入
+                settings["active_api"] = apiname
 
             # 上下文窗口
             ctx_raw = self._model_cfg.get("context_window", "128000")
