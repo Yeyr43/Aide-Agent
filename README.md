@@ -41,11 +41,12 @@ uv run python shell/main.py
 
 ### 二进制下载（推荐普通用户）
 
-从 [GitHub Releases](https://github.com/Yeyr43/Aide-Agent/releases) 下载对应平台的压缩包，解压即可运行。
+从 [GitHub Releases](https://github.com/Yeyr43/Aide-Agent/releases) 下载对应平台的压缩包，解压后运行安装脚本：
 
-- **Windows**: 解压后双击 `Aide.exe`
-- **macOS**: `./Aide.app/Contents/MacOS/Aide`
-- **Linux**: `./Aide`
+- **Windows**: 右键 `install.ps1` → "使用 PowerShell 运行"，或 `powershell -ExecutionPolicy Bypass -File install.ps1`
+- **macOS / Linux**: `bash install.sh`
+
+安装后在终端输入 `Aide`（Windows）或 `aide`（macOS/Linux）即可启动。
 
 ## 平台支持
 

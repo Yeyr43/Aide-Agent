@@ -120,6 +120,92 @@ def copy_launchers() -> None:
         shutil.copy2(shell_launcher, dest)
         print("  Copied launcher: aide.sh")
 
+    # 二进制分发安装脚本（跨平台）
+    _write_install_scripts(dist_dir)
+
+
+def _write_install_scripts(dist_dir: Path) -> None:
+    """生成二进制分发的安装/卸载脚本。"""
+    import platform
+
+    # Windows: PowerShell 安装脚本
+    ps1 = dist_dir / "install.ps1"
+    ps1.write_text(r'''# Aide Agent 安装脚本（二进制分发版）
+# 用法: powershell -ExecutionPolicy Bypass -File install.ps1
+#       powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
+
+param([switch]$Uninstall)
+
+$ErrorActionPreference = "Stop"
+$InstallDir = "$env:LOCALAPPDATA\Aide"
+
+if ($Uninstall) {
+    Write-Host "Uninstalling Aide..."
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($userPath -like "*$InstallDir*") {
+        $newPath = ($userPath -split ";" | Where-Object { $_ -ne $InstallDir }) -join ";"
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+        Write-Host "  Removed from PATH: $InstallDir"
+    }
+    if (Test-Path $InstallDir) {
+        Remove-Item -Recurse -Force $InstallDir
+        Write-Host "  Deleted: $InstallDir"
+    }
+    Write-Host "Done. Restart terminal to apply."
+    exit 0
+}
+
+# 复制文件
+Write-Host "Installing Aide to $InstallDir..."
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+Copy-Item -Recurse -Force "$PSScriptRoot\*" -Destination $InstallDir
+
+# 添加 PATH
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User") ?? ""
+if ($userPath -notlike "*$InstallDir*") {
+    $newPath = if ($userPath) { "$userPath;$InstallDir" } else { $InstallDir }
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    Write-Host "  Added to PATH: $InstallDir"
+}
+
+Write-Host ""
+Write-Host "Aide installed! Restart terminal and type 'Aide' to start."
+Write-Host "Uninstall: powershell -File $InstallDir\install.ps1 -Uninstall"
+''', encoding='utf-8')
+    print("  Created install.ps1")
+
+    # Linux/macOS: shell 安装脚本
+    sh = dist_dir / "install.sh"
+    sh.write_text(r'''#!/usr/bin/env bash
+# Aide Agent 安装脚本（二进制分发版）
+set -euo pipefail
+
+INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/aide"
+BIN_DIR="${HOME}/.local/bin"
+
+if [ "${1:-}" = "--uninstall" ]; then
+    echo "Uninstalling Aide..."
+    rm -f "$BIN_DIR/aide"
+    rm -rf "$INSTALL_DIR"
+    echo "Done."
+    exit 0
+fi
+
+echo "Installing Aide to $INSTALL_DIR..."
+mkdir -p "$INSTALL_DIR" "$BIN_DIR"
+cp -r "$(dirname "$0")"/* "$INSTALL_DIR/"
+
+# symlink to ~/.local/bin
+ln -sf "$INSTALL_DIR/Aide" "$BIN_DIR/aide"
+echo "  Linked: $BIN_DIR/aide -> $INSTALL_DIR/Aide"
+
+echo ""
+echo "Aide installed! Make sure ~/.local/bin is in your PATH, then type 'aide'."
+echo "Uninstall: $INSTALL_DIR/install.sh --uninstall"
+''', encoding='utf-8')
+    sh.chmod(0o755)
+    print("  Created install.sh")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="构建 Aide 独立分发包")
