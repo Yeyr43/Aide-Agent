@@ -85,6 +85,8 @@ hiddenimports = [
     # asyncio / multiprocessing
     "asyncio",
     "multiprocessing",
+    # UI 平台模块 — 仅由 scripts/ + tests/ 导入，不在主入口链，PyInstaller 不会自动收集
+    "ui.textual_app.platform",
 ]
 
 # ── 排除的模块 ──

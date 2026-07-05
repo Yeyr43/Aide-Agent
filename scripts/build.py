@@ -88,26 +88,37 @@ def verify_output() -> None:
 
 
 def copy_launchers() -> None:
-    """Copy launcher scripts to dist directory."""
+    """Copy launcher scripts to dist directory.
+
+    注意：macOS 文件系统大小写不敏感，"aide" shell 脚本会覆盖 PyInstaller
+    生成的 "Aide" 二进制。因此 macOS 下跳过 shell 脚本复制。
+    """
     import shutil
+    import platform
 
     dist_dir = DIST_DIR / "Aide"
 
-    # Copy launcher scripts from project root
-    for name in ("aide.ps1", "aide"):
-        src = PROJECT_ROOT / name
-        if src.exists():
-            shutil.copy2(src, dist_dir / name)
-            print(f"  Copied launcher: {name}")
+    # Windows: copy powershell launcher + create .bat wrapper
+    ps1 = PROJECT_ROOT / "aide.ps1"
+    if ps1.exists():
+        shutil.copy2(ps1, dist_dir / "aide.ps1")
+        print("  Copied launcher: aide.ps1")
 
-    # Windows: create aide.bat wrapper
-    bat = dist_dir / "aide.bat"
-    bat.write_text(
-        '@echo off\r\n'
-        'powershell -ExecutionPolicy Bypass -File "%~dp0aide.ps1" %*\r\n',
-        encoding="ascii",
-    )
-    print("  Created launcher: aide.bat")
+    if platform.system() == "Windows":
+        bat = dist_dir / "aide.bat"
+        bat.write_text(
+            '@echo off\r\n'
+            'powershell -ExecutionPolicy Bypass -File "%~dp0aide.ps1" %*\r\n',
+            encoding="ascii",
+        )
+        print("  Created launcher: aide.bat")
+
+    # macOS/Linux: rename shell launcher to avoid collision with PyInstaller binary
+    shell_launcher = PROJECT_ROOT / "aide"
+    if shell_launcher.exists():
+        dest = dist_dir / "aide.sh"
+        shutil.copy2(shell_launcher, dest)
+        print("  Copied launcher: aide.sh")
 
 
 def main() -> None:

@@ -207,13 +207,12 @@ def _smoke_test() -> None:
         except ImportError as e:
             errors.append(f"IMPORT {mod_name}: {e}")
 
-    # 3. 资源路径验证
+    # 3. 资源路径验证（仅检查 datas 列表中的文件，不含 PYZ 中的 Python 模块）
     from core.resources import get_resource_path
     for name, rel in [
         ("CSS", "ui/textual_app/app.tcss"),
         ("插件模板", "core/plugins/templates/hello-plugin"),
         ("MCP 配置", "mcp/servers.json"),
-        ("locale_data", "core/locale_data.py"),
     ]:
         p = get_resource_path(rel)
         if not p.exists():
