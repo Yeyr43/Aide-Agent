@@ -27,8 +27,19 @@ fi
 
 cd "$PROJECT_ROOT"
 
-# 1) Start daemon in background (if not already running; skip in headless/WSL)
-if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+# 1) Start daemon in background (if not already running)
+#    macOS always has a desktop. Linux: only if graphical session is available.
+_START_DAEMON=false
+case "$(uname -s)" in
+    Darwin) _START_DAEMON=true ;;
+    Linux)
+        if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+            _START_DAEMON=true
+        fi
+        ;;
+esac
+
+if [ "$_START_DAEMON" = true ]; then
     if ! pgrep -f "tray_daemon.py" > /dev/null 2>&1; then
         nohup uv run python shell/tray_daemon.py > /dev/null 2>&1 &
     fi
