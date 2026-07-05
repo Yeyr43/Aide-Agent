@@ -15,6 +15,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from core.platform import IS_WINDOWS
+
 
 def _load_icon() -> Image.Image:
     """加载托盘图标，优先 Aide.ico，回退到程序生成。"""
@@ -45,14 +47,14 @@ class TrayDaemon:
 
     def _get_tui_command(self) -> list[str]:
         exe = self._project_root / "dist" / "Aide" / "Aide.exe"
-        if sys.platform != "win32":
+        if not IS_WINDOWS:
             exe = self._project_root / "dist" / "Aide" / "Aide"
         if exe.exists():
-            if sys.platform == "win32":
+            if IS_WINDOWS:
                 return ["cmd", "/c", f"title Aide Agent && {exe}"]
             return [str(exe)]
         # Source mode
-        if sys.platform == "win32":
+        if IS_WINDOWS:
             return ["cmd", "/c", "title Aide Agent && uv run python shell/main.py"]
         return ["uv", "run", "python", "shell/main.py"]
 
@@ -60,7 +62,7 @@ class TrayDaemon:
         if self._tui_process is not None and self._tui_process.poll() is None:
             return
         cmd = self._get_tui_command()
-        if sys.platform == "win32":
+        if IS_WINDOWS:
             self._tui_process = subprocess.Popen(
                 cmd, cwd=str(self._project_root),
                 creationflags=subprocess.CREATE_NEW_CONSOLE,

@@ -10,36 +10,19 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import zipfile
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 
 from core.locale import t
+from core.platform import user_download_dir
 
 from ._compat import (
-    AIDE_ROOT, AGENT_ROOT, COMMANDS, _register_to_commands, _cmd,
+    AIDE_ROOT, AGENT_ROOT, _register_to_commands, _cmd,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _export_dir() -> Path:
-    """返回平台默认下载/桌面目录（用于 /export）。
-
-    优先级：XDG_DOWNLOAD_DIR > ~/Downloads > ~/Desktop > ~
-    """
-    xdg = os.environ.get("XDG_DOWNLOAD_DIR", "")
-    if xdg:
-        return Path(xdg)
-
-    for candidate in ["Downloads", "Desktop"]:
-        p = Path.home() / candidate
-        if p.is_dir():
-            return p
-
-    return Path.home()
 
 
 # ── 命令实现 ─────────────────────────────────────────────────────────
@@ -49,15 +32,11 @@ def _export_dir() -> Path:
 async def handle_help(app: Any, args: str) -> str:
     lines = [t("cmd.help.title")]
 
-    # 优先从 CommandRegistry 读取（包含插件命令）
+    # 从 CommandRegistry 读取（包含插件命令）
     cmd_registry = getattr(app, '_cmd_registry', None)
     if cmd_registry is not None:
         for cmd_def in cmd_registry.list_all():
             lines.append(f"- **{cmd_def.name}** — {cmd_def.description}")
-    else:
-        # 回退到模块级 COMMANDS（无 App 环境时）
-        for cmd, (_, desc) in COMMANDS.items():
-            lines.append(f"- **{cmd}** — {desc}")
 
     lines.append("")
     lines.append(t("cmd.help.hint"))
@@ -159,7 +138,7 @@ async def handle_compress(app: Any, args: str) -> str:
 async def handle_export(app: Any, args: str) -> str:
     """打包 ~/.aide/ 关键文件为 zip。"""
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    export_dir = _export_dir()
+    export_dir = user_download_dir()
     export_path = export_dir / f"aide_export_{timestamp}.zip"
 
     with zipfile.ZipFile(export_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -436,9 +415,9 @@ def _rebuild_conversation_from_disk(app: Any, session_dir: Path, target_turn: in
 # handle_mcp 已拆分至 mcp_handlers.py
 from .mcp_handlers import handle_mcp  # noqa: E402, F401
 
-# handle_language / handle_api / handle_model / _save_settings 已拆分至 settings_handlers.py
+# handle_language / handle_api / handle_model 已拆分至 settings_handlers.py
 from .settings_handlers import (  # noqa: E402, F401
-    handle_language, handle_api, handle_model, _save_settings_dict as _save_settings,
+    handle_language, handle_api, handle_model,
 )
 
 

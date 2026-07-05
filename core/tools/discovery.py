@@ -28,5 +28,9 @@ def register_builtin_tools(registry: ToolRegistry) -> int:
 
 
 def register_plugin_tools(registry: ToolRegistry, plugin_host) -> int:
-    """插件工具已在 PluginHost.load() 中注册。此函数为预留 API。"""
+    """预留 API — 允许显式触发插件工具注册。
+
+    当前插件工具在 PluginHost.load() 中自动注册，此函数返回 0。
+    未来若支持延迟加载或独立插件工具注册流程，可在此实现。
+    """
     return 0

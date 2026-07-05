@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
+from core.commands import CommandDefinition
 from core.commands.builtin._compat import COMMANDS, route_command
 from core.commands.builtin.handlers import (
     handle_help, handle_profile, handle_compress, handle_export, handle_import,
@@ -111,8 +112,16 @@ class TestCommandHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_help(self):
-        # _cmd_registry=None → 回退到 COMMANDS dict
-        result = await handle_help(MagicMock(_cmd_registry=None), "")
+        # 构造 mock CommandRegistry（含 16 个内置命令）
+        from core.commands import CommandDefinition
+        mock_registry = MagicMock()
+        mock_registry.list_all.return_value = [
+            CommandDefinition(name=n, description="test", handler=handle_help)
+            for n in ["/help", "/profile", "/compact", "/export", "/import",
+                       "/plugin", "/session", "/memory", "/tools", "/update",
+                       "/clear", "/rollback", "/mcp", "/language", "/api", "/model"]
+        ]
+        result = await handle_help(MagicMock(_cmd_registry=mock_registry), "")
         assert "可用命令" in result
         for cmd in ["/help", "/profile", "/compact", "/export", "/import", "/plugin",
                      "/session", "/memory", "/tools", "/update", "/clear", "/mcp",

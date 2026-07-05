@@ -145,7 +145,7 @@ def _search_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
                     "_session_dir": session_dir.name,
                 })
         except (json.JSONDecodeError, OSError):
-            pass
+            logger.debug("Failed to read meta.json for session %s, skipping", session_dir.name)
 
     # timeline.json
     timeline_path = session_dir / "timeline.json"
@@ -154,7 +154,7 @@ def _search_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
             data = json.loads(timeline_path.read_text(encoding="utf-8"))
             _search_timeline(data, keywords, session_dir.name, matches)
         except (json.JSONDecodeError, OSError):
-            pass
+            logger.debug("Failed to read timeline.json for session %s, skipping", session_dir.name)
 
     # overview.md
     overview_path = session_dir / "overview.md"
@@ -174,7 +174,7 @@ def _search_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
                             "_session_dir": session_dir.name,
                         })
         except (OSError, Exception):
-            pass
+            logger.debug("Failed to read/parse overview.md for session %s, skipping", session_dir.name)
 
 
 def _search_timeline(data: list, keywords: set[str], session_id: str, matches: list[dict]) -> None:
@@ -213,6 +213,7 @@ async def _search_entries(entry_manager, keywords: set[str], matches: list[dict]
                         "score": score,
                     })
         except Exception:
+            logger.debug("Failed to load entries for type %s, skipping", entry_type)
             continue
 
 
@@ -309,6 +310,6 @@ def _tfidf_rank(query: str, candidates: list[dict]) -> list[dict]:
                         # 混合：词法 0.6 + 语义 0.4
                         c["score"] = c["score"] * 0.6 + emb_sim * 0.4
         except Exception:
-            pass  # 嵌入失败不影响搜索结果
+            logger.debug("Embedding engine failure during recall ranking, skipping semantic boost")
 
     return sorted(candidates, key=lambda m: m["score"], reverse=True)

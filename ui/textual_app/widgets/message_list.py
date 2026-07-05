@@ -78,6 +78,7 @@ class MessageWidget(Static):
                 elif isinstance(r, str):
                     text = r
             except Exception:
+                logger.debug("Failed to extract text from renderable for clipboard copy, skipping")
                 return
 
         text = (text or "").strip()

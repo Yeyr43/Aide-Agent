@@ -8,9 +8,14 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 from pathlib import Path
 
 from PIL import Image
+
+from core.platform import IS_WINDOWS, IS_MACOS
+
+logger = logging.getLogger(__name__)
 
 # 最大尺寸约束 — 避免 base64 字符串撑爆 LLM 上下文
 MAX_SHORT_SIDE = 768   # 短边超过此值按比例缩放
@@ -66,7 +71,7 @@ def extract_file_paths(text: str) -> tuple[str, list[str]]:
     tokens: list[str]
     if '"' in text:
         try:
-            tokens = shlex.split(text, posix=(sys.platform != "win32"))
+            tokens = shlex.split(text, posix=(not IS_WINDOWS))
         except ValueError:
             tokens = text.split()
     else:
@@ -129,6 +134,7 @@ def grab_clipboard_image() -> Image.Image | None:
                 return first
         return None
     except Exception:
+        logger.debug("Failed to grab clipboard image, skipping")
         return None
 
 
@@ -174,14 +180,15 @@ def open_with_os(file_path: str | Path) -> bool:
     import sys
     path = str(file_path)
     try:
-        if sys.platform == "win32":
+        if IS_WINDOWS:
             os.startfile(path)
-        elif sys.platform == "darwin":
+        elif IS_MACOS:
             subprocess.Popen(["open", path])
         else:
             subprocess.Popen(["xdg-open", path])
         return True
     except Exception:
+        logger.debug("Failed to open file with OS default program: %s", file_path)
         return False
 
 
@@ -291,6 +298,7 @@ def data_url_to_image(data_url: str) -> Image.Image | None:
         raw = base64.b64decode(b64_part)
         return Image.open(io.BytesIO(raw))
     except Exception:
+        logger.debug("Failed to decode data URL to image, skipping")
         return None
 
 

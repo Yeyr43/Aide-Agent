@@ -13,7 +13,6 @@ from textual.containers import Vertical
 from textual.widgets import Static, ListView, ListItem
 from textual.message import Message
 
-from core.commands.builtin.handlers import COMMANDS
 from core.locale import t
 
 
@@ -99,9 +98,6 @@ class CommandPalette(Vertical):
         if self._cmd_registry is not None:
             for cmd_def in self._cmd_registry.list_all():
                 all_cmds.append((cmd_def.name, cmd_def.description))
-        else:
-            # 回退到模块级 COMMANDS dict
-            all_cmds = [(cmd, desc) for cmd, (_, desc) in COMMANDS.items()]
 
         # 按命令名字母排序
         all_cmds.sort(key=lambda x: x[0])

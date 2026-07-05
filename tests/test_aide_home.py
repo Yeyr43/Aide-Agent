@@ -44,11 +44,6 @@ class TestAideDir:
             result = aide_dir()
             assert result == Path.home() / ".aide"
 
-    def test_backward_compat_alias(self):
-        """_aide_dir 别名指向同一个函数。"""
-        from core.setup import _aide_dir
-        assert _aide_dir is aide_dir
-
 
 class TestHasExistingConfig:
     """测试 has_existing_config()。"""

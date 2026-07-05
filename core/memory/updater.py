@@ -131,17 +131,17 @@ def _get_update_prompts() -> dict:
         "preferences": {
             "file": "preferences.md",
             "label": t("mem.label_preferences"),
-            "system": t("mem.update_preferences_system"),
+            "system": t("mem.updater_prefs_system"),
         },
         "workflows": {
             "file": "workflows.md",
             "label": t("mem.label_workflows"),
-            "system": t("mem.update_workflows_system"),
+            "system": t("mem.updater_workflows_system"),
         },
         "long_term_memory": {
             "file": "long_term_memory.md",
             "label": t("mem.label_long_term_memory"),
-            "system": t("mem.update_long_term_memory_system"),
+            "system": t("mem.updater_longterm_system"),
         },
     }
 

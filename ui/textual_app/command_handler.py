@@ -80,9 +80,10 @@ class CommandHandler:
             return
 
         try:
-            result = await cmd_def.handler(self._app, args)
-            self._app._session.last_ai_text = result
-            msg_list.add_command_result(result)
+            result = await cmd_def.handler(self._app, args) or ""
+            if result:  # 跳过空结果（如用户取消屏幕）
+                self._app._session.last_ai_text = result
+                msg_list.add_command_result(result)
         except Exception as e:
             msg_list.add_error(t("ui.cmd_handler.cmd_failed", e=e))
 

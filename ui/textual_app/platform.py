@@ -1,31 +1,32 @@
-"""跨平台工具 — 平台检测、窗口隐藏、系统能力查询。
+"""跨平台 UI 工具 — 平台检测从 core.platform 重导出，本模块仅 UI 特有逻辑。
 
-集中所有平台特定逻辑，其他地方通过本模块的常量和函数来判断平台。
+平台常量（IS_WINDOWS 等）和通用工具（user_download_dir）已提升至 core/platform.py。
+shell/ 和 core/ 层可直接导入 core.platform，无需依赖 ui/。
 """
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
-from pathlib import Path
 
-# ── 平台常量 ────────────────────────────────────────────────────────────
+# 重导出 core 平台常量（向后兼容 — 现有代码仍可 from ui.textual_app.platform import IS_WINDOWS）
+from core.platform import (
+    IS_WINDOWS,
+    IS_MACOS,
+    IS_LINUX,
+    CURRENT,
+    platform_name,
+    user_download_dir,
+)
 
-IS_WINDOWS = sys.platform == "win32"
-IS_MACOS = sys.platform == "darwin"
-IS_LINUX = sys.platform.startswith("linux")
-CURRENT = sys.platform
+logger = logging.getLogger(__name__)
 
-
-def platform_name() -> str:
-    """返回当前平台的人类可读名称。"""
-    if IS_MACOS:
-        return "macOS"
-    if IS_LINUX:
-        return "Linux"
-    if IS_WINDOWS:
-        return "Windows"
-    return sys.platform
+__all__ = [
+    "IS_WINDOWS", "IS_MACOS", "IS_LINUX", "CURRENT",
+    "platform_name", "user_download_dir",
+    "hide_console", "can_use_tray",
+]
 
 
 def hide_console() -> bool:
@@ -48,35 +49,14 @@ def hide_console() -> bool:
                 capture_output=True, timeout=2)
             return True
         elif IS_LINUX:
-            # xdotool — 大多数桌面环境可用
             r = subprocess.run(
                 ["xdotool", "getactivewindow", "windowminimize"],
                 capture_output=True, timeout=2)
             return r.returncode == 0
         return False
     except Exception:
+        logger.debug("Failed to hide console window, skipping")
         return False
-
-
-def user_download_dir() -> Path:
-    """返回平台默认下载/桌面目录（用于 /export 等）。
-
-    优先级：XDG_DOWNLOAD_DIR > ~/Downloads > ~/Desktop > ~
-    """
-    import os
-
-    # Linux: 尝试 XDG
-    xdg = os.environ.get("XDG_DOWNLOAD_DIR", "")
-    if xdg:
-        return Path(xdg)
-
-    # macOS / Linux 通用
-    for candidate in ["Downloads", "Desktop"]:
-        p = Path.home() / candidate
-        if p.is_dir():
-            return p
-
-    return Path.home()
 
 
 def can_use_tray() -> bool:

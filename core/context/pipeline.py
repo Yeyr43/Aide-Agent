@@ -118,7 +118,7 @@ class ContextPipeline:
                     if injection:
                         system_parts.append(injection)
                 except Exception:
-                    pass
+                    logger.debug("Context provider failed, skipping", exc_info=True)
 
         # ── 第 2 层：动态 prompt（词级分词 + TF-IDF 相关性过滤） ──
         # 惰性构建词汇索引
@@ -200,7 +200,7 @@ class ContextPipeline:
                     overview = overview_path.read_text(encoding="utf-8")
                     system_parts.append(t("ctx.session_overview") + "\n" + overview)
                 except OSError:
-                    pass
+                    logger.debug("Failed to read overview.md, skipping")
 
         # ── 第 4 层：早期轮次总览 + 最近轮次 cache ──
         if session_dir is not None and conv:
@@ -212,7 +212,7 @@ class ContextPipeline:
                         cache_path.read_text(encoding="utf-8")
                     )
                 except (OSError, json.JSONDecodeError):
-                    pass
+                    logger.debug("Failed to read cache.json, skipping")
 
             # 早期轮次 → 总览
             if older:

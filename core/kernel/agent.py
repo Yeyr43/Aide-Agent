@@ -74,6 +74,8 @@ class AgentKernel:
     ) -> ChatResult:
         """执行一轮对话。"""
         assistant_text = ""
+        turn_messages: list[dict] = []
+        estimated, pct = 0, 0.0
 
         # 1. 组装上下文
         system_msgs, trimmed_conv = await self._pipeline.assemble(
@@ -82,42 +84,53 @@ class AgentKernel:
         )
         full_messages = system_msgs + trimmed_conv
 
-        # 2. FC 循环
-        updated = await self._fc_loop.run(full_messages, ui=ui)
+        try:
+            # 2. FC 循环
+            updated = await self._fc_loop.run(full_messages, ui=ui)
 
-        # 2.5. 计数实际发送的上下文（system + trimmed + 工具消息增量 + tools）
-        tools_schema = self.tool_registry.get_schemas()
-        estimated, pct = compute_context_usage(
-            updated, tools_schema,
-            context_window=self.config.app.context_window,
-        )
+            # 2.5. 计数实际发送的上下文（system + trimmed + 工具消息增量 + tools）
+            tools_schema = self.tool_registry.get_schemas()
+            estimated, pct = compute_context_usage(
+                updated, tools_schema,
+                context_window=self.config.app.context_window,
+            )
+
+            # 合并对话历史（过滤 system 消息）
+            older, _ = _split_conversation(conversation)
+            conversation_only = [m for m in updated if m.get("role") != "system"]
+            new_conversation = older + conversation_only
+
+            # 提取 AI 回复
+            for msg in reversed(updated):
+                if msg.get("role") == "assistant" and msg.get("content"):
+                    assistant_text = msg["content"]
+                    break
+
+            if not assistant_text:
+                assistant_text = "（未收到 AI 响应，请检查 LLM 配置或稍后重试）"
+                new_conversation.append({"role": "assistant", "content": assistant_text})
+
+            # 仅本轮增量消息
+            conv_before_user = len(conversation) - 1
+            turn_messages = new_conversation[conv_before_user:]
+
+        finally:
+            # 无论成功还是失败，始终保存（如果还没有本轮消息，至少保存用户消息）
+            if not turn_messages:
+                assistant_text = assistant_text or f"（系统错误: API 调用失败）"
+                new_conversation = list(conversation)
+                new_conversation.append({"role": "assistant", "content": assistant_text})
+                conv_before_user = len(conversation) - 1
+                turn_messages = new_conversation[conv_before_user:]
+
+            await self._ingester.ingest(
+                turn=turn,
+                user_msg=user_msg,
+                assistant_msg=assistant_text,
+                turn_messages=turn_messages,
+            )
+
         token_usage = TokenUsage(total_tokens=estimated, context_pct=pct)
-
-        # 合并对话历史（过滤 system 消息）
-        older, _ = _split_conversation(conversation)
-        conversation_only = [m for m in updated if m.get("role") != "system"]
-        new_conversation = older + conversation_only
-
-        # 提取 AI 回复
-        for msg in reversed(updated):
-            if msg.get("role") == "assistant" and msg.get("content"):
-                assistant_text = msg["content"]
-                break
-
-        if not assistant_text:
-            assistant_text = "（未收到 AI 响应，请检查 LLM 配置或稍后重试）"
-            new_conversation.append({"role": "assistant", "content": assistant_text})
-
-        # 3. 摄入存储（仅本轮增量消息）
-        # conversation 已含本轮 user_msg（app 层追加），所以增量起点 = len - 1
-        conv_before_user = len(conversation) - 1
-        turn_messages = new_conversation[conv_before_user:]
-        await self._ingester.ingest(
-            turn=turn,
-            user_msg=user_msg,
-            assistant_msg=assistant_text,
-            turn_messages=turn_messages,
-        )
 
         # 4. 后台截获（不影响对话流程）
         captured = await self._capture.capture(

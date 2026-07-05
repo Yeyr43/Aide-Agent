@@ -21,6 +21,7 @@ if not is_bundled():
         sys.path.insert(0, str(_project_root))
 
 from core.setup import aide_dir, ensure_aide_root
+from core.platform import IS_WINDOWS
 
 _LOCK_FILE = aide_dir() / "aide.pid"
 
@@ -30,7 +31,7 @@ _LOCK_FILE = aide_dir() / "aide.pid"
 def _pid_alive(pid: int) -> bool:
     """检查 PID 是否存活。"""
     try:
-        if sys.platform == "win32":
+        if IS_WINDOWS:
             kernel32 = ctypes.windll.kernel32
             handle = kernel32.OpenProcess(0x0400, False, pid)  # PROCESS_QUERY_INFORMATION
             if not handle:
@@ -46,7 +47,7 @@ def _pid_alive(pid: int) -> bool:
 
 def _bring_to_front(title: str) -> bool:
     """将已有窗口提到最前。仅 Windows。"""
-    if sys.platform != "win32":
+    if not IS_WINDOWS:
         return False
     try:
         user32 = ctypes.windll.user32
@@ -92,7 +93,7 @@ def _release_lock() -> None:
 
 def _decorate_console() -> None:
     """设置控制台窗口标题和图标（仅 Windows）。"""
-    if sys.platform != "win32":
+    if not IS_WINDOWS:
         return
     try:
         kernel32 = ctypes.windll.kernel32
@@ -135,7 +136,7 @@ def _ensure_daemon() -> None:
     if not daemon.exists():
         return
 
-    if sys.platform == "win32":
+    if IS_WINDOWS:
         # pythonw: 无控制台窗口
         pythonw = Path(sys.executable).parent / "pythonw.exe"
         if not pythonw.exists():

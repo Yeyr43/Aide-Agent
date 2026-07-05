@@ -114,6 +114,11 @@ class AideApp(App):
         else:
             self.push_screen(HomeScreen())
 
+    @work(exclusive=True, thread=False)
+    async def _dispatch_command(self, cmd_def, args, msg_list, input_box, text) -> None:
+        """在 worker 中执行命令，使 handler 可以使用 push_screen_wait。"""
+        await self._cmd_handler.run_command(cmd_def, args, msg_list, input_box, text)
+
     def _reload_after_onboarding(self) -> None:
         """冷启动完成后重新加载配置和 provider。
 
@@ -262,7 +267,7 @@ class AideApp(App):
         command = self._cmd_registry.route(text)
         if command is not None:
             cmd_def, args = command
-            await self._cmd_handler.run_command(cmd_def, args, msg_list, input_box, text)
+            self._dispatch_command(cmd_def, args, msg_list, input_box, text)
             return
 
         # 以 / 开头但未匹配
@@ -402,6 +407,27 @@ class AideApp(App):
         finally:
             self._cmd_handler.exit_maintenance()
             self._update_status_bar()
+
+    # ── UI 桥接方法（供 core 层 handler 调用，避免 core→ui 直接导入）───
+
+    async def open_api_config_screen(self, edit_name: str | None = None) -> dict | None:
+        """打开 API 配置屏幕，返回用户填写的配置 dict。用户取消返回 None。"""
+        from .screens.api_config import ApiConfigScreen
+        return await self.push_screen_wait(ApiConfigScreen(edit_name=edit_name))
+
+    def refresh_command_palette(self) -> None:
+        """刷新命令面板的命令列表（语言切换后重新加载翻译后的描述）。"""
+        from .widgets.command_palette import CommandPalette
+        palette = self.query_one("#palette", CommandPalette)
+        palette.set_registry(self._cmd_registry)
+
+    def refresh_status_bar_model(self, model: str | None = None, api_name: str | None = None) -> None:
+        """更新状态栏的模型名和 API 名。"""
+        if model is not None:
+            self._model_name = model
+        if api_name is not None:
+            self._api_name = api_name
+        self._update_status_bar()
 
     # ── 状态栏 ───────────────────────────────────────────────────────
 

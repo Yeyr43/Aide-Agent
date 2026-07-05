@@ -4,8 +4,11 @@
 """
 
 import asyncio
+import logging
 
 from core.locale import t
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 30      # 默认超时（秒）
 MAX_TIMEOUT = 60           # 超时硬上限（秒）
@@ -44,7 +47,7 @@ async def execute(arguments: dict) -> str:
         try:
             proc.kill()
         except Exception:
-            pass
+            logger.debug("Failed to kill subprocess after timeout for command: %s", command)
         return t("tool.run_shell.timeout", timeout=timeout, command=command)
     except FileNotFoundError:
         return t("tool.run_shell.not_found", command=command)

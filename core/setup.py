@@ -10,12 +10,15 @@ P5: aide_dir() 公开化，支持 AIDE_HOME 环境变量。
 """
 
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
 from datetime import datetime, timezone
 
 from core.locale import t, build_soul, set_locale
+
+logger = logging.getLogger(__name__)
 
 
 # ── 目录结构 ─────────────────────────────────────────────────────────
@@ -31,9 +34,6 @@ def aide_dir() -> Path:
         return Path(env).expanduser().resolve()
     return Path.home() / ".aide"
 
-
-# 向后兼容别名（外部模块可能直接引用私有函数名）
-_aide_dir = aide_dir
 
 
 def _ensure_dirs(aide: Path) -> None:
@@ -54,7 +54,6 @@ def _ensure_dirs(aide: Path) -> None:
 
 def _install_builtin_plugins(aide: Path) -> None:
     """将内置模板插件安装到 ~/.aide/plugins/（仅首次 — 删除后不自动恢复）。"""
-    import shutil
     sentinel = aide / ".plugins_installed"
     if sentinel.exists():
         return
@@ -77,7 +76,7 @@ def _install_builtin_plugins(aide: Path) -> None:
             try:
                 shutil.copytree(template_path, dest)
             except OSError:
-                pass
+                logger.debug("Failed to copy plugin template %s, skipping", template_path.name)
 
     sentinel.write_text("", encoding="utf-8")
 
@@ -93,10 +92,9 @@ def _seed_mcp_config(aide: Path) -> None:
     bundled_servers = get_bundle_dir() / "mcp" / "servers.json"
     if bundled_servers.exists():
         try:
-            import shutil
             shutil.copy2(bundled_servers, mcp_servers)
         except OSError:
-            pass
+            logger.debug("Failed to copy bundled MCP servers.json, skipping")
 def _ensure_file(path: Path, content: str) -> bool:
     """如果文件不存在则创建，返回 True 表示新创建。"""
     if not path.exists():
@@ -172,14 +170,31 @@ def ensure_aide_root() -> Path:
             encoding="utf-8",
         )
 
+    # ── API 配置目录 ──
+    (config_dir / "api").mkdir(parents=True, exist_ok=True)
+
     # ── 一次性旧配置迁移 ──
     settings_path = config_dir / "settings.json"
     legacy_config = aide / "agent" / "config.json"
+
+    # 旧 agent/config.json → config/settings.json
     if not settings_path.exists() and legacy_config.exists():
         try:
             shutil.copy2(legacy_config, settings_path)
         except OSError:
-            pass
+            logger.debug("Failed to copy legacy config.json to settings.json, skipping")
+
+    # API 配置迁移：将 settings.json 中的 api_keys 迁移到 config/api/*.json
+    if settings_path.exists():
+        try:
+            from core.config import Config
+            n = Config.migrate_api_configs()
+            if n > 0:
+                import logging
+                logging.getLogger(__name__).info(
+                    "Migrated %d API config(s) to config/api/", n)
+        except Exception:
+            logger.debug("API config migration failed, skipping")
 
     # ── settings.json 不存在时创建（确保 locale 等新字段可用）──
     if not settings_path.exists():
@@ -206,7 +221,7 @@ def ensure_aide_root() -> Path:
                 encoding="utf-8",
             )
         except OSError:
-            pass
+            logger.debug("Failed to create default settings.json, skipping")
 
     return aide
 
@@ -244,9 +259,23 @@ def is_cold_start(aide: Path | None = None) -> bool:
 def has_existing_config() -> bool:
     """检查是否已有可用的 LLM 配置（跳过冷启动向导的条件）。
 
+    优先检查 API 配置文件，其次检查 settings.json 的 llm 字段。
+
     Returns:
-        True 表示 settings.json 中已配置 provider + model，无需向导
+        True 表示已配置 provider + model，无需向导
     """
+    # 1. 检查 API 配置文件
+    api_dir = aide_dir() / "config" / "api"
+    if api_dir.is_dir():
+        for f in api_dir.glob("*.json"):
+            try:
+                cfg = json.loads(f.read_text(encoding="utf-8"))
+                if cfg.get("provider") and cfg.get("model"):
+                    return True
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    # 2. 检查 settings.json 的 llm 字段（兼容旧格式）
     settings_path = aide_dir() / "config" / "settings.json"
     if not settings_path.exists():
         return False

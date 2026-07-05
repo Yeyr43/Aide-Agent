@@ -4,6 +4,7 @@ P4：TextArea 多行输入，自动扩展（1→2→3行），超出滚动（无
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -23,6 +24,8 @@ _HAS_PATH_ROOT = re.compile(
     r'|^/)'                       # POSIX: /home/user/file
 )
 
+logger = logging.getLogger(__name__)
+
 
 class InputBox(TextArea):
     """多行用户消息输入框。
@@ -32,7 +35,6 @@ class InputBox(TextArea):
     - Ctrl+A → 全选（覆盖 TextArea 默认的 cursor_line_start）
     - 高度自适应：1 行 → 2 行 → 最大 3 行，超出滚轮滚动
     - `/` 开头时驱动命令面板（CommandInput）
-
     P4 多模态：粘贴时自动捕获剪贴板图片 + 拖放文件路径。
     """
 
@@ -52,6 +54,8 @@ class InputBox(TextArea):
         Binding("ctrl+w,ctrl+backspace,alt+backspace", "", show=False),
         Binding("ctrl+shift+left", "", show=False),
         Binding("ctrl+shift+right", "", show=False),
+        Binding("ctrl+p", "", show=False),
+        Binding("ctrl+n", "", show=False),
     ]
 
     class UserSubmitted(Message):
@@ -170,7 +174,7 @@ class InputBox(TextArea):
     })
 
     async def _on_key(self, event: events.Key) -> None:
-        """Enter 提交，Ctrl+J / Ctrl+Enter / Shift+Enter 换行。"""
+        """Enter 提交，Ctrl+J/Ctrl+Enter/Shift+Enter 换行。"""
         if event.key in ("ctrl+j", "ctrl+enter", "shift+enter"):
             # Ctrl+J / Shift+Enter → 插入换行
             self._clear_placeholder()
@@ -288,6 +292,7 @@ class InputBox(TextArea):
         try:
             total = self.wrapped_document.height
         except Exception:
+            logger.debug("Failed to get wrapped_document height in _update_line_counter, skipping")
             self.border_subtitle = ""
             return
         if total <= 1:
@@ -307,6 +312,7 @@ class InputBox(TextArea):
         try:
             lines = self.wrapped_document.height
         except Exception:
+            logger.debug("Failed to get wrapped_document height in _sync_height, skipping")
             return
         h = min(max(1, lines), self.MAX_LINES) + 2
         if self.styles.height != h:
@@ -370,6 +376,7 @@ class InputBox(TextArea):
             offset = sum(len(lines[i]) + 1 for i in range(min(row, len(lines))))
             return offset + col
         except Exception:
+            logger.debug("Failed to calculate cursor offset, returning 0")
             return 0
 
     def _char_to_location(self, offset: int) -> tuple[int, int]:
@@ -466,7 +473,7 @@ class InputBox(TextArea):
                 if not self.text:
                     self._show_placeholder_text()
         except Exception:
-            pass
+            logger.debug("Failed to grab clipboard image on paste, skipping")
 
     def _update_placeholder(self) -> None:
         """更新占位符文本（不触发显示）。"""

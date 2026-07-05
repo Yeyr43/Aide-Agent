@@ -190,7 +190,7 @@ class CaptureEngine:
             try:
                 await self._tracker.record(kw, session_id)
             except Exception:
-                pass  # tracker 失败不影响对话
+                logger.debug("Tracker record failed for keyword '%s', skipping", kw)
 
     # ── 主截获流程 ──────────────────────────────────────────────────
 

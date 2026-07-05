@@ -136,5 +136,5 @@ class JsonStore:
             try:
                 os.unlink(tmp_path)
             except OSError:
-                pass
+                logger.debug("Failed to unlink temp file %s, skipping cleanup", tmp_path)
             raise

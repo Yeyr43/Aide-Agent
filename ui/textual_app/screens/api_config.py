@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import json
-
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.screen import Screen
 from textual.widgets import Static, Input, Button
 
+from core.config import Config
 from core.locale import t
-from core.setup import aide_dir
-
-CONFIG_DIR = aide_dir() / "config"
-SETTINGS_PATH = CONFIG_DIR / "settings.json"
+from .api_config_css import API_CONFIG_CSS
 
 
 class ApiConfigScreen(Screen):
@@ -22,119 +18,41 @@ class ApiConfigScreen(Screen):
 
     用法:
         await app.push_screen_wait(ApiConfigScreen())
+        await app.push_screen_wait(ApiConfigScreen(edit_name="my-api"))
     """
 
-    CSS = """
-    ApiConfigScreen {
-        background: #0c0c0c;
-        align: center middle;
-    }
-
-    #api-config-container {
-        width: 56;
-        height: auto;
-        padding: 2 3;
-    }
-
-    #api-config-title {
-        color: #c8c8c0;
-        text-style: bold;
-        margin-bottom: 2;
-        text-align: center;
-        width: 100%;
-    }
-
-    .api-label {
-        color: #888888;
-        margin-bottom: 1;
-    }
-
-    .api-input {
-        width: 100%;
-        margin-bottom: 1;
-        background: #121212;
-        color: #c8c8c0;
-        border: solid #2a2a3a;
-        padding: 0 1;
-    }
-    .api-input:focus {
-        border: solid #7ec8e3;
-    }
-
-    #api-vision-toggle {
-        border: none;
-        background: transparent;
-        color: #7ec8e3;
-        min-width: 16;
-        padding: 0 1;
-        margin-bottom: 1;
-    }
-    #api-vision-toggle:hover {
-        color: #c8c8c0;
-    }
-
-    #api-btn-row {
-        width: 100%;
-        height: auto;
-        margin-top: 1;
-        align: center middle;
-    }
-
-    #api-btn-row Button {
-        margin: 0 1;
-        min-width: 14;
-    }
-    #api-btn-save {
-        background: #1a3a2a;
-        border: solid #7ec8e3;
-        color: #7ec8e3;
-    }
-    #api-btn-save:hover {
-        background: #2a5a3a;
-        color: #00d4ff;
-    }
-    #api-btn-cancel {
-        background: transparent;
-        border: solid #444444;
-        color: #888888;
-    }
-
-    .api-hint {
-        color: #555555;
-        margin-bottom: 1;
-    }
-    """
+    CSS = API_CONFIG_CSS
 
     def __init__(self, edit_name: str = "") -> None:
         super().__init__()
         self._edit_name = edit_name
         self._supports_vision = False
 
-        # 预填：如果编辑已有配置，加载其值；否则用当前 LLM 配置
+        # 预填：优先从 API 配置文件加载，其次用当前活跃 LLM 配置
         self._prefill: dict[str, str] = {}
-        try:
-            if SETTINGS_PATH.exists():
-                settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-                api_keys = settings.get("api_keys", {})
-                if edit_name and edit_name in api_keys:
-                    self._prefill = api_keys[edit_name]
-                    self._prefill["apiname"] = edit_name
-                else:
-                    llm = settings.get("llm", {})
-                    self._prefill = {
-                        "apiname": settings.get("active_api", ""),
-                        "provider": llm.get("provider", ""),
-                        "model": llm.get("model", ""),
-                        "api_key": llm.get("api_key", ""),
-                        "base_url": llm.get("base_url", ""),
-                    }
-                    self._supports_vision = llm.get("supports_vision", False)
-        except (json.JSONDecodeError, OSError):
-            pass
+        if edit_name:
+            api_cfg = Config.load_api_config(edit_name)
+            if api_cfg:
+                self._prefill = {**api_cfg, "apiname": edit_name}
+                self._supports_vision = api_cfg.get("supports_vision", False)
+        else:
+            # 新建模式：用当前活跃 LLM 的默认值
+            from core.config import Config as Cfg
+            config = Cfg.load()
+            self._prefill = {
+                "apiname": Config.get_active_api_name(),
+                "provider": config.llm.provider,
+                "model": config.llm.model,
+                "api_key": config.llm.api_key,
+                "base_url": config.llm.base_url,
+            }
+            self._supports_vision = config.llm.supports_vision
 
     def compose(self) -> ComposeResult:
         with Container(id="api-config-container"):
             yield Static(t("ui.onboard.model_title"), id="api-config-title")
+            # Error message (hidden by default)
+            yield Static("", id="api-error")
             # API Name
             yield Static(t("ui.api.label_name"), classes="api-label", id="api-field-hint-name")
             yield Input(
@@ -202,20 +120,45 @@ class ApiConfigScreen(Screen):
     def _on_cancel(self) -> None:
         self.dismiss(None)
 
+    def _show_error(self, msg: str) -> None:
+        """显示内联错误提示。"""
+        err = self.query_one("#api-error", Static)
+        err.update(msg)
+        err.add_class("visible")
+
+    def _clear_error(self) -> None:
+        """隐藏内联错误提示。"""
+        err = self.query_one("#api-error", Static)
+        err.update("")
+        err.remove_class("visible")
+
     @on(Button.Pressed, "#api-btn-save")
     def _on_save(self) -> None:
+        name = self.query_one("#api-field-name", Input).value.strip()
+        provider = self.query_one("#api-field-provider", Input).value.strip()
+        model = self.query_one("#api-field-model", Input).value.strip()
+
+        # 必填校验
+        if not name or not provider or not model:
+            self._show_error(t("ui.api.error_required"))
+            return
+
+        # 重名校验（编辑模式：改名后与已有配置冲突）
+        if name != self._edit_name and Config.api_config_exists(name):
+            self._show_error(t("ui.api.error_duplicate", name=name))
+            return
+
+        self._clear_error()
+
         result = {
-            "name": self.query_one("#api-field-name", Input).value.strip(),
-            "provider": self.query_one("#api-field-provider", Input).value.strip(),
-            "model": self.query_one("#api-field-model", Input).value.strip(),
+            "name": name,
+            "provider": provider,
+            "model": model,
             "api_key": self.query_one("#api-field-apikey", Input).value.strip(),
             "base_url": self.query_one("#api-field-baseurl", Input).value.strip(),
             "context_window": self.query_one("#api-field-ctx", Input).value.strip(),
             "supports_vision": self._supports_vision,
         }
-        if not result["name"] or not result["provider"] or not result["model"]:
-            return  # need at minimum: name, provider, model
-
         self.dismiss(result)
 
     @on(Input.Submitted)
