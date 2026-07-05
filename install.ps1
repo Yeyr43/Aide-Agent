@@ -1,16 +1,31 @@
-# Aide Agent Installer
-# Usage: powershell -ExecutionPolicy Bypass -File install.ps1
-param([switch]$Uninstall)
+<#
+Aide Agent — 一键安装脚本（源码版）
+用法:
+  # 本地（已 clone 的项目目录内）
+  powershell -ExecutionPolicy Bypass -File install.ps1
+
+  # 远程一键安装
+  irm https://raw.githubusercontent.com/Yeyr43/Aide-Agent/main/install.ps1 | iex
+
+  # 卸载
+  powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
+#>
+param(
+    [switch]$Uninstall,
+    [string]$Branch = "main"
+)
 
 $ErrorActionPreference = "Stop"
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectRoot = (Get-Item $ScriptDir).FullName
-$AideHome = if ($env:AIDE_HOME) { $env:AIDE_HOME } else { Join-Path $env:USERPROFILE ".aide" }
-$AideBin = Join-Path $AideHome "bin"
+$RepoUrl = "https://github.com/Yeyr43/Aide-Agent.git"
+$InstallDir = "$env:LOCALAPPDATA\Aide-Agent"
+$AideBin = "$env:USERPROFILE\.aide\bin"
 
+# ═══════════════════════════════════════════════════════════════
+# 卸载
+# ═══════════════════════════════════════════════════════════════
 if ($Uninstall) {
-    Write-Host "Uninstalling aide command..."
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    Write-Host "Uninstalling Aide Agent..."
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User"); if (-not $userPath) { $userPath = "" }
     if ($userPath -like "*$AideBin*") {
         $newPath = ($userPath -split ";" | Where-Object { $_ -ne $AideBin }) -join ";"
         [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
@@ -20,41 +35,79 @@ if ($Uninstall) {
         Remove-Item -Recurse -Force $AideBin
         Write-Host "  Deleted: $AideBin"
     }
-    $pathFile = Join-Path $AideHome ".project_path"
-    if (Test-Path $pathFile) { Remove-Item $pathFile }
+    if (Test-Path $InstallDir) {
+        Remove-Item -Recurse -Force $InstallDir
+        Write-Host "  Deleted: $InstallDir"
+    }
     Write-Host "Done. Restart terminal to apply."
     exit 0
 }
 
-Write-Host "Installing aide command..."
-Write-Host "  Project: $ProjectRoot"
-Write-Host "  Target: $AideBin"
+# ═══════════════════════════════════════════════════════════════
+# 前置检查
+# ═══════════════════════════════════════════════════════════════
+Write-Host "=== Aide Agent Installer ==="
 
-# Save project location
-$ProjectRoot | Out-File -Encoding ASCII (Join-Path $AideHome ".project_path")
+# 检查 git
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Error "git not found. Install Git: https://git-scm.com/download/win"
+    exit 1
+}
+Write-Host "[OK] git: $(git --version)"
 
+# 检查 uv
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+    Write-Host "Installing uv..."
+    powershell -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
+    $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+}
+Write-Host "[OK] uv: $(uv --version)"
+
+# ═══════════════════════════════════════════════════════════════
+# Clone / Update
+# ═══════════════════════════════════════════════════════════════
+if (Test-Path (Join-Path $InstallDir ".git")) {
+    Write-Host "Updating existing install at $InstallDir..."
+    Push-Location $InstallDir
+    git fetch origin
+    git checkout $Branch
+    git pull origin $Branch
+    Pop-Location
+} else {
+    Write-Host "Cloning to $InstallDir..."
+    git clone --branch $Branch $RepoUrl $InstallDir
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Install dependencies
+# ═══════════════════════════════════════════════════════════════
+Push-Location $InstallDir
+Write-Host "Installing dependencies (uv sync)..."
+uv sync
+Pop-Location
+
+# ═══════════════════════════════════════════════════════════════
+# Create launcher + PATH
+# ═══════════════════════════════════════════════════════════════
 New-Item -ItemType Directory -Force -Path $AideBin | Out-Null
 
-# Create aide.bat
 $batContent = @"
 @echo off
 title Aide Agent
-cd /d $ProjectRoot
+cd /d $InstallDir
 uv run python shell\main.py
 "@
 [System.IO.File]::WriteAllText((Join-Path $AideBin "aide.bat"), $batContent, [System.Text.Encoding]::ASCII)
-Write-Host "  Created aide.bat"
+Write-Host "[OK] Created aide.bat"
 
-# Add to user PATH
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if (-not $userPath) { $userPath = "" }
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User"); if (-not $userPath) { $userPath = "" }
 if ($userPath -notlike "*$AideBin*") {
     $newPath = if ($userPath) { "$userPath;$AideBin" } else { $AideBin }
     [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-    Write-Host "  Added to PATH: $AideBin"
+    Write-Host "[OK] Added to PATH: $AideBin"
 }
 
 Write-Host ""
-Write-Host "Install complete! Restart terminal and type 'aide' to start."
+Write-Host "Aide Agent installed! Restart terminal and type 'aide' to start."
 Write-Host ""
-Write-Host "Uninstall: powershell -ExecutionPolicy Bypass -File $ProjectRoot\install.ps1 -Uninstall"
+Write-Host "Uninstall: aide -Uninstall  (or rerun this script with -Uninstall)"
