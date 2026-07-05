@@ -213,16 +213,16 @@ class OnboardingScreen(Screen):
             self._answers["preferences"] = tmpl["preferences"]
         self._go_next()
 
-    @on(Button.Pressed, "#btn-role-dev")
-    def _on_role_dev(self) -> None:
+    @on(Button.Pressed, "#btn-role-developer")
+    def _on_role_developer(self) -> None:
         self._apply_role("developer")
 
     @on(Button.Pressed, "#btn-role-writer")
     def _on_role_writer(self) -> None:
         self._apply_role("writer")
 
-    @on(Button.Pressed, "#btn-role-mgr")
-    def _on_role_mgr(self) -> None:
+    @on(Button.Pressed, "#btn-role-manager")
+    def _on_role_manager(self) -> None:
         self._apply_role("manager")
 
     @on(Button.Pressed, "#btn-role-skip")
