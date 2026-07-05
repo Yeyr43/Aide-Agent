@@ -73,7 +73,7 @@ _FIELD_IDS = [
     "field-hint-apikey", "field-hint-baseurl", "field-hint-context-window",
     "field-hint-workstyle", "field-hint-longterm",
     "field-hint-newline-1",
-    "role-row", "btn-role-dev", "btn-role-writer", "btn-role-mgr", "btn-role-skip",
+    "role-row", "btn-role-developer", "btn-role-writer", "btn-role-manager", "btn-role-skip",
     "field-hint-role",
 ]
 
