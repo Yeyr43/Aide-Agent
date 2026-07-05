@@ -43,9 +43,16 @@ hiddenimports = [
     "textual.keys",
     "textual._xterm_parser",
     "textual._path",
+    # Textual 终端驱动（运行时按平台动态加载）
+    "textual.drivers",
+    "textual.drivers.linux_driver",
+    "textual.drivers.windows_driver",
+    "textual.drivers.macos_driver",
     # onnxruntime 原生后端
+    "onnxruntime",
     "onnxruntime.capi",
     "onnxruntime.capi.onnxruntime_pybind11_state",
+    "onnxruntime.transformers",
     # pystray 平台后端
     "pystray._win32",
     "pystray._darwin",
@@ -53,6 +60,10 @@ hiddenimports = [
     "pystray._gtk",
     "pystray._appindicator",
     "pystray._util",
+    # PyObjC 桥接（macOS pystray 依赖，不会被自动收集）
+    "Foundation",
+    "AppKit",
+    "Quartz",
     # Pillow
     "PIL.Image",
     "PIL.ImageDraw",

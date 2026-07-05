@@ -153,9 +153,89 @@ def _ensure_daemon() -> None:
         )
 
 
+def _smoke_test() -> None:
+    """烟雾测试：验证所有关键模块可导入 + 资源路径正确。"""
+    errors: list[str] = []
+
+    # 1. 核心模块导入
+    for mod_name in [
+        "core.setup", "core.config", "core.storage", "core.resources",
+        "core.platform", "core.locale", "core.locale_data",
+        "core.kernel.agent", "core.kernel.state", "core.kernel.protocols",
+        "core.kernel.bootstrap", "core.kernel.fc_loop", "core.kernel.context",
+        "core.context.pipeline", "core.context.ingester",
+        "core.context.compactor", "core.context.relevance",
+        "core.context.embeddings", "core.context.token_counter",
+        "core.memory.capture", "core.memory.entries", "core.memory.updater",
+        "core.memory.recall", "core.memory.tracker",
+        "core.llm_gateway.provider", "core.llm_gateway.openai_provider",
+        "core.llm_gateway.ollama_provider", "core.llm_gateway.image_utils",
+        "core.llm_gateway.content_builder",
+        "core.commands", "core.commands.builtin.handlers",
+        "core.commands.builtin.settings_handlers",
+        "core.commands.builtin.mcp_handlers",
+        "core.commands.builtin.plugin_commands",
+        "core.commands.builtin._compat",
+        "core.plugins.contract", "core.plugins.host", "core.plugins.sdk",
+        "core.plugins.slots",
+        "core.tools", "core.tools.discovery", "core.tools.retry",
+        "core.tools.builtin.read_file", "core.tools.builtin.write_file",
+        "core.tools.builtin.edit_file", "core.tools.builtin.run_shell",
+        "core.tools.builtin.search_memory", "core.tools.builtin.web_search",
+        "core.tools.builtin.web_fetch", "core.tools.builtin.list_dir",
+        "core.tools.builtin.search_in_files", "core.tools.builtin.clipboard",
+        "core.tools.mcp.adapter", "core.tools.mcp.protocol",
+        "core.tools.mcp.transport", "core.tools.mcp.fault",
+        "core.tools.mcp.watcher",
+        "core.sessions.manager", "core.sessions.restorer",
+    ]:
+        try:
+            __import__(mod_name)
+        except ImportError as e:
+            errors.append(f"IMPORT {mod_name}: {e}")
+
+    # 2. UI 模块（可能因缺少图形环境失败，仅导入检查）
+    for mod_name in [
+        "ui.textual_app.app", "ui.textual_app.bridge",
+        "ui.textual_app.platform", "ui.textual_app.command_handler",
+        "ui.textual_app.screens.home", "ui.textual_app.screens.onboarding",
+        "ui.textual_app.widgets.message_list", "ui.textual_app.widgets.input_box",
+        "ui.textual_app.widgets.command_palette", "ui.textual_app.widgets.status_bar",
+    ]:
+        try:
+            __import__(mod_name)
+        except ImportError as e:
+            errors.append(f"IMPORT {mod_name}: {e}")
+
+    # 3. 资源路径验证
+    from core.resources import get_resource_path
+    for name, rel in [
+        ("CSS", "ui/textual_app/app.tcss"),
+        ("插件模板", "core/plugins/templates/hello-plugin"),
+        ("MCP 配置", "mcp/servers.json"),
+        ("locale_data", "core/locale_data.py"),
+    ]:
+        p = get_resource_path(rel)
+        if not p.exists():
+            errors.append(f"RESOURCE {name}: not found at {p}")
+
+    if errors:
+        for e in errors:
+            print(f"FAIL: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print("SMOKE TEST PASSED")
+    sys.exit(0)
+
+
 # ── 入口 ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # 烟雾测试模式：导入所有模块 + 检查资源 → 退出
+    if "--smoke-test" in sys.argv:
+        _smoke_test()
+        return  # unreachable, _smoke_test calls sys.exit
+
     ensure_aide_root()
 
     if not _acquire_lock():
