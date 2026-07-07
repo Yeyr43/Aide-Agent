@@ -3,14 +3,11 @@
 P5: 从 handlers.py 拆分，保持独立。
 """
 
-from typing import Any
-
 from core.locale import t
-from ._compat import _cmd
+from core.commands.context import CommandContext
 
 
-@_cmd("mcp", t("cmd.mcp.desc"))
-async def handle_mcp(app: Any, args: str) -> str:
+async def handle_mcp(app: CommandContext, args: str) -> str:
     """MCP 服务端管理命令。
 
     子命令:
@@ -65,11 +62,8 @@ async def handle_mcp(app: Any, args: str) -> str:
             return t("cmd.mcp.usage_connect")
         try:
             await adapter.connect(rest)
-            tools = await adapter.discover_tools(rest)
-            if app is not None and hasattr(app, '_tool_registry'):
-                for tool in tools:
-                    app._tool_registry.register(tool)
-            return t("cmd.mcp.connected", name=rest, count=len(tools))
+            count = await adapter._sync_tools_to_registry()
+            return t("cmd.mcp.connected", name=rest, count=count)
         except KeyError:
             return t("cmd.mcp.not_found", name=rest)
         except Exception as e:
@@ -83,10 +77,6 @@ async def handle_mcp(app: Any, args: str) -> str:
 
     elif sub == "reload":
         added, disconnected, reconnected = await adapter.reload_config()
-        all_tools = await adapter.discover_all_tools()
-        if app is not None and hasattr(app, '_tool_registry'):
-            for tool in all_tools:
-                app._tool_registry.register(tool)
         return t("cmd.mcp.reloaded", added=added, reconnected=reconnected,
                  disconnected=disconnected)
 

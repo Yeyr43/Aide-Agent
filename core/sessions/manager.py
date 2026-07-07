@@ -21,8 +21,10 @@ class SessionInfo:
 class SessionManager:
     """会话生命周期管理。"""
 
-    def __init__(self, sessions_root: Path) -> None:
+    def __init__(self, sessions_root: Path,
+                 search_index = None) -> None:
         self._root = sessions_root
+        self._search_index = search_index  # SearchIndex | None
 
     def create(self, first_msg: str) -> SessionInfo:
         """创建新会话：生成目录 + meta.json。"""
@@ -75,6 +77,9 @@ class SessionManager:
         if not session_dir.is_dir():
             return False
         shutil.rmtree(session_dir)
+        # 同步清理搜索索引
+        if self._search_index is not None:
+            self._search_index.remove_session(session_id)
         return True
 
     def rollback(self, session_dir: Path, target_turn: int) -> int:
@@ -83,7 +88,6 @@ class SessionManager:
         副作用：
           - 删除 messages/turn_{N+1}.json 到 turn_{M}.json
           - 截断 timeline.json 到前 target_turn 条
-          - 截断 cache.json 到前 target_turn 条
           - 从 overview.json 检查点还原匹配的 overview.md
 
         Args:
@@ -126,14 +130,7 @@ class SessionManager:
             key="turn",
         )
 
-        # 3. 截断 cache.json
-        self._truncate_json_array(
-            session_dir / "cache.json",
-            target_turn,
-            key="turn",
-        )
-
-        # 4. 还原 overview.md + 截断 overview.json 检查点
+        # 3. 还原 overview.md + 截断 overview.json 检查点
         from core.context.compactor import restore_overview_from_checkpoint
         restore_overview_from_checkpoint(session_dir, target_turn)
 

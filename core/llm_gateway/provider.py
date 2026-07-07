@@ -9,9 +9,11 @@ P1 扩展：新增 StreamEvent 类型 + _parse_sse_stream_with_tools()，
 
 import json
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Protocol
+from typing import AsyncIterator, Protocol, runtime_checkable
 
 import httpx
+
+from .tool_call_builder import ToolCallAccumulator, build_tool_calls
 
 
 # ── StreamEvent 类型 ──────────────────────────────────────────────
@@ -32,8 +34,12 @@ class StreamEnd:
 
 # ── Protocol ──────────────────────────────────────────────────────
 
+@runtime_checkable
 class AbstractProvider(Protocol):
     """LLM Provider 协议。
+
+    所有 Provider 必须实现 chat() 和 chat_with_tools()。
+    AnthropicProvider / OpenAICompatibleProvider 均满足此协议。
 
     P0: chat() — 纯文本流式对话
     P1: chat_with_tools() — 带 function calling 的流式对话
@@ -109,7 +115,7 @@ async def _parse_sse_stream_with_tools(
         TextDelta: 文本 token
         StreamEnd: 流结束（最后必然 yield 一次）
     """
-    accumulators: dict[int, dict] = {}   # index → {id, name, arguments_str}
+    accumulators: dict[int, ToolCallAccumulator] = {}
     finish_reason: str | None = None
 
     async for line in response.aiter_lines():
@@ -143,17 +149,17 @@ async def _parse_sse_stream_with_tools(
         for tc in tool_calls:
             idx = tc.get("index", 0)
             if idx not in accumulators:
-                accumulators[idx] = {"id": "", "name": "", "arguments_str": ""}
+                accumulators[idx] = ToolCallAccumulator()
 
             acc = accumulators[idx]
             if "id" in tc and tc["id"]:
-                acc["id"] = tc["id"]
+                acc.id = tc["id"]
 
             func = tc.get("function", {})
             if "name" in func and func["name"]:
-                acc["name"] = func["name"]
+                acc.name = func["name"]
             if "arguments" in func:
-                acc["arguments_str"] += func["arguments"]
+                acc.arguments_str += func["arguments"]
 
         # ── finish_reason ──
         if choice_finish is not None:
@@ -161,23 +167,7 @@ async def _parse_sse_stream_with_tools(
             break
 
     # ── 组装最终 tool_calls ──
-    parsed_calls: list[dict] = []
-    for idx in sorted(accumulators.keys()):
-        acc = accumulators[idx]
-        try:
-            args = json.loads(acc["arguments_str"]) if acc["arguments_str"].strip() else {}
-        except json.JSONDecodeError:
-            args = {}  # JSON 畸形时降级为空对象，避免循环中断
-        parsed_calls.append({
-            "id": acc["id"],
-            "type": "function",
-            "function": {
-                "name": acc["name"],
-                "arguments": json.dumps(args, ensure_ascii=False),
-            },
-        })
-
     yield StreamEnd(
         finish_reason=finish_reason or "stop",
-        tool_calls=parsed_calls,
+        tool_calls=build_tool_calls(accumulators),
     )

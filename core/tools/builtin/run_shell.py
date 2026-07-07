@@ -1,12 +1,18 @@
 """run_shell — 执行 Shell 命令。
 
-安全限制：超时上限 60s，输出上限 100KB，无命令白名单（Soul 软引导）。
+安全限制：超时上限 60s，输出上限 100KB（尾重截断），无命令白名单（Soul 软引导）。
+Windows 用系统 shell（cmd.exe），macOS/Linux 用 sh。
+
+实现：subprocess.run + asyncio.to_thread（线程池），避免 Textual asyncio 事件循环兼容问题。
 """
 
 import asyncio
 import logging
+import subprocess as _subprocess
 
 from core.locale import t
+from core.platform import IS_WINDOWS
+from core.tools.truncation import truncate_output
 
 logger = logging.getLogger(__name__)
 
@@ -14,9 +20,18 @@ DEFAULT_TIMEOUT = 30      # 默认超时（秒）
 MAX_TIMEOUT = 60           # 超时硬上限（秒）
 MAX_OUTPUT_BYTES = 100 * 1024  # 输出硬上限（100KB）
 
+# shell 输出尾重截断比例：保留 20% 头部 + 80% 尾部（错误/结果通常在末尾）
+_SHELL_TRUNC_HEAD_RATIO = 0.2
+
+
+def _shell_hint() -> str:
+    """告诉 LLM 该用什么 shell 语法（当前语言）。"""
+    key = "tool.run_shell.win_hint" if IS_WINDOWS else "tool.run_shell.nix_hint"
+    return t(key)
+
 
 async def execute(arguments: dict) -> str:
-    """异步执行 shell 命令。
+    """异步执行 shell 命令（subprocess.run → asyncio.to_thread）。
 
     Args:
         arguments: {"command": str, "timeout": int (可选)}
@@ -34,38 +49,35 @@ async def execute(arguments: dict) -> str:
     timeout = min(timeout, MAX_TIMEOUT)
 
     try:
-        proc = await asyncio.create_subprocess_shell(
+        result: _subprocess.CompletedProcess = await asyncio.to_thread(
+            _subprocess.run,
             command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,  # stderr → stdout 合并
+            shell=True,
+            stdin=_subprocess.DEVNULL,
+            capture_output=True,
+            timeout=timeout,
         )
 
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        output = stdout.decode("utf-8", errors="replace").strip()
-
-    except asyncio.TimeoutError:
+        # 解码：UTF-8 优先，回退系统编码（Windows cmd.exe 输出 GBK）
+        raw = result.stdout + result.stderr
         try:
-            proc.kill()
-        except Exception:
-            logger.debug("Failed to kill subprocess after timeout for command: %s", command)
+            output = raw.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            import locale
+            output = raw.decode(locale.getpreferredencoding(), errors="replace").strip()
+
+    except _subprocess.TimeoutExpired:
         return t("tool.run_shell.timeout", timeout=timeout, command=command)
-    except FileNotFoundError:
-        return t("tool.run_shell.not_found", command=command)
     except Exception as e:
+        logger.warning("run_shell exception: %s", e, exc_info=True)
         return t("tool.run_shell.failed", e=e)
 
-    exit_code = proc.returncode
+    exit_code = result.returncode
 
-    # ── 输出截断：超过 100KB 截断首尾 ──
-    if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
-        half = MAX_OUTPUT_BYTES // 2
-        head = output[:half]
-        tail = output[-half:]
-        output = (
-            f"{head}\n\n"
-            f"…（输出过大，已截断）…\n\n"
-            f"{tail}"
-        )
+    # ── 输出截断：超过 100KB 尾重截断（错误/结果通常在末尾）──
+    output = truncate_output(
+        output, MAX_OUTPUT_BYTES, unit="bytes", head_ratio=_SHELL_TRUNC_HEAD_RATIO,
+    )
 
     if output:
         header = t("tool.run_shell.exit_code", code=exit_code) + "\n"
@@ -81,7 +93,7 @@ schema = {
     "properties": {
         "command": {
             "type": "string",
-            "description": "要执行的 shell 命令",
+            "description": f"要执行的 shell 命令。{_shell_hint()}",
         },
         "timeout": {
             "type": "integer",

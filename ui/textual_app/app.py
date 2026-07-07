@@ -22,7 +22,6 @@ from core.kernel import AppBootstrap
 from core.llm_gateway.content_builder import build_user_content
 from core.llm_gateway.image_utils import save_images_to_session
 from core.kernel.protocols import TokenUsage
-from core.context.token_counter import compute_context_usage
 from core.sessions.restorer import restore_session
 
 from .widgets.input_box import InputBox
@@ -140,8 +139,9 @@ class AideApp(App):
         except Exception as e:
             logger.warning(t("app.provider_init_failed", e=e))
 
-        # 更新 pipeline 参数（用户可能在设置中调整了 window_turns 等）
-        self._pipeline.window_turns = config.app.window_turns
+        # 更新 pipeline 参数（用户可能在设置中调整了 full_text_turns 等）
+        self._pipeline.full_text_turns = config.app.full_text_turns
+        self._pipeline.summary_turns = config.app.summary_turns
         self._pipeline.relevance_threshold = config.app.relevance_threshold
 
         # 更新内核中的 provider 引用（kernel / fc_loop / compactor / updater）
@@ -434,31 +434,16 @@ class AideApp(App):
     def _update_status_bar(self) -> None:
         """更新状态栏：token 可视化条 + 模型名。
 
-        Chat 后使用 agent.py 的准确计数（system + trimmed_conv + tools）。
-        未聊天时（恢复会话等）回退到从 conversation 估算，避免始终显示 0。
+        委托 StatusBar.update_from_session 自动估算 token 用量。
         """
-        context_window = self._config.app.context_window
-
-        if self._last_usage is not None:
-            estimated = self._last_usage.total_tokens
-            pct = self._last_usage.context_pct
-        elif self._session.conversation:
-            # 会话恢复 / 尚未聊天 → 从 conversation 估算
-            # 不含 system prompt，因此偏低，但比显示 0 好
-            tools_schema = self._tool_registry.get_schemas()
-            estimated, pct = compute_context_usage(
-                self._session.conversation, tools_schema,
-                context_window=context_window,
-            )
-        else:
-            estimated, pct = 0, 0.0
-
         status_bar = self.query_one("#status-bar", StatusBar)
-        status_bar.update_info(
-            tokens=estimated, token_pct=pct,
+        status_bar.update_from_session(
+            usage=self._last_usage,
+            conversation=self._session.conversation,
+            tools_schema=self._tool_registry.get_schemas(),
             model=self._model_name,
             api_name=self._api_name,
-            context_window=context_window,
+            context_window=self._config.app.context_window,
         )
 
     # ── P3: 系统托盘 ─────────────────────────────────────────────────

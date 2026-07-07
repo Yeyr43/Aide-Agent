@@ -13,6 +13,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from core.tools import ToolDefinition
 from core.locale import t
@@ -88,6 +89,8 @@ class MCPAdapter:
         # 配置监听（延迟初始化，需要 mcp_dir）
         self._watcher: ConfigWatcher | None = None
         self._mcp_dir: str = ""
+        # ToolRegistry 引用（由 AppBootstrap 注入，用于热加载同步工具）
+        self._tool_registry: Any = None
 
     # ── 服务端管理 ──────────────────────────────────────────────────
 
@@ -258,6 +261,38 @@ class MCPAdapter:
         if self._watcher:
             self._watcher.stop()
             self._watcher = None
+
+    # ── ToolRegistry 同步 ───────────────────────────────────────────
+
+    def set_tool_registry(self, registry: Any) -> None:
+        """注入 ToolRegistry 引用，用于热加载时自动同步 MCP 工具。"""
+        self._tool_registry = registry
+
+    async def _sync_tools_to_registry(self) -> int:
+        """将当前已连接服务端的工具同步到 ToolRegistry。
+
+        移除所有旧 mcp_* 工具，注册当前发现的全部 MCP 工具。
+        用于热加载和手动重连后保持 ToolRegistry 与 MCP 服务端一致。
+
+        Returns:
+            注册的工具总数
+        """
+        if self._tool_registry is None:
+            return 0
+
+        # 清除旧的 MCP 工具
+        for name in list(self._tool_registry.list_names()):
+            if name.startswith("mcp_"):
+                self._tool_registry.unregister(name)
+
+        # 发现并注册当前工具
+        all_tools = await self.discover_all_tools()
+        for tool in all_tools:
+            self._tool_registry.register(tool)
+
+        if all_tools:
+            logger.info(f"[MCP] 已同步 {len(all_tools)} 个工具到 ToolRegistry")
+        return len(all_tools)
 
     # ── 工具发现 ────────────────────────────────────────────────────
 

@@ -1,44 +1,66 @@
-"""search_in_files — 在文件中搜索内容（正则表达式）。
+"""search_in_files — 文件内容搜索 + 目录浏览，二合一。
 
-类似 ripgrep/grep，支持 glob 过滤和递归搜索。
-安全限制：最多扫描 5000 个文件，跳过 >1MB 的文件。
+当 pattern 非空时：正则搜索文件内容（类似 grep），支持 glob 过滤和递归。
+当 pattern 为空时：列出目录内容（类似 ls），支持 glob 过滤和递归。
+
+安全限制：搜索最多 5000 个文件，跳过 >1MB 的文件；列表最多 200 条目。
 """
 
+from __future__ import annotations
+
+import fnmatch
+import os
 import re
 from pathlib import Path
 
 from core.locale import t
 
-MAX_FILES = 5000                # 最多扫描文件数
-MAX_FILE_SIZE = 1 * 1024 * 1024  # 跳过超过 1MB 的文件
+MAX_FILES = 5000
+MAX_FILE_SIZE = 1 * 1024 * 1024
+MAX_LIST_ITEMS = 200
+MAX_LIST_SIZE = 20 * 1024
+MAX_LIST_DEPTH = 5
+
+_IGNORED_DIRS = frozenset({
+    ".git", "__pycache__", "node_modules", ".venv", "venv", ".tox",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
+    ".idea", ".vscode", ".DS_Store", ".next", ".nuxt",
+})
 
 
 async def execute(arguments: dict) -> str:
-    """在文件中搜索匹配 pattern 的内容。
+    """搜索文件内容或列出目录。
 
     Args:
         arguments: {
-            "pattern": str       — 正则表达式搜索模式
-            "directory": str     — 搜索目录（默认当前工作目录）
-            "glob": str          — 文件名过滤 glob（如 "*.py"、"*.{ts,tsx}"）
-            "max_results": int   — 最大结果数（默认 50，最大 200）
-            "case_sensitive": bool — 是否区分大小写（默认 False）
+            "pattern": str         — 正则搜索模式。空字符串 = 目录列表模式
+            "directory": str       — 搜索/列表目录（默认当前目录）
+            "glob": str            — 文件名过滤 glob
+            "max_results": int     — 最大结果数（搜索默认 50 最大 200，列表默认 200）
+            "case_sensitive": bool — 搜索是否区分大小写（默认 False）
+            "recursive": bool      — 列表模式是否递归（默认 False）
         }
-
-    Returns:
-        搜索结果，格式为 "文件:行号:内容"
     """
     pattern = arguments.get("pattern", "").strip()
-    if not pattern:
-        return t("tool.search_in_files.empty_pattern")
-
     directory = arguments.get("directory", "") or "."
     dir_path = Path(directory).expanduser().resolve()
+
     if not dir_path.exists():
         return t("tool.search_in_files.dir_not_found", path=dir_path)
     if not dir_path.is_dir():
         return t("tool.search_in_files.not_dir", path=dir_path)
 
+    # ── pattern 为空 → 目录列表模式 ──
+    if not pattern:
+        return await _list_mode(dir_path, arguments)
+
+    # ── pattern 非空 → 内容搜索模式 ──
+    return await _search_mode(dir_path, pattern, arguments)
+
+
+# ── 内容搜索模式 ──────────────────────────────────────────────────────────
+
+async def _search_mode(dir_path: Path, pattern: str, arguments: dict) -> str:
     file_glob = arguments.get("glob", "")
     max_results = arguments.get("max_results", 50)
     if not isinstance(max_results, int) or max_results < 1:
@@ -58,18 +80,16 @@ async def execute(arguments: dict) -> str:
     oversized = 0
 
     try:
-        files = _gather_files(dir_path, file_glob)
-    except PermissionError as e:
-        return t("tool.search_in_files.no_permission", e=e)
+        file_iter = _iter_files(dir_path, file_glob)
+    except PermissionError:
+        return t("tool.search_in_files.no_permission", path=dir_path)
 
-    for file_path in files:
+    for file_path in file_iter:
         if file_count >= MAX_FILES:
             results.append("\n" + t("tool.search_in_files.too_many_files", max=MAX_FILES))
             break
-
         file_count += 1
 
-        # ── 跳过过大文件 ──
         try:
             if file_path.stat().st_size > MAX_FILE_SIZE:
                 oversized += 1
@@ -99,22 +119,60 @@ async def execute(arguments: dict) -> str:
     return "\n".join(results)
 
 
-def _gather_files(dir_path: Path, file_glob: str) -> list[Path]:
-    """收集要搜索的文件列表。"""
-    if file_glob:
-        files = sorted(dir_path.rglob(file_glob))
-    else:
-        files = sorted(dir_path.rglob("*"))
+# ── 目录列表模式 ──────────────────────────────────────────────────────────
 
-    # 过滤：只取文件，跳过常见忽略目录
-    ignored = {".git", "__pycache__", "node_modules", ".venv", "venv", ".tox",
-               ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
-               ".idea", ".vscode", ".DS_Store", ".next", ".nuxt"}
-    return [
-        f for f in files
-        if f.is_file()
-        and not any(p in ignored for p in f.parts)
-    ]
+async def _list_mode(dir_path: Path, arguments: dict) -> str:
+    file_glob = arguments.get("glob", "") or "*"
+    recursive = arguments.get("recursive", False)
+    max_results = arguments.get("max_results", MAX_LIST_ITEMS)
+    if not isinstance(max_results, int) or max_results < 1:
+        max_results = MAX_LIST_ITEMS
+    max_results = min(max_results, MAX_LIST_ITEMS)
+
+    try:
+        if recursive:
+            entries = _rglob_depth(dir_path, file_glob, MAX_LIST_DEPTH)
+        else:
+            entries = _scandir_entries(dir_path, file_glob)
+    except PermissionError:
+        return t("tool.search_in_files.no_permission", path=dir_path)
+    except Exception as e:
+        return t("tool.search_in_files.list_failed", e=e)
+
+    if not entries:
+        result = t("tool.search_in_files.empty_dir", path=dir_path)
+        if file_glob != "*":
+            result += t("tool.search_in_files.empty_pattern", pattern=file_glob)
+        return result
+
+    entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
+
+    lines = [f"## {dir_path.resolve()}", t("tool.search_in_files.total", n=len(entries)) + "\n"]
+    count = 0
+
+    for entry in entries:
+        if count >= max_results:
+            lines.append("\n" + t("tool.search_in_files.max_items", max=max_results))
+            break
+        icon = "📁" if entry["is_dir"] else "📄"
+        display = entry["display"]
+        lines.append(f"  {icon} {display:<40} {entry['size']:>8}  {entry['mtime']}")
+        count += 1
+
+    result = "\n".join(lines)
+    if len(result.encode("utf-8")) > MAX_LIST_SIZE:
+        result = result[:MAX_LIST_SIZE] + "\n" + t("tool.search_in_files.too_large")
+    return result
+
+
+# ── 文件遍历 ──────────────────────────────────────────────────────────────
+
+def _iter_files(dir_path: Path, file_glob: str):
+    """流式生成器：逐个产出要搜索的文件，不预收集到内存。"""
+    pattern = file_glob or "*"
+    for f in dir_path.rglob(pattern):
+        if f.is_file() and not any(p in _IGNORED_DIRS for p in f.parts):
+            yield f
 
 
 def _search_file(file_path: Path, regex: re.Pattern) -> list[tuple[int, str]]:
@@ -127,18 +185,94 @@ def _search_file(file_path: Path, regex: re.Pattern) -> list[tuple[int, str]]:
     return matches
 
 
-# ── JSON Schema ───────────────────────────────────────────────────
+# ── 目录遍历（os.scandir，stat 由 OS 缓存） ───────────────────────────────
+
+def _fmt_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f}KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f}MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.1f}GB"
+
+
+def _fmt_time(timestamp: float) -> str:
+    from datetime import datetime
+    return datetime.fromtimestamp(timestamp).strftime("%m-%d %H:%M")
+
+
+def _scandir_entries(dir_path: Path, pattern: str) -> list[dict]:
+    """使用 os.scandir 列出目录（非递归）。"""
+    entries: list[dict] = []
+    try:
+        with os.scandir(dir_path) as it:
+            for de in it:
+                if not fnmatch.fnmatch(de.name, pattern):
+                    continue
+                try:
+                    st = de.stat()
+                    size = _fmt_size(st.st_size)
+                    mtime = _fmt_time(st.st_mtime)
+                except OSError:
+                    size = "?"
+                    mtime = "?"
+                entries.append({
+                    "name": de.name, "display": de.name,
+                    "is_dir": de.is_dir(), "size": size, "mtime": mtime,
+                })
+    except PermissionError:
+        raise
+    return entries
+
+
+def _rglob_depth(root: Path, pattern: str, max_depth: int) -> list[dict]:
+    entries: list[dict] = []
+    _walk_depth(root, root, pattern, 0, max_depth, entries)
+    return entries
+
+
+def _walk_depth(
+    root: Path, current: Path, pattern: str, depth: int, max_depth: int,
+    entries: list[dict],
+) -> None:
+    if depth > max_depth:
+        return
+    try:
+        with os.scandir(current) as it:
+            for de in sorted(it, key=lambda d: d.name):
+                rel = str(Path(de.path).relative_to(root))
+                if fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(de.name, pattern):
+                    try:
+                        st = de.stat()
+                        size = _fmt_size(st.st_size)
+                        mtime = _fmt_time(st.st_mtime)
+                    except OSError:
+                        size = "?"
+                        mtime = "?"
+                    entries.append({
+                        "name": de.name, "display": rel,
+                        "is_dir": de.is_dir(), "size": size, "mtime": mtime,
+                    })
+                if de.is_dir():
+                    _walk_depth(root, Path(de.path), pattern, depth + 1, max_depth, entries)
+    except PermissionError:
+        pass
+
+
+# ── JSON Schema ───────────────────────────────────────────────────────────
 
 schema = {
     "type": "object",
     "properties": {
         "pattern": {
             "type": "string",
-            "description": "正则表达式搜索模式",
+            "description": "正则搜索模式。留空则进入目录列表模式（显示文件和子目录）。",
         },
         "directory": {
             "type": "string",
-            "description": "搜索目录路径（默认当前目录）",
+            "description": "搜索/列表目录路径（默认当前目录）",
         },
         "glob": {
             "type": "string",
@@ -146,12 +280,16 @@ schema = {
         },
         "max_results": {
             "type": "integer",
-            "description": "最大结果数（默认 50，最大 200）",
+            "description": "最大结果数（搜索默认 50 最大 200，列表默认 200）",
         },
         "case_sensitive": {
             "type": "boolean",
-            "description": "是否区分大小写（默认 false）",
+            "description": "是否区分大小写（搜索模式，默认 false）",
+        },
+        "recursive": {
+            "type": "boolean",
+            "description": "是否递归（列表模式，默认 false）",
         },
     },
-    "required": ["pattern"],
+    "required": [],
 }

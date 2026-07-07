@@ -13,14 +13,13 @@ import logging
 import zipfile
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any
-
 from core.locale import t
 from core.platform import user_download_dir
+from core.setup import aide_dir
+from core.commands.context import CommandContext
 
-from ._compat import (
-    AIDE_ROOT, AGENT_ROOT, _register_to_commands, _cmd,
-)
+AIDE_ROOT = aide_dir()
+AGENT_ROOT = AIDE_ROOT / "agent"
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +27,7 @@ logger = logging.getLogger(__name__)
 # ── 命令实现 ─────────────────────────────────────────────────────────
 
 
-@_cmd("help", t("cmd.help.desc"))
-async def handle_help(app: Any, args: str) -> str:
+async def handle_help(app: CommandContext, args: str) -> str:
     lines = [t("cmd.help.title")]
 
     # 从 CommandRegistry 读取（包含插件命令）
@@ -43,8 +41,7 @@ async def handle_help(app: Any, args: str) -> str:
     return "\n".join(lines)
 
 
-@_cmd("profile", t("cmd.profile.desc"))
-async def handle_profile(app: Any, args: str) -> str:
+async def handle_profile(app: CommandContext, args: str) -> str:
     # P5: 子命令分发
     parts = args.strip().split(maxsplit=1)
     sub = parts[0].lower() if parts else ""
@@ -127,15 +124,13 @@ async def _handle_profile_rollback(args: str) -> str:
     return t("cmd.profile.rollback_failed", reason=message)
 
 
-@_cmd("compact", t("cmd.compact.desc"))
-async def handle_compress(app: Any, args: str) -> str:
+async def handle_compress(app: CommandContext, args: str) -> str:
     """kind="maintenance" — CommandHandler 在 handler 执行前已启动 compress_worker，
     此函数实际不会被调用，仅作为 COMMANDS dict 注册锚点。"""
     return "__COMPRESS__"
 
 
-@_cmd("export", t("cmd.export.desc"))
-async def handle_export(app: Any, args: str) -> str:
+async def handle_export(app: CommandContext, args: str) -> str:
     """打包 ~/.aide/ 关键文件为 zip。"""
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     export_dir = user_download_dir()
@@ -159,8 +154,7 @@ async def handle_export(app: Any, args: str) -> str:
     return t("cmd.export.done", path=str(export_path), size=size_kb)
 
 
-@_cmd("import", t("cmd.import.desc"))
-async def handle_import(app: Any, args: str) -> str:
+async def handle_import(app: CommandContext, args: str) -> str:
     """从 zip 包导入恢复数据。"""
     if not args:
         return t("cmd.import.need_path")
@@ -191,8 +185,7 @@ async def handle_import(app: Any, args: str) -> str:
 # ── P4 Batch 2: 新增命令 ──────────────────────────────────────────────
 
 
-@_cmd("session", t("cmd.session.desc"))
-async def handle_session(app: Any, args: str) -> str:
+async def handle_session(app: CommandContext, args: str) -> str:
     """会话管理命令。
 
     子命令:
@@ -231,8 +224,7 @@ async def handle_session(app: Any, args: str) -> str:
         return t("cmd.session.unknown_sub")
 
 
-@_cmd("memory", t("cmd.memory.desc"))
-async def handle_memory(app: Any, args: str) -> str:
+async def handle_memory(app: CommandContext, args: str) -> str:
     """查看记忆条目的捕获状态。"""
     data_dir = AGENT_ROOT / "data"
     lines = [t("cmd.memory.title")]
@@ -276,8 +268,7 @@ async def handle_memory(app: Any, args: str) -> str:
     return "\n".join(lines)
 
 
-@_cmd("tools", t("cmd.tools.desc"))
-async def handle_tools(app: Any, args: str) -> str:
+async def handle_tools(app: CommandContext, args: str) -> str:
     """列出所有已注册的工具。"""
     kernel = getattr(app, '_kernel', None)
     if kernel is None:
@@ -313,22 +304,19 @@ async def handle_tools(app: Any, args: str) -> str:
     return "\n".join(lines)
 
 
-@_cmd("update", t("cmd.update.desc"))
-async def handle_update(app: Any, args: str) -> str:
+async def handle_update(app: CommandContext, args: str) -> str:
     """kind="maintenance" — CommandHandler 在 handler 执行前已启动 profile_update_worker，
     此函数实际不会被调用，仅作为 COMMANDS dict 注册锚点。"""
     return "__PROFILE_UPDATE__"
 
 
-@_cmd("clear", t("cmd.clear.desc"))
-async def handle_clear(app: Any, args: str) -> str:
+async def handle_clear(app: CommandContext, args: str) -> str:
     """kind="confirm" — CommandHandler 在 handler 执行前已进入确认流，
     此函数实际不会被调用，仅作为 COMMANDS dict 注册锚点。"""
     return "__CLEAR_CONFIRM__"
 
 
-@_cmd("rollback", t("cmd.rollback.desc"))
-async def handle_rollback(app: Any, args: str) -> str:
+async def handle_rollback(app: CommandContext, args: str) -> str:
     """回滚会话到指定轮次（两步确认）。
 
     第一步：验证参数 + 设置 pending 状态 → 返回确认提示。
@@ -368,7 +356,7 @@ async def handle_rollback(app: Any, args: str) -> str:
              **{"from": target_turn + 1, "to": current_turn, "deleted": deleted})
 
 
-def _rebuild_conversation_from_disk(app: Any, session_dir: Path, target_turn: int) -> None:
+def _rebuild_conversation_from_disk(app: CommandContext, session_dir: Path, target_turn: int) -> None:
     """从 turn 文件重建 session.conversation（回滚后调用）。"""
     session = app._session
     session.turn = target_turn
@@ -499,7 +487,4 @@ def register_builtin_commands(registry: Any) -> None:
     ))
 
 
-# ── /plugin 模块级注册（handle_help 遍历 COMMANDS 字典）─────────
-
 from core.commands.builtin.plugin_commands import handle_plugin as _handle_plugin  # noqa: E402
-_register_to_commands("plugin", _handle_plugin, t("cmd.plugin.desc"))

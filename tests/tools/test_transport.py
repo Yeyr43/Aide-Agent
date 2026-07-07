@@ -189,24 +189,31 @@ class TestHTTPTransportLifecycle:
 
 
 class TestHTTPTransportRequest:
+    # Shared helper: builds a mock httpx.AsyncClient that works with `async with`
+    @staticmethod
+    def _make_mock_client(mock_resp: MagicMock) -> MagicMock:
+        """Create a mock httpx.AsyncClient whose __aenter__ returns itself."""
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        client.post = AsyncMock(return_value=mock_resp)
+        return client
+
     @pytest.mark.asyncio
     async def test_connect_sends_initialize(self):
         """connect() sends initialize request and parses response."""
         t = HTTPTransport()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
-            mock_resp = MagicMock()
-            mock_resp.headers = {}
-            mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-            mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_resp.read.return_value = json.dumps({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": {"protocolVersion": "2024-11-05", "capabilities": {}},
-            }).encode()
+        mock_resp = MagicMock()
+        mock_resp.headers = {}
+        mock_resp.text = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"protocolVersion": "2024-11-05", "capabilities": {}},
+        })
+        mock_resp.raise_for_status = MagicMock()
 
-            mock_urlopen.return_value = mock_resp
-
+        with patch("httpx.AsyncClient", return_value=self._make_mock_client(mock_resp)):
             await t.connect("http://localhost:9999/mcp")
             assert t.is_connected is True
             assert t._url == "http://localhost:9999/mcp"
@@ -216,19 +223,16 @@ class TestHTTPTransportRequest:
         """If initialize returns error, connect should raise."""
         t = HTTPTransport()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
-            mock_resp = MagicMock()
-            mock_resp.headers = {}
-            mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-            mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_resp.read.return_value = json.dumps({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "error": {"code": -32000, "message": "Not ready"},
-            }).encode()
+        mock_resp = MagicMock()
+        mock_resp.headers = {}
+        mock_resp.text = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {"code": -32000, "message": "Not ready"},
+        })
+        mock_resp.raise_for_status = MagicMock()
 
-            mock_urlopen.return_value = mock_resp
-
+        with patch("httpx.AsyncClient", return_value=self._make_mock_client(mock_resp)):
             with pytest.raises(RuntimeError, match="initialize"):
                 await t.connect("http://localhost:9999/mcp")
             assert t.is_connected is False
@@ -240,19 +244,16 @@ class TestHTTPTransportRequest:
         t._connected = True
         t._url = "http://localhost:9999/mcp"
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
-            mock_resp = MagicMock()
-            mock_resp.headers = {"Mcp-Session-Id": "session-abc-123"}
-            mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-            mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_resp.read.return_value = json.dumps({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "result": {"tools": []},
-            }).encode()
+        mock_resp = MagicMock()
+        mock_resp.headers = {"Mcp-Session-Id": "session-abc-123"}
+        mock_resp.text = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {"tools": []},
+        })
+        mock_resp.raise_for_status = MagicMock()
 
-            mock_urlopen.return_value = mock_resp
-
+        with patch("httpx.AsyncClient", return_value=self._make_mock_client(mock_resp)):
             resp = await t.send_request(JSONRPCRequest(method="tools/list"))
             assert t._session_id == "session-abc-123"
 
@@ -263,17 +264,14 @@ class TestHTTPTransportRequest:
         t._connected = True
         t._url = "http://localhost:9999/mcp"
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
-            mock_resp = MagicMock()
-            mock_resp.headers = {}
-            mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-            mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_resp.read.return_value = (
-                'event: message\ndata: {"jsonrpc":"2.0","id":3,"result":{"status":"ok"}}\n\n'
-            ).encode()
+        mock_resp = MagicMock()
+        mock_resp.headers = {}
+        mock_resp.text = (
+            'event: message\ndata: {"jsonrpc":"2.0","id":3,"result":{"status":"ok"}}\n\n'
+        )
+        mock_resp.raise_for_status = MagicMock()
 
-            mock_urlopen.return_value = mock_resp
-
+        with patch("httpx.AsyncClient", return_value=self._make_mock_client(mock_resp)):
             resp = await t.send_request(JSONRPCRequest(method="test"))
             assert resp.result == {"status": "ok"}
 
@@ -284,12 +282,21 @@ class TestHTTPTransportRequest:
         t._connected = True
         t._url = "http://localhost:9999/mcp"
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
-            import urllib.error
-            mock_urlopen.side_effect = urllib.error.HTTPError(
-                "http://localhost:9999/mcp", 500, "Internal Error", {}, None
-            )
+        import httpx
+        mock_err_resp = MagicMock()
+        mock_err_resp.status_code = 500
+        mock_err_resp.text = "Internal Error"
 
+        client = self._make_mock_client(MagicMock())
+        client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "Server error",
+                request=MagicMock(),
+                response=mock_err_resp,
+            )
+        )
+
+        with patch("httpx.AsyncClient", return_value=client):
             with pytest.raises(RuntimeError, match="HTTP 500"):
                 await t.send_request(JSONRPCRequest(method="test"))
 

@@ -65,10 +65,10 @@ class TestTurnSummary:
         summary = _turn_summary(
             "搜索今天天气",
             "我来搜索一下",
-            [{"function": {"name": "web_search"}}]
+            [{"function": {"name": "web"}}]
         )
         assert "[工具调用]" in summary
-        assert "web_search" in summary
+        assert "web" in summary
 
     def test_long_message_truncated(self):
         long_msg = "这是一条非常长的消息" * 10
@@ -124,7 +124,7 @@ class TestContextIngester:
             assert len(ingester.session_id) == 15  # YYYYMMDD_HHMMSS
 
     async def test_ingest_writes_files(self, store, tmp_path):
-        """ingest 应写入 timeline、cache、messages。"""
+        """ingest 应写入 timeline、messages。"""
         with patch('core.context.ingester.SESSIONS_ROOT',
                    tmp_path / "sessions"):
             ingester = ContextIngester(store)
@@ -144,12 +144,6 @@ class TestContextIngester:
             assert len(timeline) == 1
             assert timeline[0]["turn"] == 1
             assert "你好" in timeline[0]["summary"]
-
-            # cache.json
-            cache = json.loads(
-                (session_dir / "cache.json").read_text(encoding="utf-8"))
-            assert len(cache) == 1
-            assert cache[0]["turn"] == 1
 
             # messages/turn_001.json
             msg = json.loads(

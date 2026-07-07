@@ -319,52 +319,34 @@ class HTTPTransport:
         request: JSONRPCRequest,
         timeout: float = REQUEST_TIMEOUT,
     ) -> JSONRPCResponse:
-        """发送 JSON-RPC 请求并解析响应。"""
-        import urllib.request
-        import urllib.error
+        """发送 JSON-RPC 请求并解析响应（httpx 异步，无线程池开销）。"""
+        import httpx
 
         body = request.to_json().encode("utf-8")
-        headers = {
+        headers: dict[str, str] = {
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
 
-        loop = asyncio.get_running_loop()
-
-        def _sync_post():
-            req = urllib.request.Request(
-                self._url,
-                data=body,
-                headers=headers,
-                method="POST",
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
-                    # 捕获 session ID
-                    sid = resp.headers.get("Mcp-Session-Id", "")
-                    if sid:
-                        self._session_id = sid
-                    return resp.read().decode("utf-8")
-            except urllib.error.HTTPError as e:
-                error_body = ""
-                try:
-                    error_body = e.read().decode("utf-8")
-                except Exception:
-                    pass
-                raise RuntimeError(
-                    f"HTTP {e.code} from MCP server: {error_body[:200]}"
-                ) from e
-            except urllib.error.URLError as e:
-                raise ConnectionError(f"MCP HTTP 请求失败: {e.reason}") from e
-
         try:
-            data = await asyncio.wait_for(
-                loop.run_in_executor(None, _sync_post),
-                timeout=timeout + 5,
-            )
-        except asyncio.TimeoutError:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
+                resp = await client.post(self._url, content=body, headers=headers)
+                # 捕获 session ID
+                sid = resp.headers.get("Mcp-Session-Id", "")
+                if sid:
+                    self._session_id = sid
+                resp.raise_for_status()
+                data = resp.text
+        except httpx.HTTPStatusError as e:
+            error_body = e.response.text[:200] if e.response else ""
+            raise RuntimeError(
+                f"HTTP {e.response.status_code} from MCP server: {error_body}"
+            ) from e
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            raise ConnectionError(f"MCP HTTP 请求失败: {e}") from e
+        except httpx.ReadTimeout:
             raise asyncio.TimeoutError(f"MCP HTTP 请求超时 ({timeout}s)")
 
         # 处理可能的 SSE 或 chunked 响应
@@ -391,26 +373,19 @@ class HTTPTransport:
     async def _http_post_notification(
         self, notification: JSONRPCNotification,
     ) -> None:
-        """发送 JSON-RPC 通知（不等待响应）。"""
-        import urllib.request
+        """发送 JSON-RPC 通知（不等待响应，httpx 异步）。"""
+        import httpx
 
         body = notification.to_json().encode("utf-8")
-        headers = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
 
-        loop = asyncio.get_running_loop()
-
-        def _sync_post():
-            req = urllib.request.Request(
-                self._url, data=body, headers=headers, method="POST",
-            )
-            try:
-                urllib.request.urlopen(req, timeout=10)
-            except Exception:
-                pass  # 通知失败不抛异常
-
-        await loop.run_in_executor(None, _sync_post)
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+                await client.post(self._url, content=body, headers=headers)
+        except Exception:
+            pass  # 通知失败不抛异常
 
     @property
     def is_connected(self) -> bool:

@@ -13,6 +13,17 @@ from core.locale import t
 from .api_config_css import API_CONFIG_CSS
 
 
+def _default_vision(provider: str, saved: bool | None) -> bool:
+    """根据 provider 类型决定视觉开关默认值。
+
+    None（未保存）→ 用 provider 默认值（Anthropic=True, 其他=False）
+    True/False（用户已显式设置）→ 保留用户选择
+    """
+    if saved is not None:
+        return saved
+    return provider == "anthropic"
+
+
 class ApiConfigScreen(Screen):
     """独立的 API 配置屏幕。
 
@@ -27,6 +38,7 @@ class ApiConfigScreen(Screen):
         super().__init__()
         self._edit_name = edit_name
         self._supports_vision = False
+        self._provider = ""  # 用于判断未设置时的默认值
 
         # 预填：优先从 API 配置文件加载，其次用当前活跃 LLM 配置
         self._prefill: dict[str, str] = {}
@@ -34,19 +46,22 @@ class ApiConfigScreen(Screen):
             api_cfg = Config.load_api_config(edit_name)
             if api_cfg:
                 self._prefill = {**api_cfg, "apiname": edit_name}
-                self._supports_vision = api_cfg.get("supports_vision", False)
+                self._provider = api_cfg.get("provider", "")
+                saved = api_cfg.get("supports_vision")
+                self._supports_vision = _default_vision(self._provider, saved)
         else:
             # 新建模式：用当前活跃 LLM 的默认值
             from core.config import Config as Cfg
             config = Cfg.load()
+            self._provider = config.llm.provider
             self._prefill = {
                 "apiname": Config.get_active_api_name(),
-                "provider": config.llm.provider,
+                "provider": self._provider,
                 "model": config.llm.model,
                 "api_key": config.llm.api_key,
                 "base_url": config.llm.base_url,
             }
-            self._supports_vision = config.llm.supports_vision
+            self._supports_vision = _default_vision(self._provider, config.llm.supports_vision)
 
     def compose(self) -> ComposeResult:
         with Container(id="api-config-container"):

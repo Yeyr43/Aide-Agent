@@ -78,8 +78,8 @@ class TestCompactorCompact:
         assert result is not None
         assert "## 话题" in result
         assert "greeting" in result
-        # 3 writes: overview.md + overview.json checkpoints + cache.json clear
-        assert store.write.call_count == 3
+        # 2 writes: overview.md + overview.json checkpoints
+        assert store.write.call_count == 2
         # First write should be overview.md
         call_args = store.write.call_args_list[0]
         assert "overview.md" in str(call_args[0][0])
@@ -105,7 +105,8 @@ class TestCompactorCompact:
         assert "overview_md" in checkpoints[0]
 
     @pytest.mark.asyncio
-    async def test_clears_cache_after_compact(self, session_dir, store, provider):
+    async def test_compact_only_writes_overview_files(self, session_dir, store, provider):
+        """compact 只写 overview.md + overview.json，不再写 cache.json。"""
         self._write_turns(session_dir, [
             {"turn": 1, "user": "hi", "assistant": "hey", "tool_calls": []},
         ])
@@ -115,10 +116,12 @@ class TestCompactorCompact:
         compactor = ContextCompactor(provider, store)
         await compactor.compact(session_dir)
 
-        # cache.json should be cleared (written with empty list)
-        cache_write = store.write.call_args_list[2]
-        assert "cache" in str(cache_write[0][0])
-        assert cache_write[0][1] == []
+        # 只有 2 次写入：overview.md + overview.json
+        assert store.write.call_count == 2
+        paths = [str(call[0][0]) for call in store.write.call_args_list]
+        assert any("overview.md" in p for p in paths)
+        assert any("overview.json" in p for p in paths)
+        assert not any("cache" in p for p in paths)
 
     @pytest.mark.asyncio
     async def test_includes_tool_call_info(self, session_dir, store, provider):
@@ -183,11 +186,11 @@ class TestCompactorCompact:
 
         # First compress — creates checkpoint
         await compactor.compact(session_dir)
-        assert store.write.call_count == 3  # overview.md + overview.json + cache
+        assert store.write.call_count == 2  # overview.md + overview.json
 
         # Second compress — appends
         await compactor.compact(session_dir)
-        checkpoint_call = store.write.call_args_list[4]  # 2nd overview.json write
+        checkpoint_call = store.write.call_args_list[3]  # 2nd overview.json write
         checkpoints = checkpoint_call[0][1]
         assert len(checkpoints) >= 1
 

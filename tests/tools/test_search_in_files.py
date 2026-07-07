@@ -3,14 +3,15 @@
 import pytest
 from pathlib import Path
 
-from core.tools.builtin.search_in_files import execute, schema, _search_file, _gather_files
+from core.tools.builtin.search_in_files import execute, schema, _search_file, _iter_files
 
 
 class TestSearchInFiles:
     @pytest.mark.asyncio
-    async def test_empty_pattern(self):
+    async def test_empty_pattern_now_lists_dir(self):
+        """空 pattern 现在是目录列表模式，不应报错。"""
         result = await execute({"pattern": ""})
-        assert "不能为空" in result
+        assert "错误" not in result
 
     @pytest.mark.asyncio
     async def test_invalid_regex(self):
@@ -91,7 +92,7 @@ class TestGatherFiles:
     def test_glob_filter(self, tmp_path):
         (tmp_path / "a.py").write_text("")
         (tmp_path / "b.txt").write_text("")
-        files = _gather_files(tmp_path, "*.py")
+        files = _iter_files(tmp_path, "*.py")
         names = [f.name for f in files]
         assert "a.py" in names
         assert "b.txt" not in names
@@ -100,7 +101,7 @@ class TestGatherFiles:
         (tmp_path / ".git").mkdir()
         (tmp_path / ".git" / "config").write_text("")
         (tmp_path / "real.py").write_text("")
-        files = _gather_files(tmp_path, "*")
+        files = _iter_files(tmp_path, "*")
         names = [f.name for f in files]
         assert "real.py" in names
         assert "config" not in names
@@ -109,7 +110,11 @@ class TestGatherFiles:
 class TestSearchInFilesSchema:
     def test_schema(self):
         assert schema["type"] == "object"
-        assert "pattern" in schema["required"]
+        # pattern 不再是 required — 空 pattern = 目录列表模式
+        assert schema["required"] == []
+        assert "pattern" in schema["properties"]
         assert "directory" in schema["properties"]
         assert "glob" in schema["properties"]
         assert "max_results" in schema["properties"]
+        assert "case_sensitive" in schema["properties"]
+        assert "recursive" in schema["properties"]

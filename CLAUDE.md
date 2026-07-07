@@ -113,10 +113,12 @@ core/
 │   └── content_builder.py  # 多模态 content 构建（文本+图片→OpenAI 数组）
 ├── context/             # 上下文管线
 │   ├── pipeline.py      # ContextPipeline — 五层上下文组装
-│   ├── ingester.py      # ContextIngester — 写入 cache.json / timeline.json
+│   ├── ingester.py      # ContextIngester — 写入 messages/ + timeline.json + search index
 │   ├── compactor.py     # ContextCompactor — /compress LLM 摘要
 │   ├── relevance.py     # bigram Jaccard 相关性过滤
 │   └── token_counter.py # 上下文 token 估算 + compute_context_usage
+├── search/              # 全局会话搜索
+│   └── index.py         # SearchIndex — 全局向量索引（ONNX embedding + Jaccard fallback）
 ├── memory/              # 记忆管线（原 prompt_manager）
 │   ├── capture.py       # CaptureEngine — 规则引擎截获
 │   ├── entries.py       # EntryManager — 条目目录（pending/confirmed）
@@ -144,7 +146,7 @@ core/
 │   ├── __init__.py      # ToolDefinition + ToolRegistry（含重试）
 │   ├── retry.py         # RetryConfig + ErrorClass + async_retry
 │   ├── discovery.py     # register_builtin_tools + register_plugin_tools
-│   ├── builtin/         # 10 个内置工具
+│   ├── builtin/         # 11 个内置工具
 │   │   ├── read_file.py
 │   │   ├── write_file.py
 │   │   ├── edit_file.py
@@ -154,6 +156,7 @@ core/
 │   │   ├── web_fetch.py
 │   │   ├── list_dir.py
 │   │   ├── search_in_files.py
+│   │   ├── search_chat.py
 │   │   └── clipboard.py
 │   └── mcp/             # MCP 适配
 │       ├── adapter.py   # MCPAdapter + MCPServerConfig — 工具发现/执行
@@ -219,7 +222,9 @@ sessions/{YYYYMMDD_HHMMSS}/
 ├── timeline.json       # 轮次级索引 + 一句话事件概览
 ├── overview.md         # /compress 手动压缩的 LLM 摘要（注入上下文）
 ├── overview.json       # 压缩检查点日志（回滚时还原 overview.md）
-├── cache.json          # 窗口上下文（每轮增量）
+├── cache.json          # 已废弃（窗口上下文改用 timeline.json）
+├── _search_index.json  # 全局搜索索引（每轮摘要 + session_id + turn）
+├── _search_embeddings.npy  # 搜索向量（384d，ONNX embedding 预计算）
 └── messages/           # 完整原文存档（turn_NNN.json）
 ```
 
@@ -239,12 +244,12 @@ sessions/{YYYYMMDD_HHMMSS}/
 3. **技能上下文**（插件 SkillProvider）— 技能 Markdown 内容按需注入
 4. **动态 prompt**（agent/*.md）— 偏好/工作流/长记忆，bigram Jaccard 相关性过滤
 5. **会话总览**（overview.md，`/compress` 生成）— 注入 LLM 上下文
-6. **窗口上下文**（cache.json 摘要 + 近 8 轮原文）— 最近信息 + 早期轮次压缩总览
+6. **窗口上下文**（3 轮全文 + 15 轮摘要索引）— 近轮精确原文 + 远轮速查线索
 
 ## Prompt 演化
 
 两条管线互不阻塞：
-- **上下文管线**（实时）：每轮 → cache.json + timeline.json → `/compress` → overview.json
+- **上下文管线**（实时）：每轮 → timeline.json → `/compress` → overview.json
 - **Prompt 管线**（用户主导）：每轮 → 规则引擎截获 → 条目目录（pending）→ `/profile update` → LLM 回溯整合
 
 系统绝不自动调用 LLM 更新 prompt。三个维度不扩展：偏好 / 工作流 / 长记忆。

@@ -22,6 +22,7 @@ from core.memory import CaptureEngine, EntryManager, PromptUpdater, TopicFrequen
 from core.plugins.host import PluginHost
 from core.plugins.slots import SlotRegistry
 from core.sessions.manager import SessionManager
+from core.search import SearchIndex
 from .agent import AgentKernel
 from .context import KernelContext
 
@@ -80,6 +81,7 @@ class AppBootstrap:
         register_builtin_tools(tool_registry)
 
         mcp_adapter = MCPAdapter()
+        mcp_adapter.set_tool_registry(tool_registry)
         mcp_connected = await mcp_adapter.load_builtin_servers()
         if mcp_connected > 0:
             mcp_tools = await mcp_adapter.discover_all_tools()
@@ -95,10 +97,18 @@ class AppBootstrap:
         store = JsonStore(config.aide_root)
         await store.start()
 
-        ingester = ContextIngester(store)
+        # 全局搜索索引（首次启动或索引丢失时自动重建）
+        search_index = SearchIndex(config.sessions_root)
+        if search_index.size == 0:
+            # 延迟导入避免阻塞启动 — 后台重建
+            import asyncio
+            asyncio.create_task(search_index.rebuild())
+
+        ingester = ContextIngester(store, search_index=search_index)
         pipeline = ContextPipeline(
             agent_root=config.aide_root / "agent",
-            window_turns=config.app.window_turns,
+            full_text_turns=config.app.full_text_turns,
+            summary_turns=config.app.summary_turns,
             relevance_threshold=config.app.relevance_threshold,
         )
         compactor = ContextCompactor(provider, store)
@@ -109,7 +119,7 @@ class AppBootstrap:
             provider, entry_mgr,
             on_cache_flush=pipeline.flush_cache,
         )
-        session_mgr = SessionManager(config.sessions_root)
+        session_mgr = SessionManager(config.sessions_root, search_index=search_index)
         slot_registry = SlotRegistry()
         plugin_host = PluginHost(
             config, tool_registry, cmd_registry, slot_registry,

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.setup import aide_dir
+from core.storage import atomic_write_json
 
 
 @dataclass
@@ -21,7 +22,7 @@ class LLMConfig:
     api_key: str = ""
     temperature: float = 0.7
     max_tokens: int = 4096
-    supports_vision: bool = False  # 手动在 settings.json 中配置
+    supports_vision: bool | None = None  # None=使用 Provider 默认, True/False=用户显式覆盖
 
 
 @dataclass
@@ -29,7 +30,8 @@ class AppConfig:
     locale: str = "zh"            # UI 语言：zh / en
     active_api: str = ""          # 当前 API 配置名
     max_turns: int = 5
-    window_turns: int = 8
+    full_text_turns: int = 3     # 近 N 轮保留全文（连续操作上下文）
+    summary_turns: int = 15      # 额外 M 轮注入摘要索引（跨轮记忆）
     relevance_threshold: float = 0.15
     context_window: int = 128000  # token 窗口大小，0 表示不限制（状态栏仅显示 token 数）
 
@@ -41,13 +43,14 @@ DEFAULT_LLM = {
     "api_key": "",
     "temperature": 0.7,
     "max_tokens": 4096,
-    "supports_vision": False,
+    "supports_vision": None,  # None = 使用 Provider 默认，True/False = 用户覆盖
 }
 
 DEFAULT_APP = {
     "locale": "zh",
     "max_turns": 5,
-    "window_turns": 8,
+    "full_text_turns": 3,
+    "summary_turns": 15,
     "relevance_threshold": 0.15,
     "context_window": 128000,
 }
@@ -83,6 +86,8 @@ class Config:
                     user_settings = json.load(f)
                 if "app" in user_settings:
                     app_data.update(user_settings["app"])
+                    # 向后兼容：旧版 window_turns 已废弃，静默忽略
+                    app_data.pop("window_turns", None)
                 # active_api 可能在 app 中或顶层（优先 app）
                 if "active_api" in user_settings:
                     app_data.setdefault("active_api", user_settings["active_api"])
@@ -98,9 +103,12 @@ class Config:
             api_cfg = Config.load_api_config(active_api_name)
             if api_cfg:
                 # API 文件中的字段覆盖 settings.json 的 llm
-                for key in ("provider", "model", "api_key", "base_url", "supports_vision"):
+                for key in ("provider", "model", "api_key", "base_url"):
                     if key in api_cfg and api_cfg[key]:
                         llm_data[key] = api_cfg[key]
+                # supports_vision 允许 False（显式关闭），只用 in 检查
+                if "supports_vision" in api_cfg:
+                    llm_data["supports_vision"] = api_cfg["supports_vision"]
 
         # 3. 环境变量 (AIDE_*)
         env_map = {
@@ -149,19 +157,7 @@ class Config:
     @staticmethod
     def save_settings(settings: dict) -> None:
         """原子写入 settings.json。"""
-        sp = Config.settings_path()
-        sp.parent.mkdir(parents=True, exist_ok=True)
-        import tempfile
-        fd, tmp = tempfile.mkstemp(dir=sp.parent, suffix=".json")
-        try:
-            with open(fd, "w", encoding="utf-8") as f:
-                json.dump(settings, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, sp)
-        finally:
-            try:
-                Path(tmp).unlink(missing_ok=True)
-            except OSError:
-                pass
+        atomic_write_json(Config.settings_path(), settings)
 
     # ── API 配置文件（每个 API 一个文件：config/api/<name>.json）──
 
@@ -199,20 +195,7 @@ class Config:
     @staticmethod
     def save_api_config(name: str, config: dict) -> None:
         """保存单个 API 配置文件（原子写入）。"""
-        import tempfile
-        api_d = Config.api_dir()
-        api_d.mkdir(parents=True, exist_ok=True)
-        target = api_d / f"{name}.json"
-        fd, tmp = tempfile.mkstemp(dir=api_d, suffix=".json")
-        try:
-            with open(fd, "w", encoding="utf-8") as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, target)
-        finally:
-            try:
-                Path(tmp).unlink(missing_ok=True)
-            except OSError:
-                pass
+        atomic_write_json(Config.api_dir() / f"{name}.json", config)
 
     @staticmethod
     def delete_api_config(name: str) -> bool:

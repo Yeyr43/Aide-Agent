@@ -176,6 +176,10 @@ class ConfigWatcher:
                 except Exception as e:
                     logger.warning(f"[MCP] 热加载连接 {name} 失败: {e}")
 
+        # 同步工具到 ToolRegistry（热加载 + 手动 reload 共用此路径）
+        if added > 0 or disconnected > 0 or reconnected > 0:
+            await self._adapter._sync_tools_to_registry()
+
         logger.info(
             f"[MCP] 热加载完成 — 新增: {added}, 重连: {reconnected}, 断开: {disconnected}"
         )

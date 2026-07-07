@@ -72,21 +72,15 @@ def build_tools_prompt() -> str:
 
 {t("tools.write_file")}
 
-{t("tools.edit_file")}
-
 {t("tools.run_shell")}
 
 {t("tools.search_in_files")}
 
-{t("tools.list_dir")}
-
 {t("tools.search_memory")}
 
-{t("tools.web_search")}
+{t("tools.web")}
 
-{t("tools.web_fetch")}
-
-{t("tools.clipboard")}
+{t("tools.search_chat")}
 
 {t("tools.strategy_title")}
 

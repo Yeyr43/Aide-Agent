@@ -1,7 +1,7 @@
 """ContextCompactor — 会话压缩（/compress 触发）。
 
 用户手动触发，低频操作。
-读取 messages/turn_*.json 全部原文 → LLM 生成 overview.md → 追加 overview.json 检查点 → 清空 cache.json。
+读取 messages/turn_*.json 全部原文 → LLM 生成 overview.md → 追加 overview.json 检查点。
 
 overview.md   — 人类可读的 Markdown 会话概览（注入 LLM 上下文）
 overview.json — 压缩检查点日志：[{to_turn, compressed_at, overview_md}]
@@ -53,7 +53,7 @@ def _has_write_tool(turn_data: dict) -> bool:
     if isinstance(tool_calls, list):
         return any(
             (tc.get("name") or tc.get("function", {}).get("name", ""))
-            in ("write_file", "edit_file")
+            == "write_file"
             for tc in tool_calls
         )
     return False
@@ -114,7 +114,6 @@ class ContextCompactor:
         messages_dir = session_dir / "messages"
         overview_md_path = session_dir / "overview.md"
         overview_json_path = session_dir / "overview.json"
-        cache_path = session_dir / "cache.json"
 
         # ── 1. 收集全部对话原文 ──
         if not messages_dir.exists():
@@ -228,7 +227,7 @@ class ContextCompactor:
         # ── 6. 写入 overview.md ──
         await self._store.write(overview_md_path, overview_md)
 
-        # ── 7. 追加 overview.json 检查点 ──
+        # ── 7. 写入 overview.json 检查点 ──
         checkpoints: list[dict] = []
         if overview_json_path.exists():
             try:
@@ -244,9 +243,6 @@ class ContextCompactor:
             "overview_md": overview_md,
         })
         await self._store.write(overview_json_path, checkpoints)
-
-        # ── 8. 清空 cache.json ──
-        await self._store.write(cache_path, [])
 
         logger.info(t("ctx.compact_done", turns=len(turn_files), turn=max_turn))
         return overview_md

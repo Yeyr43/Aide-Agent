@@ -3,8 +3,7 @@
 负责：
   - 首条消息时延迟创建 session 目录
   - 写入 messages/turn_{NNN}.json（完整原文存档）
-  - 追加 timeline.json（一句话事件索引）
-  - 追加 cache.json（累积窗口上下文摘要）
+  - 追加 timeline.json（一句话事件索引 + 窗口上下文摘要）
 
 所有写操作通过 JsonStore 保证原子性。
 """
@@ -28,7 +27,7 @@ SESSIONS_ROOT = aide_dir() / "sessions"
 
 
 def _turn_summary(user_msg: str, assistant_msg: str, tool_calls: list[dict] | None = None) -> str:
-    """生成一句话事件概览，用于 timeline.json 和 cache.json。
+    """生成一句话事件概览，用于 timeline.json。
 
     纯规则生成，<1ms。
     """
@@ -57,8 +56,10 @@ class ContextIngester:
         await ingester.ingest(session_id, turn, user_msg, assistant_msg, tool_calls)
     """
 
-    def __init__(self, store: JsonStore) -> None:
+    def __init__(self, store: JsonStore,
+                 search_index = None) -> None:
         self._store = store
+        self._search_index = search_index  # SearchIndex | None
         self._session_id: str | None = None
         self._session_dir: Path | None = None
 
@@ -143,13 +144,8 @@ class ContextIngester:
         })
         await self._store.write(timeline_path, timeline)
 
-        # ── 3. 追加 cache.json ──
-        cache_path = self._session_dir / "cache.json"
-        cache = await self._store.read(cache_path) or []
-        cache.append({
-            "turn": turn,
-            "summary": summary,
-        })
-        await self._store.write(cache_path, cache)
+        # ── 3. 追加全局搜索索引 ──
+        if self._search_index is not None and self._session_id:
+            self._search_index.add(self._session_id, turn, summary)
 
         logger.debug(t("ctx.ingest_turn", turn=turn, summary=summary[:60]))

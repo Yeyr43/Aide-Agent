@@ -1,20 +1,47 @@
-"""Tests for edit_file tool."""
+"""Tests for write_file tool — overwrite + surgical edit modes."""
 
 import pytest
 from pathlib import Path
 
-from core.tools.builtin.edit_file import execute, schema
+from core.tools.builtin.write_file import execute, schema
 
 
-class TestEditFile:
+# ── Overwrite mode ─────────────────────────────────────────────────────────
+
+class TestWriteFileOverwrite:
     @pytest.mark.asyncio
     async def test_empty_file_path(self):
-        result = await execute({"file_path": "", "old_string": "a", "new_string": "b"})
+        result = await execute({"file_path": "", "content": "data"})
         assert "不能为空" in result
 
     @pytest.mark.asyncio
+    async def test_path_is_dir(self, tmp_path):
+        result = await execute({"file_path": str(tmp_path), "content": "data"})
+        assert "目录" in result
+
+    @pytest.mark.asyncio
+    async def test_write_creates_file(self, tmp_path):
+        f = tmp_path / "new_file.txt"
+        result = await execute({"file_path": str(f), "content": "hello world"})
+        assert "已写入" in result
+        assert f.read_text(encoding="utf-8") == "hello world"
+
+    @pytest.mark.asyncio
+    async def test_write_creates_parent_dirs(self, tmp_path):
+        f = tmp_path / "deep" / "nested" / "file.txt"
+        result = await execute({"file_path": str(f), "content": "nested content"})
+        assert "已写入" in result
+        assert f.read_text(encoding="utf-8") == "nested content"
+
+
+# ── Edit mode (old_string + new_string) ────────────────────────────────────
+
+class TestWriteFileEdit:
+    @pytest.mark.asyncio
     async def test_empty_old_string(self):
-        result = await execute({"file_path": "/tmp/test.txt", "old_string": "", "new_string": "b"})
+        result = await execute({
+            "file_path": "/tmp/test.txt", "old_string": "", "new_string": "b",
+        })
         assert "不能为空" in result
 
     @pytest.mark.asyncio
@@ -88,9 +115,40 @@ class TestEditFile:
         assert "delete" not in new_content
 
 
-class TestEditFileSchema:
+# ── Mode conflict ──────────────────────────────────────────────────────────
+
+class TestWriteFileModeConflict:
+    @pytest.mark.asyncio
+    async def test_content_with_old_string(self):
+        """不能同时传 content 和 old_string。"""
+        result = await execute({
+            "file_path": "/tmp/x.txt", "content": "a", "old_string": "b", "new_string": "c",
+        })
+        assert "互斥" in result
+
+    @pytest.mark.asyncio
+    async def test_old_without_new(self):
+        """old_string 需要配对 new_string。"""
+        result = await execute({
+            "file_path": "/tmp/x.txt", "old_string": "a",
+        })
+        assert "同时提供" in result
+
+    @pytest.mark.asyncio
+    async def test_new_without_old(self):
+        """new_string 需要配对 old_string。"""
+        result = await execute({
+            "file_path": "/tmp/x.txt", "new_string": "b",
+        })
+        assert "同时提供" in result
+
+
+# ── Schema ─────────────────────────────────────────────────────────────────
+
+class TestWriteFileSchema:
     def test_schema(self):
         assert schema["type"] == "object"
         assert "file_path" in schema["required"]
-        assert "old_string" in schema["required"]
-        assert "new_string" in schema["required"]
+        assert "content" in schema["properties"]
+        assert "old_string" in schema["properties"]
+        assert "new_string" in schema["properties"]

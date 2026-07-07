@@ -118,13 +118,13 @@ Aide Agent 最初继承了 SCFrame 的完整能力集——OODA 引擎、补丁�
   | **1. 系统 Soul** | agent/soul.md | 人设、行为准则、工具描述 | 最高优先级指令位，始终注入 |
   | **2. 动态 prompt** | agent/*.md | 偏好 + 工作流 + 长记忆 | 按相关性选择性注入，高相关展开，低相关折叠 |
   | **3. 会话总览** | overview.json | 会话内早期内容的压缩摘要（自上次 `/compress` 起） | 长会话中提供窗口外的历史上下文 |
-  | **4. 窗口上下文** | cache.json | 每轮对话后增量更新的语义记录 | 当前会话的累积上下文素材 |
-  | **5. 近 N 轮原文** | messages/ | 最近 8 轮完整对话（含工具调用细节） | 精确原文，保障上下文连贯性 |
+  | **4. 窗口上下文** | timeline.json | 每轮对话后增量更新的语义摘要（最近 18 轮，3+15） | 当前会话的累积上下文素材 |
+  | **5. 近 N 轮原文** | messages/ | 最近 3 轮完整对话（含工具调用细节） | 精确原文，保障连续操作连贯性 |
 
 - **会话总览（overview.json）**：用户通过 `/compress` 手动触发压缩，每次覆盖写入。取整个会话内容调用 LLM 生成概述，覆盖全部话题、关键偏好声明、Aide 被纠正的行为、达成的决策。长会话可多次压缩（累积 → 压缩 → 继续累积 → 再压缩）。上下文注入时，如有 overview 则作为前段历史的压缩摘要注入。
-- **窗口上下文（cache.json）**：每轮对话后 ContextIngester 追加一条简略自然语言摘要，无结构化字段。注入 LLM 上下文，保障会话窗口内的对话连贯。用户触发压缩后清理。
-- **会话总线（timeline.json）**：ContextIngester 每轮后生成一句话事件概览 + 时间戳。轮次级索引，不注入上下文，仅用于按时间查找会话入口。
-- **对话原文（messages/）**：每轮独立 JSON 文件，完整存档。源回溯用，上下文注入仅取最近 8 轮。
+- **窗口上下文（timeline.json）**：每轮对话后 ContextIngester 追加一条简略自然语言摘要。注入 LLM 上下文：近 3 轮有全文（精确操作上下文），近 18 轮有摘要索引（跨轮速查线索）。全文原文后的轮次回溯用搜索工具，不依赖被动窗口。
+- **会话总线（timeline.json）**：ContextIngester 每轮后生成一句话事件概览 + 时间戳。轮次级索引 + 窗口上下文摘要源（近 3 轮全文 + 15 轮扩展摘要）。也用于按时间查找会话入口。
+- **对话原文（messages/）**：每轮独立 JSON 文件，完整存档。源回溯 + 搜索用，上下文注入仅取最近 3 轮（全文窗口）。
 - **上下文用量显示**：不设计自动压缩。界面实时显示当前上下文 token 用量，用户自行判断何时触发 `/compress`。
 
 ### 3.4 安全模型
@@ -178,9 +178,10 @@ Phase 2 新增：`plugin_call`（统一插件调用入口）。
 │       └── topic_frequency.json # 主题频率追踪（用于长记忆触发判断）
 ├── sessions/                   # 会话数据
 │   └── {session_id}/
-│       ├── timeline.json       # 会话总线（轮次级索引 + 一句话事件概览）
+│       ├── timeline.json       # 会话总线（轮次级索引 + 窗口上下文摘要）
 │       ├── overview.json       # 会话总览（整个会话的完整概述，跨会话注入上下文）
-│       ├── cache.json          # 窗口上下文（每轮语义记录，注入上下文用）
+│       ├── cache.json          # 已废弃（功能合并到 timeline.json）
+│       ├── _search_index.json    # 全局搜索索引（所有会话的轮次摘要 + 预计算 embedding）
 │       └── messages/           # 对话分段文件（完整原文存档）
 │           ├── turn_001.json    # 每轮对话独立文件
 │           └── ...
@@ -196,10 +197,10 @@ Phase 2 新增：`plugin_call`（统一插件调用入口）。
 - **Prompt 文件**（agent/ 根目录下的 .md 文件）：是最终注入 LLM 上下文的 prompt，由 Prompt Manager 根据条目目录全量重构生成。上下文组装时从内存缓存读取，避免重复读盘。
 - **topic_frequency.json**：维护关键词频率表，记录每个关键词的出现会话次数和首次/末次提及时间，用于长记忆截获判断。
 - **会话存储**：每个会话以 session_id 为目录名独立存储。
-  - **会话总线（timeline.json）**：轮次级索引，每轮一条记录，包含时间戳和一句话事件概览。不注入上下文，仅用于按时间查找会话入口。
+  - **会话总线（timeline.json）**：轮次级索引，每轮一条记录，包含时间戳和一句话事件概览。同时作为分层窗口上下文摘要源（3+15）注入 LLM context。
   - **会话总览（overview.json）**：用户 `/compress` 手动触发，每次覆盖写入。LLM 根据整个会话生成概述。长会话可多次压缩，每次生成新 overview 覆盖旧文件。
-  - **窗口上下文（cache.json）**：每轮后 ContextIngester 追加一条简略自然语言摘要。注入 LLM 上下文，压缩后清理。
-  - **对话原文（messages/）**：每轮一个 JSON 文件，完整存档"用户输入 → Aide 响应"过程（含工具调用等中间步骤）。源回溯用，上下文注入仅取最近 8 轮。
+  - **窗口上下文（不再独立文件）**：合并到 timeline.json。分层窗口：3 轮全文（精确）+ 15 轮摘要索引（速查）。更早轮次由 overview.md 覆盖。
+  - **对话原文（messages/）**：每轮一个 JSON 文件，完整存档"用户输入 → Aide 响应"过程（含工具调用等中间步骤）。源回溯 + 会话搜索用，上下文注入仅取最近 3 轮全文。
 - **并发安全**：采用 Write-Actor 模型——所有写操作入队至单一协程顺序执行，内存缓存仅作读副本，通过 tempfile + os.replace 原子替换确保崩溃一致性。
 
 ---
@@ -214,7 +215,7 @@ Phase 2 新增：`plugin_call`（统一插件调用入口）。
 
 **日常对话：**
 
-每轮对话后，Aide 实时更新 cache.json（窗口上下文）和 timeline.json（事件索引）。界面实时显示当前上下文 token 用量，用户自行判断是否拥挤。当 cache 累积过多时，用户执行 `/compress` 手动压缩生成 overview.json，随后 cache 清空。
+每轮对话后，Aide 实时更新 timeline.json（事件索引 + 窗口上下文摘要）。界面实时显示当前上下文 token 用量，用户自行判断是否拥挤。用户执行 `/compress` 手动压缩生成 overview.json。
 
 **Prompt 演化：**
 
@@ -239,7 +240,7 @@ Phase 2 新增：`plugin_call`（统一插件调用入口）。
 
 Aide 不会自动变得更”强大”，但会越来越”懂你”。演化分两条独立管线：
 
-- **上下文管线（实时）**：每轮对话 → cache.json 增量 + timeline.json 索引 → 用户 `/compress` → overview.json。保障对话连贯性。
+- **上下文管线（实时）**：每轮对话 → timeline.json 索引 + 摘要 → 用户 `/compress` → overview.json。保障对话连贯性。
 - **Prompt 管线（用户主导）**：每轮对话 → 规则引擎截获信号 → 条目目录（pending）→ 用户 `/profile update` → LLM 回溯整合 → 全量重构 prompt 文件。
 
 两条管线互不阻塞。用户纠正、偏好声明被实时截获，但从不静默写入 prompt。演化节奏完全由用户掌控。
@@ -424,9 +425,9 @@ core/
 **交付物：**
 
 - [ ] `core/context_manager/` 上下文管理器
-  - **ContextIngester**：每轮后写入 `timeline.json`（一句话摘要）+ 增量更新 `cache.json`（语义记录）+ 写入 `messages/turn_NNN.json`（完整原文）
-  - **ContextAssembler**：组装五层上下文（Soul → 动态 prompt → overview → cache → 近 8 轮原文）
-  - **ContextCompactor**：`/compress` 触发，取整个会话 → LLM 生成 `overview.json` → 清空 `cache.json`
+  - **ContextIngester**：每轮后写入 `timeline.json`（一句话摘要）+ 写入 `messages/turn_NNN.json`（完整原文）
+  - **ContextAssembler**：组装五层上下文（Soul → 动态 prompt → overview → 分层窗口摘要 → 近 3 轮原文）
+  - **ContextCompactor**：`/compress` 触发，取整个会话 → LLM 生成 `overview.md` + `overview.json` 检查点
 - [ ] `core/prompt_manager/` Prompt 管理器
   - **条目截获引擎**：规则引擎（关键词正则 + Jaccard 去重 0.6），每轮后运行，<100ms
   - **条目目录管理**：读写 `agent/data/*.json`，维护 pending/integrated/replaced/orphaned 状态

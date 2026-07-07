@@ -6,9 +6,10 @@
   3. 技能上下文（插件 ContextProvider）— 按需注入
   4. 动态 prompt（agent/*.md）— Jaccard 相关性过滤
   5. 会话总览（overview.md）— 有则注入
-  6. 窗口上下文（cache.json）— 最近 N 轮全文 + 早期轮次合并总览
+  6. 窗口上下文（timeline.json）— 近 N 轮全文 + 扩展 M 轮摘要索引
 
-内存缓存 Soul + prompt 文件，避免重复读盘。
+分层窗口策略：近 3 轮保留全文（连续操作上下文），
+额外 15 轮注入 timeline 摘要（跨轮记忆），更早轮次由 overview.md 覆盖。
 """
 
 import json
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class ContextPipeline:
-    """组装上下文，支持 8 轮窗口 + 早期轮次总览。
+    """组装上下文，分层窗口：近 N 轮全文 + 扩展 M 轮摘要索引。
 
     用法:
         pipeline = ContextPipeline(agent_root=config.aide_root / "agent")
@@ -49,12 +50,14 @@ class ContextPipeline:
     RELEVANCE_THRESHOLD = 0.15
 
     def __init__(self, agent_root: Path | None = None,
-                 window_turns: int = 8,
+                 full_text_turns: int = 3,
+                 summary_turns: int = 15,
                  relevance_threshold: float = 0.15) -> None:
         # 内存缓存
         self._cache: dict[str, str] = {}  # path → content
         self._agent_root = agent_root or (aide_dir() / "agent")
-        self.window_turns = window_turns
+        self.full_text_turns = full_text_turns
+        self.summary_turns = summary_turns
         self.relevance_threshold = relevance_threshold
 
     # ── 缓存管理 ──────────────────────────────────────────────────
@@ -94,13 +97,13 @@ class ContextPipeline:
         Returns:
             (system_messages, trimmed_conversation)
             - system_messages: LLM system 消息列表
-            - trimmed_conversation: 裁剪后的对话（最近 8 轮全文）
+            - trimmed_conversation: 裁剪后的对话（最近 full_text_turns 轮全文）
         """
         system_parts: list[str] = []
         conv = conversation or []
 
-        # ── 切分对话：最近 N 轮 vs 早期轮次 ──
-        older, recent = _split_conversation(conv, window=self.window_turns)
+        # ── 切分对话：近 N 轮全文 vs 早期轮次 ──
+        older, recent = _split_conversation(conv, window=self.full_text_turns)
 
         # ── 第 1 层：Soul ──
         soul = self._read_cached(self._agent_root / "soul.md")
@@ -202,34 +205,36 @@ class ContextPipeline:
                 except OSError:
                     logger.debug("Failed to read overview.md, skipping")
 
-        # ── 第 4 层：早期轮次总览 + 最近轮次 cache ──
+        # ── 第 4 层：早期轮次总览 + 分层窗口摘要 ──
         if session_dir is not None and conv:
-            cache_path = session_dir / "cache.json"
-            cache_entries: list[dict] = []
-            if cache_path.exists():
+            timeline_path = session_dir / "timeline.json"
+            timeline_entries: list[dict] = []
+            if timeline_path.exists():
                 try:
-                    cache_entries = json.loads(
-                        cache_path.read_text(encoding="utf-8")
+                    timeline_entries = json.loads(
+                        timeline_path.read_text(encoding="utf-8")
                     )
                 except (OSError, json.JSONDecodeError):
-                    logger.debug("Failed to read cache.json, skipping")
+                    logger.debug("Failed to read timeline.json, skipping")
 
-            # 早期轮次 → 总览
+            # 早期轮次 → 总览（全文窗口之前的轮次）
             if older:
                 overview = _build_overview(session_dir, older)
                 if overview:
                     system_parts.append(overview)
 
-            # 最近 8 轮 → 逐条摘要（辅助 LLM 快速定位）
-            if cache_entries and recent:
-                recent_entries = cache_entries[-self.window_turns:]
+            # 分层摘要：全文窗口 + 额外摘要窗口 → 逐条索引
+            # 近 full_text_turns 轮已有全文，这里提供更大跨度的快速定位线索
+            if timeline_entries and recent:
+                total_summary = self.full_text_turns + self.summary_turns
+                recent_entries = timeline_entries[-total_summary:]
                 summaries = [
                     f"- [{e.get('turn', '?')}] {e.get('summary', '')}"
                     for e in recent_entries
                 ]
                 if summaries:
-                    cache_text = t("ctx.recent_chat") + "\n" + "\n".join(summaries)
-                    system_parts.append(cache_text)
+                    recent_text = t("ctx.recent_chat") + "\n" + "\n".join(summaries)
+                    system_parts.append(recent_text)
 
         # ── 组装最终 messages ──
         messages: list[dict] = []

@@ -1,25 +1,11 @@
-"""向后兼容层 — COMMANDS dict + route_command + _cmd 装饰器。
+"""向后兼容层 — route_command() 包装器。
 
-P4 Batch 2: 从 handlers.py 拆分，保持旧代码兼容。
-新代码应使用 CommandRegistry。
+P4 Batch 2: 从 handlers.py 拆分。新代码应使用 CommandRegistry.route()。
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
-
-from core.setup import aide_dir
-
-AIDE_ROOT = aide_dir()
-AGENT_ROOT = AIDE_ROOT / "agent"
-
-COMMANDS: dict[str, tuple[callable, str]] = {}
-
-
-def _register_to_commands(name: str, handler: callable, desc: str) -> None:
-    """同时注册到模块级 COMMANDS dict（向后兼容）。"""
-    COMMANDS[f"/{name}"] = (handler, desc)
 
 
 def route_command(
@@ -43,11 +29,3 @@ def route_command(
         cmd_def, args = result
         return (cmd_def.handler, args)
     return None
-
-
-def _cmd(name: str, desc: str):
-    """装饰器：注册命令到 COMMANDS dict（向后兼容）。"""
-    def wrapper(fn):
-        _register_to_commands(name, fn, desc)
-        return fn
-    return wrapper

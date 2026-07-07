@@ -23,6 +23,41 @@ from core.setup import aide_dir
 logger = logging.getLogger(__name__)
 
 
+# ── 共享原子写入 ──────────────────────────────────────────────────────
+
+
+def atomic_write_json(path: Path, data: dict | list) -> None:
+    """通过临时文件 + os.replace 实现原子 JSON 写入。
+
+    供 JsonStore 和 Config 共用，避免崩溃时残留损坏文件。
+    """
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+
+    json_str = json.dumps(data, ensure_ascii=False, indent=2)
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=str(parent),
+        delete=False,
+        prefix=".tmp_",
+        suffix=".json",
+    ) as tmp:
+        tmp.write(json_str)
+        tmp.flush()
+        tmp_path = tmp.name
+
+    try:
+        os.replace(tmp_path, str(path))
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            logger.debug("Failed to unlink temp file %s, skipping cleanup", tmp_path)
+        raise
+
+
 class JsonStore:
     """JSON 文件存储 — Write-Actor 模型。
 
@@ -106,35 +141,5 @@ class JsonStore:
 
     @staticmethod
     async def _atomic_write(path: Path, content: str) -> None:
-        """通过临时文件 + os.replace 实现原子写入。
-
-        步骤:
-            1. 在同目录创建 tempfile，写入内容
-            2. os.replace（原子替换，Windows POSIX 均支持）
-            3. 失败不残留临时文件（tempfile 自动清理）
-        """
-        parent = path.parent
-        parent.mkdir(parents=True, exist_ok=True)
-
-        # tempfile.NamedTemporaryFile → write → os.replace
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=str(parent),
-            delete=False,
-            prefix=".tmp_",
-            suffix=".json",
-        ) as tmp:
-            tmp.write(content)
-            tmp.flush()
-            tmp_path = tmp.name
-
-        try:
-            os.replace(tmp_path, str(path))
-        except Exception:
-            # 清理残留临时文件
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                logger.debug("Failed to unlink temp file %s, skipping cleanup", tmp_path)
-            raise
+        """通过 atomic_write_json 实现原子写入。"""
+        atomic_write_json(path, json.loads(content))

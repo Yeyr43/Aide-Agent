@@ -442,7 +442,7 @@ def _build_overview(
     格式："此前讨论了 A、B。期间确定：C。"
 
     Args:
-        session_dir: session 目录（用于读取 cache.json）
+        session_dir: session 目录（保留参数，当前未使用）
         older_conversation: 早期的对话消息
     """
     def _extract_text(content: str | list) -> str:

@@ -3,11 +3,9 @@
 API 配置存储为 config/api/<name>.json，每个 API 一个文件。
 """
 
-from typing import Any
-
 from core.config import Config
 from core.locale import t
-from ._compat import _cmd
+from core.commands.context import CommandContext
 
 
 def _resolve_edit_name(name: str) -> str:
@@ -44,8 +42,7 @@ def _api_result_to_config(result: dict) -> dict:
     }
 
 
-@_cmd("language", t("cmd.language.desc"))
-async def handle_language(app: Any, args: str) -> str:
+async def handle_language(app: CommandContext, args: str) -> str:
     """切换界面语言。"""
     lang = args.strip().lower()
     if lang not in ("zh", "en"):
@@ -78,8 +75,7 @@ async def handle_language(app: Any, args: str) -> str:
     return t("cmd.language.switched", lang=lang_display)
 
 
-@_cmd("api", t("cmd.api.desc"))
-async def handle_api(app: Any, args: str) -> str:
+async def handle_api(app: CommandContext, args: str) -> str:
     """管理 API 配置。无参数打开配置页；list/delete/edit 为文本命令。"""
     parts = args.strip().split(maxsplit=1)
     sub = parts[0] if parts else ""
@@ -151,8 +147,7 @@ async def handle_api(app: Any, args: str) -> str:
     return t("cmd.api.list_empty")
 
 
-@_cmd("model", t("cmd.model.desc"))
-async def handle_model(app: Any, args: str) -> str:
+async def handle_model(app: CommandContext, args: str) -> str:
     """切换 / 列出 API 配置。"""
     parts = args.strip().split()
     name = parts[0] if parts else ""

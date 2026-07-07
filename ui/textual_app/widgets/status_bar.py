@@ -5,9 +5,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from rich.text import Text
 from textual.containers import Horizontal
 from textual.widgets import Static
+
+if TYPE_CHECKING:
+    from core.kernel.protocols import TokenUsage
 
 
 class StatusBar(Horizontal):
@@ -16,6 +21,16 @@ class StatusBar(Horizontal):
     用法:
         bar = self.query_one("#status-bar", StatusBar)
         bar.update_info(tokens=1200, token_pct=0.52, model="gpt-4o-mini", api_name="openai")
+
+        # 高级：自动从 session 估算 token 用量
+        bar.update_from_session(
+            usage=result.usage,
+            conversation=session.conversation,
+            tools_schema=registry.get_schemas(),
+            model="gpt-4o",
+            api_name="openai",
+            context_window=128000,
+        )
     """
 
     def __init__(self, **kwargs) -> None:
@@ -48,6 +63,40 @@ class StatusBar(Horizontal):
             self._context_window = context_window
 
         self._build_display()
+
+    def update_from_session(
+        self,
+        *,
+        usage: TokenUsage | None = None,
+        conversation: list[dict] | None = None,
+        tools_schema: list[dict] | None = None,
+        model: str = "",
+        api_name: str = "",
+        context_window: int = 128000,
+    ) -> None:
+        """从会话数据自动估算 token 用量并刷新显示。
+
+        Chat 后优先使用 kernel 返回的准确计数，
+        否则从 conversation 估算（会话恢复 / 未聊天时）。
+        """
+        from core.context.token_counter import compute_context_usage
+
+        if usage is not None:
+            estimated = usage.total_tokens
+            pct = usage.context_pct
+        elif conversation:
+            estimated, pct = compute_context_usage(
+                conversation, tools_schema or [],
+                context_window=context_window,
+            )
+        else:
+            estimated, pct = 0, 0.0
+
+        self.update_info(
+            tokens=estimated, token_pct=pct,
+            model=model, api_name=api_name,
+            context_window=context_window,
+        )
 
     def _build_display(self) -> None:
         if self._context_window > 0 and self._token_pct > 0:

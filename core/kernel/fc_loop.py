@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from .protocols import ExecutorUI
 from core.tools import ToolRegistry
+from core.tools.truncation import truncate_output
 from core.llm_gateway import TextDelta, StreamEnd
 
 logger = logging.getLogger(__name__)
@@ -30,18 +31,19 @@ def _sanitize_messages(messages: list[dict],
     """清洗消息列表：非视觉模型需将多模态 content（list）转为纯文本。
 
     视觉模型（gpt-4o、claude-3+、gemini-1.5+ 等）保留 content 数组格式，
-    仅做浅拷贝确保原始 conversation 不被修改。
+    做深拷贝确保 Provider 侧的转换不会污染原始 conversation。
 
     Args:
         messages: 对话历史列表
         supports_vision: 模型是否支持图片输入（True 保留多模态格式）
 
     Returns:
-        新列表，不修改输入的 dict
+        新列表，不修改输入的 dict（深拷贝）
     """
     if supports_vision:
-        # 视觉模型：原样返回（浅拷贝）
-        return list(messages)
+        # 视觉模型：深拷贝，防止 Provider 转换时修改原始 conversation
+        import copy
+        return copy.deepcopy(messages)
 
     sanitized: list[dict] = []
     for msg in messages:
@@ -62,8 +64,9 @@ def _sanitize_messages(messages: list[dict],
             sanitized.append(msg)
     return sanitized
 TOOL_TIMEOUT = 30.0            # 单个工具执行超时（秒）
+MCP_TOOL_TIMEOUT = 120.0       # MCP 工具超时（需匹配 transport.CALL_TIMEOUT）
 TOOL_RESULT_MAX_CHARS = 8000   # 工具结果最大字符数（超出截断）
-MAX_WEB_CALLS = 3              # 单次 FC 循环中 web_search + web_fetch 总调用上限
+MAX_WEB_CALLS = 3              # 单次 FC 循环中 web 工具总调用上限
 
 # 匹配 Claude/Anthropic 格式的 XML 工具调用
 _XML_INVOKE_RE = re.compile(
@@ -94,7 +97,12 @@ class FunctionCallingLoop:
     """
 
     # 网络工具名集合（类级常量）
-    _web_tool_names: frozenset = frozenset({"web_search", "web_fetch"})
+    _web_tool_names: frozenset = frozenset({"web"})
+
+    # 不可缓存的工具（有副作用，重复调用结果可能不同）
+    _uncacheable_tools: frozenset = frozenset({
+        "write_file", "run_shell",
+    })
 
     def __init__(self, provider, tool_registry: ToolRegistry,
                  max_turns: int = DEFAULT_MAX_TURNS) -> None:
@@ -103,6 +111,8 @@ class FunctionCallingLoop:
         self.max_turns = max_turns
         self.supports_vision: bool = getattr(provider, 'supports_vision', False)
         self._web_call_count = 0
+        # 同轮工具结果缓存（仅缓存无副作用工具）
+        self._result_cache: dict[tuple[str, str], str] = {}
 
     async def run(
         self,
@@ -119,6 +129,7 @@ class FunctionCallingLoop:
             更新后的 messages 列表
         """
         self._web_call_count = 0
+        self._result_cache.clear()
         tools_schema = self.registry.get_schemas()
         final: StreamEnd | None = None
         turn = 0
@@ -194,7 +205,7 @@ class FunctionCallingLoop:
         所有错误作为普通结果返回 — 不阻断对话，LLM 自行降级。
         返回顺序与 tool_calls 顺序一致。
 
-        网络工具（web_search / web_fetch）有每轮 3 次总调用上限，
+        网络工具（web）有每轮 3 次总调用上限，
         超出后直接返回错误而不发起实际请求。
         """
         async def _run_one(tc: dict) -> dict:
@@ -211,15 +222,28 @@ class FunctionCallingLoop:
                     ui.on_tool_error(tool_name, result)
                     return {"content": result, "tool_id": tool_id}
 
+            # MCP 工具使用更长的超时（匹配 MCP CALL_TIMEOUT=120s）
+            tool_timeout = MCP_TOOL_TIMEOUT if tool_name.startswith("mcp_") else TOOL_TIMEOUT
+
+            # ── 同轮缓存：相同工具+参数直接返回缓存（仅无副作用工具）──
+            cacheable = tool_name not in self._uncacheable_tools
+            cache_key = ""
+            if cacheable:
+                cache_key = (tool_name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
+                if cache_key in self._result_cache:
+                    ui.on_tool_start(tool_name, arguments)
+                    ui.on_tool_done(tool_name, self._result_cache[cache_key])
+                    return {"content": self._result_cache[cache_key], "tool_id": tool_id}
+
             ui.on_tool_start(tool_name, arguments)
 
             try:
                 result = await asyncio.wait_for(
                     self.registry.execute(tool_name, arguments),
-                    timeout=TOOL_TIMEOUT,
+                    timeout=tool_timeout,
                 )
             except asyncio.TimeoutError:
-                result = f"错误：工具 {tool_name} 执行超时（{TOOL_TIMEOUT}s）"
+                result = f"错误：工具 {tool_name} 执行超时（{tool_timeout}s）"
                 ui.on_tool_error(tool_name, result)
             except Exception as e:
                 logger.exception(f"工具 {tool_name} 执行异常")
@@ -228,6 +252,9 @@ class FunctionCallingLoop:
             else:
                 # 截断过长结果
                 result = self._truncate_result(result)
+                # 缓存无副作用工具的结果（同轮重复调用直接返回）
+                if cacheable:
+                    self._result_cache[cache_key] = result
                 ui.on_tool_done(tool_name, result)
 
             return {"content": result, "tool_id": tool_id}
@@ -238,21 +265,10 @@ class FunctionCallingLoop:
 
     @staticmethod
     def _truncate_result(result: str) -> str:
-        """截断过长的工具结果，避免撑爆 LLM 上下文。
-
-        超过 TOOL_RESULT_MAX_CHARS 时保留首尾各一半，
-        中间插入截断标记。
-        """
-        if len(result) <= TOOL_RESULT_MAX_CHARS:
-            return result
-
-        half = TOOL_RESULT_MAX_CHARS // 2 - 50
-        head = result[:half]
-        tail = result[-half:]
-        return (
-            f"{head}\n\n"
-            f"…（输出过大，已从 {len(result)} 字符截断至 {TOOL_RESULT_MAX_CHARS} 字符）…\n\n"
-            f"{tail}"
+        """截断过长的工具结果，避免撑爆 LLM 上下文。"""
+        return truncate_output(
+            result, TOOL_RESULT_MAX_CHARS,
+            label=f"已从 {len(result)} 字符截断至 {TOOL_RESULT_MAX_CHARS} 字符",
         )
 
     # ── helpers ───────────────────────────────────────────────────

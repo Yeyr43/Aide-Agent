@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from core.commands import CommandDefinition
-from core.commands.builtin._compat import COMMANDS, route_command
+from core.commands import CommandDefinition, CommandRegistry
+from core.commands.builtin._compat import route_command
 from core.commands.builtin.handlers import (
     handle_help, handle_profile, handle_compress, handle_export, handle_import,
     handle_session, handle_memory, handle_tools, handle_update, handle_clear,
@@ -54,23 +54,16 @@ class TestCommandRouting:
 
     def test_all_commands_registered(self):
         """P5: 16 个内置命令。"""
-        assert "/help" in COMMANDS
-        assert "/profile" in COMMANDS
-        assert "/compact" in COMMANDS
-        assert "/export" in COMMANDS
-        assert "/import" in COMMANDS
-        assert "/plugin" in COMMANDS
-        assert "/session" in COMMANDS
-        assert "/memory" in COMMANDS
-        assert "/tools" in COMMANDS
-        assert "/update" in COMMANDS
-        assert "/clear" in COMMANDS
-        assert "/mcp" in COMMANDS
-        assert "/rollback" in COMMANDS
-        assert "/language" in COMMANDS
-        assert "/api" in COMMANDS
-        assert "/model" in COMMANDS
-        assert len(COMMANDS) == 16
+        registry = CommandRegistry()
+        names = [c.name for c in registry.list_all()]
+        expected = [
+            "/help", "/profile", "/compact", "/export", "/import",
+            "/plugin", "/session", "/memory", "/tools", "/update",
+            "/clear", "/rollback", "/mcp", "/language", "/api", "/model",
+        ]
+        for cmd in expected:
+            assert cmd in names, f"Missing command: {cmd}"
+        assert len(names) == 16
 
     def test_session_route(self):
         result = route_command("/session list")

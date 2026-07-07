@@ -8,12 +8,13 @@ class TestConfigDefaults:
         config = Config()
         assert config.llm.provider == ""
         assert config.llm.model == ""
-        assert config.llm.supports_vision is False
+        assert config.llm.supports_vision is None
 
     def test_default_app_settings(self):
         config = Config()
         assert config.app.max_turns == 5
-        assert config.app.window_turns == 8
+        assert config.app.full_text_turns == 3
+        assert config.app.summary_turns == 15
 
     def test_default_aide_root(self):
         config = Config()

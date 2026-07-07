@@ -8,7 +8,6 @@
 """
 
 import atexit
-import ctypes
 import os
 import sys
 from pathlib import Path
@@ -21,146 +20,18 @@ if not is_bundled():
         sys.path.insert(0, str(_project_root))
 
 from core.setup import aide_dir, ensure_aide_root
-from core.platform import IS_WINDOWS
+from core.launcher import (
+    acquire_instance_lock,
+    release_instance_lock,
+    decorate_console,
+    ensure_daemon,
+)
 
 _LOCK_FILE = aide_dir() / "aide.pid"
-
-
-# ── 单实例锁 ────────────────────────────────────────────────────────────────
-
-def _pid_alive(pid: int) -> bool:
-    """检查 PID 是否存活。"""
-    try:
-        if IS_WINDOWS:
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.OpenProcess(0x0400, False, pid)  # PROCESS_QUERY_INFORMATION
-            if not handle:
-                return False
-            kernel32.CloseHandle(handle)
-            return True
-        else:
-            os.kill(pid, 0)
-            return True
-    except (OSError, ProcessLookupError):
-        return False
-
-
-def _bring_to_front(title: str) -> bool:
-    """将已有窗口提到最前。仅 Windows。"""
-    if not IS_WINDOWS:
-        return False
-    try:
-        user32 = ctypes.windll.user32
-        hwnd = user32.FindWindowW(None, title)
-        if not hwnd:
-            return False
-        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-        user32.SetForegroundWindow(hwnd)
-        return True
-    except Exception:
-        return False
-
-
-def _acquire_lock() -> bool:
-    """尝试获取单实例锁。已有人持锁则激活其窗口并返回 False。
-    非 Windows 平台无法激活前台窗口 — 强制替换旧实例。
-    """
-    if _LOCK_FILE.exists():
-        try:
-            pid = int(_LOCK_FILE.read_text().strip())
-            if _pid_alive(pid):
-                # 已有实例运行中 → 激活窗口
-                if _bring_to_front("Aide Agent"):
-                    return False
-                # 非 Windows 无法激活窗口 → 终止旧实例
-                try:
-                    os.kill(pid, 15)  # SIGTERM
-                except OSError:
-                    pass
-                _LOCK_FILE.unlink(missing_ok=True)
-            else:
-                # 僵尸锁（进程已死）→ 删除
-                _LOCK_FILE.unlink(missing_ok=True)
-        except (ValueError, OSError):
-            _LOCK_FILE.unlink(missing_ok=True)
-
-    # 写入自己的 PID
-    _LOCK_FILE.write_text(str(os.getpid()))
-    atexit.register(_release_lock)
-    return True
-
-
-def _release_lock() -> None:
-    """释放单实例锁。"""
-    try:
-        _LOCK_FILE.unlink(missing_ok=True)
-    except OSError:
-        pass
-
-
-# ── 控制台装饰 ──────────────────────────────────────────────────────────────
-
-def _decorate_console() -> None:
-    """设置控制台窗口标题和图标（仅 Windows）。"""
-    if not IS_WINDOWS:
-        return
-    try:
-        kernel32 = ctypes.windll.kernel32
-        user32 = ctypes.windll.user32
-        kernel32.SetConsoleTitleW("Aide Agent")
-
-        ico = Path(__file__).parent.parent / "Aide.ico"
-        if not ico.exists():
-            return
-
-        hwnd = kernel32.GetConsoleWindow() or user32.FindWindowW(None, "Aide Agent")
-        if not hwnd:
-            return
-
-        hicon = user32.LoadImageW(None, str(ico), 1, 32, 32, 0x00000010)
-        if hicon:
-            user32.SendMessageW(hwnd, 0x0080, 0, hicon)  # ICON_SMALL
-            user32.SendMessageW(hwnd, 0x0080, 1, hicon)  # ICON_BIG
-    except Exception:
-        pass
-
-
-# ── 守护进程 ──────────────────────────────────────────────────────────────────
-
 _DAEMON_LOCK = aide_dir() / "daemon.pid"
 
 
-def _ensure_daemon() -> None:
-    """确保托盘守护进程在后台运行。已运行则跳过。"""
-    if _DAEMON_LOCK.exists():
-        try:
-            pid = int(_DAEMON_LOCK.read_text().strip())
-            if _pid_alive(pid):
-                return  # 已在运行
-        except (ValueError, OSError):
-            pass
-
-    import subprocess
-    daemon = Path(__file__).parent / "tray_daemon.py"
-    if not daemon.exists():
-        return
-
-    if IS_WINDOWS:
-        # pythonw: 无控制台窗口
-        pythonw = Path(sys.executable).parent / "pythonw.exe"
-        if not pythonw.exists():
-            pythonw = sys.executable
-        subprocess.Popen(
-            [str(pythonw), str(daemon)],
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-        )
-    else:
-        subprocess.Popen(
-            [sys.executable, str(daemon)],
-            start_new_session=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-
+# ── 烟雾测试 ────────────────────────────────────────────────────────────────
 
 def _smoke_test() -> None:
     """烟雾测试：验证所有关键模块可导入 + 资源路径正确。"""
@@ -170,6 +41,7 @@ def _smoke_test() -> None:
     for mod_name in [
         "core.setup", "core.config", "core.storage", "core.resources",
         "core.platform", "core.locale", "core.locale_data",
+        "core.launcher",
         "core.kernel.agent", "core.kernel.state", "core.kernel.protocols",
         "core.kernel.bootstrap", "core.kernel.fc_loop", "core.kernel.context",
         "core.context.pipeline", "core.context.ingester",
@@ -189,10 +61,9 @@ def _smoke_test() -> None:
         "core.plugins.slots",
         "core.tools", "core.tools.discovery", "core.tools.retry",
         "core.tools.builtin.read_file", "core.tools.builtin.write_file",
-        "core.tools.builtin.edit_file", "core.tools.builtin.run_shell",
-        "core.tools.builtin.search_memory", "core.tools.builtin.web_search",
-        "core.tools.builtin.web_fetch", "core.tools.builtin.list_dir",
-        "core.tools.builtin.search_in_files", "core.tools.builtin.clipboard",
+        "core.tools.builtin.run_shell",
+        "core.tools.builtin.search_memory", "core.tools.builtin.web",
+        "core.tools.builtin.search_in_files",
         "core.tools.mcp.adapter", "core.tools.mcp.protocol",
         "core.tools.mcp.transport", "core.tools.mcp.fault",
         "core.tools.mcp.watcher",
@@ -246,12 +117,14 @@ def main() -> None:
 
     ensure_aide_root()
 
-    if not _acquire_lock():
+    if not acquire_instance_lock(_LOCK_FILE):
         print("Aide is already running. Activated existing window.")
         return
 
-    _decorate_console()
-    _ensure_daemon()
+    decorate_console(Path(__file__).parent.parent / "Aide.ico")
+
+    daemon_script = Path(__file__).parent / "tray_daemon.py"
+    ensure_daemon(_DAEMON_LOCK, daemon_script)
 
     from ui.textual_app.app import AideApp
     app = AideApp()

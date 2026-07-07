@@ -21,6 +21,7 @@ from typing import AsyncIterator
 import httpx
 
 from .provider import TextDelta, StreamEnd
+from .tool_call_builder import ToolCallAccumulator, build_tool_calls
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ class AnthropicProvider:
         - user content: str → [{type: text, text: ...}]
         - user content (多模态): [{type: text}, {type: image_url}] → [{type: text}, {type: image}]
         - assistant + tool_calls → [{type: text}, {type: tool_use, id, name, input}]
-        - tool → {role: user, content: [{type: tool_result, ...}]}
+        - tool → {role: user, content: [{type: tool_result, ...}]}（content 支持多模态）
         """
         system_parts: list[str] = []
         converted: list[dict] = []
@@ -148,7 +149,11 @@ class AnthropicProvider:
 
             elif role == "tool":
                 tc_id = msg.get("tool_call_id", "")
-                tc_content = AnthropicProvider._extract_text(content)
+                if isinstance(content, list):
+                    # 多模态 tool result：text + image_url → text + image blocks
+                    tc_content = AnthropicProvider._convert_content_blocks(content)
+                else:
+                    tc_content = AnthropicProvider._extract_text(content)
                 converted.append({
                     "role": "user",
                     "content": [
@@ -159,6 +164,32 @@ class AnthropicProvider:
 
         system_text = "\n\n".join(system_parts) if system_parts else ""
         return system_text, converted
+
+    @staticmethod
+    def _convert_content_blocks(blocks: list[dict]) -> list[dict]:
+        """OpenAI content blocks → Anthropic content blocks（text + image）。
+
+        供 user content 和 tool_result content 共用。
+        """
+        result: list[dict] = []
+        for block in blocks:
+            block_type = block.get("type", "")
+            if block_type == "text":
+                result.append({"type": "text", "text": block.get("text", "")})
+            elif block_type == "image_url":
+                url = block.get("image_url", {}).get("url", "")
+                if url.startswith("data:"):
+                    header, b64 = url.split(",", 1)
+                    media_type = header.split(":")[1].split(";")[0]
+                    result.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": b64,
+                        },
+                    })
+        return result if result else [{"type": "text", "text": ""}]
 
     @staticmethod
     def _extract_text(content) -> str:
@@ -178,29 +209,8 @@ class AnthropicProvider:
         """user content → Anthropic content blocks。"""
         if isinstance(content, str):
             return [{"type": "text", "text": content}]
-
         if isinstance(content, list):
-            blocks: list[dict] = []
-            for block in content:
-                block_type = block.get("type", "")
-                if block_type == "text":
-                    blocks.append({"type": "text", "text": block.get("text", "")})
-                elif block_type == "image_url":
-                    url = block.get("image_url", {}).get("url", "")
-                    if url.startswith("data:"):
-                        # data:image/png;base64,XXXXX
-                        header, b64 = url.split(",", 1)
-                        media_type = header.split(":")[1].split(";")[0]
-                        blocks.append({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": b64,
-                            },
-                        })
-            return blocks if blocks else [{"type": "text", "text": ""}]
-
+            return AnthropicProvider._convert_content_blocks(content)
         return [{"type": "text", "text": str(content)}]
 
     @staticmethod
@@ -318,7 +328,7 @@ class AnthropicProvider:
             StreamEnd: 流结束（必然 yield 一次）
         """
         current_event: str | None = None
-        tool_use_accumulators: dict[int, dict] = {}
+        tool_use_accumulators: dict[int, ToolCallAccumulator] = {}
         stop_reason = "stop"
 
         async for line in response.aiter_lines():
@@ -347,11 +357,10 @@ class AnthropicProvider:
                 index = data.get("index", 0)
                 block = data.get("content_block", {})
                 if block.get("type") == "tool_use":
-                    tool_use_accumulators[index] = {
-                        "id": block.get("id", ""),
-                        "name": block.get("name", ""),
-                        "input_json": "",
-                    }
+                    tool_use_accumulators[index] = ToolCallAccumulator(
+                        id=block.get("id", ""),
+                        name=block.get("name", ""),
+                    )
 
             # content_block_delta — 文本增量或工具参数增量
             elif event_type == "content_block_delta":
@@ -366,7 +375,7 @@ class AnthropicProvider:
 
                 elif delta_type == "input_json_delta":
                     if index in tool_use_accumulators:
-                        tool_use_accumulators[index]["input_json"] += \
+                        tool_use_accumulators[index].arguments_str += \
                             delta.get("partial_json", "")
 
             # message_delta — stop_reason
@@ -379,26 +388,10 @@ class AnthropicProvider:
                 break
 
         # ── 组装 tool_calls ──
-        tool_calls: list[dict] = []
-        for idx in sorted(tool_use_accumulators.keys()):
-            acc = tool_use_accumulators[idx]
-            try:
-                args = (
-                    json.loads(acc["input_json"])
-                    if acc["input_json"].strip() else {}
-                )
-            except json.JSONDecodeError:
-                args = {}
-            tool_calls.append({
-                "id": acc["id"],
-                "type": "function",
-                "function": {
-                    "name": acc["name"],
-                    "arguments": json.dumps(args, ensure_ascii=False),
-                },
-            })
-
-        yield StreamEnd(finish_reason=stop_reason, tool_calls=tool_calls)
+        yield StreamEnd(
+            finish_reason=stop_reason,
+            tool_calls=build_tool_calls(tool_use_accumulators),
+        )
 
     @staticmethod
     def _map_stop_reason(anthropic_reason: str) -> str:

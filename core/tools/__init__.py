@@ -8,7 +8,7 @@ P4 Batch 2: 集成重试机制（core.tools.retry），瞬态错误自动指数�
 from dataclasses import dataclass, field
 from typing import Callable, Awaitable
 
-from .builtin import read_file, write_file, run_shell, search_memory, web_search, list_dir, clipboard, web_fetch, search_in_files, edit_file
+from .builtin import read_file, write_file, run_shell, search_memory, web, search_in_files
 from .retry import RetryConfig, async_retry
 from core.locale import t
 

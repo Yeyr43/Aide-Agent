@@ -5,12 +5,11 @@ from core.sessions.manager import SessionManager, SessionInfo
 
 
 def _make_turn_files(session_dir: Path, count: int) -> None:
-    """Helper: 创建模拟的 turn 文件 + timeline.json + cache.json。"""
+    """Helper: 创建模拟的 turn 文件 + timeline.json。"""
     messages_dir = session_dir / "messages"
     messages_dir.mkdir(parents=True, exist_ok=True)
 
     timeline = []
-    cache = []
     for i in range(1, count + 1):
         turn_data = {
             "turn": i,
@@ -27,13 +26,9 @@ def _make_turn_files(session_dir: Path, count: int) -> None:
             json.dumps(turn_data, ensure_ascii=False), encoding="utf-8",
         )
         timeline.append({"turn": i, "timestamp": f"2026-07-03T00:00:{i:02d}Z", "summary": f"turn {i}"})
-        cache.append({"turn": i, "summary": f"turn {i}"})
 
     (session_dir / "timeline.json").write_text(
         json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8",
-    )
-    (session_dir / "cache.json").write_text(
-        json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8",
     )
 
 
@@ -93,7 +88,7 @@ class TestRollback:
         assert not (session_dir / "messages" / "turn_004.json").exists()
         assert not (session_dir / "messages" / "turn_005.json").exists()
 
-    def test_rollback_truncates_timeline_and_cache(self, tmp_path):
+    def test_rollback_truncates_timeline(self, tmp_path):
         session_dir = tmp_path / "sessions" / "20260703_test"
         _make_turn_files(session_dir, 4)
 
@@ -101,9 +96,7 @@ class TestRollback:
         mgr.rollback(session_dir, 2)
 
         timeline = json.loads((session_dir / "timeline.json").read_text(encoding="utf-8"))
-        cache = json.loads((session_dir / "cache.json").read_text(encoding="utf-8"))
         assert len(timeline) == 2
-        assert len(cache) == 2
         assert [e["turn"] for e in timeline] == [1, 2]
 
     def test_rollback_handles_overview_checkpoints(self, tmp_path):
