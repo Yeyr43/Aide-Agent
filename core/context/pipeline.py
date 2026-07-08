@@ -19,14 +19,11 @@ from pathlib import Path
 from core.locale import build_tools_prompt, t
 from core.setup import aide_dir
 
-from .embeddings import get_embedding_engine
-from .relevance import (
-    _bigrams, _jaccard, _tokenize, _tfidf_score,
-    _extract_topics, _extract_decisions,
-    _build_overview, _split_conversation,
-    _build_vocabulary, _vocab_index, flush_vocab_cache,
-    _decay_factor,
+from ._tokenizer import (
+    VocabularyIndex, _build_vocabulary, _tokenize, _jaccard, _bigrams,
+    _tfidf_score, _decay_factor, _expand_query, flush_vocab_cache,
 )
+from ._overview import _extract_topics, _extract_decisions, _build_overview, _split_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +56,8 @@ class ContextPipeline:
         self.full_text_turns = full_text_turns
         self.summary_turns = summary_turns
         self.relevance_threshold = relevance_threshold
+        # 词汇索引（实例级，替代模块全局 _vocab_index）
+        self._vocab_index = VocabularyIndex()
 
     # ── 缓存管理 ──────────────────────────────────────────────────
 
@@ -73,9 +72,15 @@ class ContextPipeline:
         return self._cache[key]
 
     def flush_cache(self) -> None:
-        """刷新内存缓存 + 词汇索引（/profile update 后调用）。"""
+        """刷新内存缓存 + 词汇索引（/profile update 后调用）。
+
+        调用 flush_vocab_cache() 重置模块全局索引，
+        再通过 _build_vocabulary() 重建，确保 pipeline / recall / capture
+        三子系统共享同一份词汇表。
+        """
         self._cache.clear()
         flush_vocab_cache()
+        self._vocab_index = _build_vocabulary(self._agent_root)
 
     # ── 组装 ────────────────────────────────────────────────────────
 
@@ -85,6 +90,7 @@ class ContextPipeline:
         user_msg: str,
         conversation: list[dict] | None = None,
         context_providers: list | None = None,
+        tool_descriptions: list[str] | None = None,
     ) -> tuple[list[dict], list[dict]]:
         """组装上下文为 (system_messages, trimmed_conversation)。
 
@@ -93,6 +99,8 @@ class ContextPipeline:
             user_msg: 当前用户消息
             conversation: 完整对话历史（含当前轮之前的所有消息）
             context_providers: 插件/技能注册的 ContextProvider 列表
+            tool_descriptions: 已注册工具的描述列表（来自 ToolRegistry），
+                               用于动态生成 Tools Prompt
 
         Returns:
             (system_messages, trimmed_conversation)
@@ -111,7 +119,7 @@ class ContextPipeline:
             system_parts.append(soul)
 
         # ── 第 1b 层：Tools Prompt（不可变）──
-        system_parts.append(build_tools_prompt())
+        system_parts.append(build_tools_prompt(tool_descriptions))
 
         # ── 1.5 层：技能/插件上下文（来自已加载的 Skills/Python 插件） ──
         if context_providers:
@@ -123,10 +131,16 @@ class ContextPipeline:
                 except Exception:
                     logger.debug("Context provider failed, skipping", exc_info=True)
 
-        # ── 第 2 层：动态 prompt（词级分词 + TF-IDF 相关性过滤） ──
-        # 惰性构建词汇索引
-        _build_vocabulary(self._agent_root)
-        user_word_tokens, user_char_bigrams = _tokenize(user_msg)
+        # ── 第 2 层：动态 prompt（词级分词 + 同义词扩展 + TF-IDF 相关性过滤） ──
+        # 惰性构建词汇索引（实例级，不再依赖模块全局）
+        self._vocab_index = _build_vocabulary(self._agent_root)
+        user_word_tokens, user_char_bigrams = _tokenize(user_msg, vocab=self._vocab_index.vocab)
+
+        # 同义词扩展：查询词 + 同义词 → 扩大匹配面（"博客" 也能匹配 "静态站点"）
+        expanded_query_terms = _expand_query(user_msg)
+        user_word_tokens_expanded = user_word_tokens | {
+            t for t in expanded_query_terms if len(t) >= 2
+        }
 
         for fname in ["preferences.md", "workflows.md", "long_term_memory.md"]:
             prompt_text = self._read_cached(self._agent_root / fname)
@@ -135,26 +149,23 @@ class ContextPipeline:
 
             paragraphs = prompt_text.split("\n\n")
             relevant_sections: list[str] = []
-            low_relevance: list[str] = []
 
             # 时间衰减：基于文件 mtime（30 天半衰期）
             file_path = self._agent_root / fname
             decay = _decay_factor(file_path)
 
-            # 第一遍：计算所有段落的基础 TF-IDF 分数
-            scored_paras: list[tuple[str, float]] = []
             for para in paragraphs:
                 para = para.strip()
                 if not para or para.startswith("<!--"):
                     continue
 
-                para_word_tokens, _ = _tokenize(para)
+                para_word_tokens, _ = _tokenize(para, vocab=self._vocab_index.vocab)
 
-                # 优先用 TF-IDF；fallback 到 Jaccard（词汇索引为空时）
-                if _vocab_index.built and _vocab_index.N > 1:
+                # 优先用 TF-IDF（含同义词扩展）；fallback 到 Jaccard
+                if self._vocab_index.built and self._vocab_index.N > 1:
                     score = _tfidf_score(
-                        user_word_tokens, para_word_tokens,
-                        df=_vocab_index.df, N=_vocab_index.N,
+                        user_word_tokens_expanded, para_word_tokens,
+                        df=self._vocab_index.df, N=self._vocab_index.N,
                     )
                 else:
                     para_bigrams = _bigrams(para)
@@ -162,37 +173,15 @@ class ContextPipeline:
 
                 # 应用时间衰减
                 score *= decay
-                scored_paras.append((para, score))
-
-            # 嵌入增强仅应用于 top-10 段落（避免每条消息上百次 ONNX 推理）
-            emb_engine = get_embedding_engine()
-            top_embed_indices: set[int] = set()
-            if emb_engine.available:
-                indexed = [(i, s) for i, (_, s) in enumerate(scored_paras) if s > 0]
-                indexed.sort(key=lambda x: x[1], reverse=True)
-                top_embed_indices = {i for i, _ in indexed[:10]}
-
-            for i, (para, score) in enumerate(scored_paras):
-                if i in top_embed_indices:
-                    emb_sim = emb_engine.similarity(user_msg[:200], para[:200])
-                    score = score * 0.7 + emb_sim * 0.3
 
                 if score >= self.relevance_threshold:
                     relevant_sections.append(para)
-                else:
-                    title = para.split("\n")[0] if para else ""
-                    if title and not title.startswith("#"):
-                        low_relevance.append(f"- {title}")
 
             if relevant_sections:
                 prompt_header = (
                     f"## {fname.replace('.md', '').replace('_', ' ').title()}"
                 )
                 section_text = "\n\n".join(relevant_sections)
-                if low_relevance:
-                    section_text += (
-                        "\n\n" + t("ctx.others", items=", ".join(low_relevance))
-                    )
                 system_parts.append(f"{prompt_header}\n{section_text}")
 
         # ── 第 3 层：会话总览（overview.md） ──

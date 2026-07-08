@@ -1,9 +1,6 @@
 """记忆召回 — 跨会话搜索 + 相关性排序。
 
-P4 Batch 1: 增强关键词匹配，加 synonym map。
-P4 Batch 2 将加入时间衰减和语义相似度。
-P5: 接入 word-level TF-IDF 评分，复用 relevance.py 的 tokenizer + 评分函数。
-    接入 EmbeddingEngine 语义搜索作为可选增强。
+复用 relevance.py 的 tokenizer + TF-IDF + 同义词扩展。
 """
 
 from __future__ import annotations
@@ -13,68 +10,11 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
-
-from core.context.embeddings import get_embedding_engine
-from core.context.relevance import _tokenize, _tfidf_score
+from core.context.relevance import _tokenize, _tfidf_score, _expand_query, get_vocab_index
 from core.locale import t
 from core.setup import aide_dir
 
 logger = logging.getLogger(__name__)
-
-# 同义词映射 — 覆盖常用技术术语与自然语言风格词
-SYNONYM_MAP: dict[str, list[str]] = {
-    # 原有
-    "代码": ["编程", "程序", "脚本", "code", "program", "script"],
-    "文件": ["文档", "档案", "file", "document", "读写"],
-    "设置": ["配置", "config", "settings", "偏好", "选项", "option"],
-    "错误": ["bug", "异常", "error", "问题", "故障", "报错", "exception"],
-    # P5 扩展
-    "部署": ["deploy", "发布", "上线", "release", "launch"],
-    "测试": ["test", "单元测试", "集成测试", "验证", "verify", "check"],
-    "数据库": ["database", "db", "查询", "存储", "query", "storage"],
-    "前端": ["frontend", "UI", "界面", "网页", "web", "界面"],
-    "后端": ["backend", "API", "服务端", "服务器", "server"],
-    "性能": ["performance", "速度", "优化", "慢", "speed", "fast"],
-    "安全": ["security", "权限", "加密", "认证", "auth", "permission"],
-    "日志": ["log", "logging", "记录", "追踪", "trace", "track"],
-    "缓存": ["cache", "redis", "memcache", "caching"],
-    "容器": ["docker", "container", "k8s", "kubernetes"],
-    "版本": ["version", "git", "升级", "更新", "upgrade", "update"],
-    "安装": ["install", "setup", "配置环境", "environment"],
-    "网络": ["network", "HTTP", "请求", "连接", "request", "connect"],
-    "搜索": ["search", "查找", "检索", "grep", "find", "lookup"],
-    "简洁": ["简短", "简明", "concise", "直接", "short", "brief"],
-    "详细": ["详尽", "详细点", "verbose", "具体", "detail", "specific"],
-    "风格": ["偏好", "习惯", "style", "方式", "way", "approach"],
-}
-
-
-def _get_all_synonyms(keyword: str) -> set[str]:
-    """Get all synonyms for a keyword from SYNONYM_MAP."""
-    kw_lower = keyword.lower()
-    for key, synonyms in SYNONYM_MAP.items():
-        if kw_lower == key.lower() or kw_lower in (s.lower() for s in synonyms):
-            return set(s.lower() for s in synonyms) | {key.lower()}
-    return set()
-
-
-def _expand_query(query: str) -> set[str]:
-    """扩展查询词的同义词。"""
-    terms = set(query.lower().split())
-    query_lower = query.lower()
-
-    # 检查 query 中是否包含任何 key 或 synonym（子串匹配）
-    for key, synonyms in SYNONYM_MAP.items():
-        key_lower = key.lower()
-        all_terms = [key_lower] + [s.lower() for s in synonyms]
-        for term in all_terms:
-            if term in query_lower or term in terms:
-                terms.add(key_lower)
-                terms.update(s.lower() for s in synonyms)
-                break
-
-    return terms
 
 
 async def recall(
@@ -86,12 +26,17 @@ async def recall(
 ) -> list[dict]:
     """搜索记忆数据，返回相关结果。
 
+    两阶段搜索：
+      1. 全局搜索索引（_search_index.json）快速筛选候选会话
+      2. 对候选会话读 meta.json + overview.md 补充细节
+      3. 搜索条目目录（JSON）
+
     Args:
         query: 搜索关键词
         aide_root: ~/.aide/ 根目录
         entry_manager: EntryManager 实例（用于搜索条目目录）
         max_results: 最大返回条数（默认 10）
-        max_sessions: 最多扫描的会话目录数（默认 50，防止海量会话拖慢搜索）
+        max_sessions: 搜索索引无结果时的 fallback 扫描上限
 
     Returns:
         匹配结果列表，每项: {"source": str, "snippet": str, "score": float}
@@ -99,12 +44,37 @@ async def recall(
     if aide_root is None:
         aide_root = aide_dir()
 
-    keywords = _expand_query(query)
+    vocab = get_vocab_index()
+    keywords = _expand_query(query, vocab=vocab.vocab)
     matches: list[dict] = []
-
-    # 1. 搜索会话数据（限制扫描数量）
     sessions_root = aide_root / "sessions"
+
+    # 1. 搜索索引快速筛选 → 获取候选会话
+    matched_session_ids: set[str] = set()
     if sessions_root.exists():
+        try:
+            from core.search.index import get_search_index
+            search_idx = get_search_index(sessions_root)
+            idx_results = await search_idx.search(query, top_k=20)
+            for r in idx_results:
+                matches.append({
+                    "source": f"[会话 {r.session_id} / 轮 {r.turn}]",
+                    "snippet": r.summary[:200],
+                    "score": r.score + 1.0,
+                    "_session_dir": r.session_id,
+                })
+                matched_session_ids.add(r.session_id)
+        except Exception:
+            logger.debug("搜索索引不可用，回退到目录扫描")
+
+    # 2. 对匹配到的会话补充 meta.json + overview.md 细节
+    for session_id in matched_session_ids:
+        session_dir = sessions_root / session_id
+        if session_dir.is_dir():
+            _enrich_session(session_dir, keywords, matches)
+
+    # 3. Fallback：索引为空时扫描最近 N 个会话目录
+    if not matched_session_ids and sessions_root.exists():
         session_count = 0
         for session_dir in sorted(sessions_root.iterdir(), reverse=True):
             if not session_dir.is_dir():
@@ -114,14 +84,14 @@ async def recall(
             if session_count >= max_sessions:
                 break
 
-    # 2. 搜索条目目录
+    # 4. 搜索条目目录
     if entry_manager is not None:
         await _search_entries(entry_manager, keywords, matches)
 
-    # 3. 保存原始关键词分数 → TF-IDF 重排序 → 清理内部字段 → 截断
+    # 5. 保存原始关键词分数 → TF-IDF 重排序 → 清理内部字段 → 截断
     for m in matches:
         m["_keyword_score"] = m["score"]
-    matches = _tfidf_rank(query, matches)
+    matches = _tfidf_rank(query, matches, vocab=vocab.vocab)
     for m in matches:
         m.pop("_keyword_score", None)
         m.pop("_session_dir", None)
@@ -177,6 +147,46 @@ def _search_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
             logger.debug("Failed to read/parse overview.md for session %s, skipping", session_dir.name)
 
 
+def _enrich_session(session_dir: Path, keywords: set[str], matches: list[dict]) -> None:
+    """补充 meta.json + overview.md 细节（timeline 已由搜索索引覆盖）。"""
+    # meta.json
+    meta_path = session_dir / "meta.json"
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            name = meta.get("name", "")
+            score = _keyword_score(name, keywords)
+            if score > 0:
+                matches.append({
+                    "source": f"[会话 {session_dir.name}]",
+                    "snippet": f"会话：{name}",
+                    "score": score * 1.5,
+                    "_session_dir": session_dir.name,
+                })
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # overview.md
+    overview_path = session_dir / "overview.md"
+    if overview_path.exists():
+        try:
+            from core.context.compactor import parse_overview_md
+            text = overview_path.read_text(encoding="utf-8")
+            sections = parse_overview_md(text)
+            for section_name, items in sections.items():
+                for item in items:
+                    score = _keyword_score(item, keywords)
+                    if score > 0:
+                        matches.append({
+                            "source": f"[会话 {session_dir.name} / {section_name}]",
+                            "snippet": item[:200],
+                            "score": score + 1,
+                            "_session_dir": session_dir.name,
+                        })
+        except (OSError, Exception):
+            pass
+
+
 def _search_timeline(data: list, keywords: set[str], session_id: str, matches: list[dict]) -> None:
     """搜索 timeline.json 条目。"""
     for entry in data:
@@ -217,43 +227,51 @@ async def _search_entries(entry_manager, keywords: set[str], matches: list[dict]
             continue
 
 
-def _keyword_score(text: str, keywords: set[str]) -> float:
-    """Weighted keyword match: header/title matches count more."""
-    text_lower = text.lower()
-    score = 0.0
-    lines = text_lower.split("\n")
-    header = lines[0] if lines else ""
+def _keyword_score(text: str, keywords: set[str], vocab: frozenset[str] | None = None) -> float:
+    """Score text against query keywords using word-level token + bigram overlap.
 
-    for kw in keywords:
-        if kw in header:
-            score += 2.0
-        elif kw in text_lower:
-            score += 1.0
-        else:
-            # 同义词模糊匹配
-            for syn in _get_all_synonyms(kw):
-                if syn in text_lower:
-                    score += 0.5
-                    break
+    Uses the shared tokenizer from core.context.relevance for consistent
+    word-level matching (CJK max-forward-match + ASCII word extraction),
+    with char 2-gram fallback for out-of-vocabulary terms.
+    """
+    text_tokens, text_bigrams = _tokenize(text, vocab=vocab)
+    keywords_lower = {k.lower() for k in keywords}
+
+    # Collect all matchable terms: word tokens + char bigrams
+    text_terms = {t.lower() for t in text_tokens} | {b.lower() for b in text_bigrams}
+    if not text_terms:
+        return 0.0
+
+    overlap = text_terms & keywords_lower
+    if not overlap:
+        return 0.0
+
+    score = float(len(overlap))
+
+    # Header bonus: first-line matches count extra
+    lines = text.split("\n")
+    if lines and lines[0]:
+        header_tokens, header_bigrams = _tokenize(lines[0])
+        header_terms = {t.lower() for t in header_tokens} | {b.lower() for b in header_bigrams}
+        header_matches = len(header_terms & keywords_lower)
+        score += header_matches * 1.0
+
     return score
 
 
 def _session_time_weight(session_dir_name: str) -> float:
-    """Decay weight based on session age. 7-day half-life."""
+    """Decay weight based on session age. 30-day half-life（与 pipeline _decay_factor 统一）。"""
     try:
         ts = datetime.strptime(session_dir_name[:15], "%Y%m%d_%H%M%S")
         age_days = (datetime.now() - ts).days
-        if age_days <= 7:
+        if age_days <= 0:
             return 1.0
-        elif age_days <= 30:
-            return 0.8
-        else:
-            return max(0.1, 0.5 ** (age_days / 30))
+        return 0.5 ** (age_days / 30)
     except (ValueError, IndexError):
         return 0.5
 
 
-def _tfidf_rank(query: str, candidates: list[dict]) -> list[dict]:
+def _tfidf_rank(query: str, candidates: list[dict], vocab: frozenset[str] | None = None) -> list[dict]:
     """用 word-level TF-IDF 重新排序候选结果。
 
     从候选 snippet 中动态构建词汇表 + DF 表，
@@ -262,6 +280,7 @@ def _tfidf_rank(query: str, candidates: list[dict]) -> list[dict]:
     Args:
         query: 原始搜索查询
         candidates: 候选结果列表，每项需有 "snippet" 和 "score" 字段
+        vocab: 词汇表（None 时使用模块级全局索引）
 
     Returns:
         按混合分数降序排列的结果列表
@@ -270,7 +289,7 @@ def _tfidf_rank(query: str, candidates: list[dict]) -> list[dict]:
         return candidates
 
     # Tokenize query
-    query_tokens, _ = _tokenize(query)
+    query_tokens, _ = _tokenize(query, vocab=vocab)
     if not query_tokens:
         return sorted(candidates, key=lambda m: m["score"], reverse=True)
 
@@ -279,13 +298,13 @@ def _tfidf_rank(query: str, candidates: list[dict]) -> list[dict]:
     N = len(all_snippets)
     df: dict[str, int] = {}
     for snippet in all_snippets:
-        tokens, _ = _tokenize(snippet)
+        tokens, _ = _tokenize(snippet, vocab=vocab)
         for t in tokens:
             df[t] = df.get(t, 0) + 1
 
     # TF-IDF 重新评分 + 与原始关键词分数混合
     for c in candidates:
-        doc_tokens, _ = _tokenize(c["snippet"])
+        doc_tokens, _ = _tokenize(c["snippet"], vocab=vocab)
         tfidf = _tfidf_score(query_tokens, doc_tokens, df, N)
         # 混合：TF-IDF 权重 0.7 + 原始关键词分数权重 0.3
         c["score"] = tfidf * 0.7 + c.get("_keyword_score", c["score"]) * 0.3
@@ -293,23 +312,5 @@ def _tfidf_rank(query: str, candidates: list[dict]) -> list[dict]:
         session_dir = c.get("_session_dir", "")
         if session_dir:
             c["score"] *= _session_time_weight(session_dir)
-
-    # 先按 TF-IDF 排序，嵌入仅增强 top-20（避免上百次 ONNX 推理拖慢搜索）
-    candidates.sort(key=lambda m: m["score"], reverse=True)
-    emb_boost_count = min(20, len(candidates))
-
-    emb_engine = get_embedding_engine()
-    if emb_engine.available and emb_boost_count > 1:
-        try:
-            q_emb = emb_engine.embed(query[:200])
-            if q_emb is not None:
-                for c in candidates[:emb_boost_count]:
-                    d_emb = emb_engine.embed(c["snippet"][:200])
-                    if d_emb is not None:
-                        emb_sim = float(np.dot(q_emb, d_emb))
-                        # 混合：词法 0.6 + 语义 0.4
-                        c["score"] = c["score"] * 0.6 + emb_sim * 0.4
-        except Exception:
-            logger.debug("Embedding engine failure during recall ranking, skipping semantic boost")
 
     return sorted(candidates, key=lambda m: m["score"], reverse=True)

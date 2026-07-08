@@ -1,0 +1,562 @@
+{
+  "tool_desc.read_file": {
+    "zh": "读取本地文件内容。",
+    "en": "Read local file contents."
+  },
+  "tool_desc.write_file": {
+    "zh": "写入/创建/精确编辑本地文件。传 content 覆写，传 old_string+new_string 手术替换。",
+    "en": "Write/create/precisely edit a local file. Pass content to overwrite, or old_string+new_string to surgically replace."
+  },
+  "tool_desc.run_shell": {
+    "zh": "执行 Shell 命令并返回输出。超时 30 秒。",
+    "en": "Execute a shell command and return output. Timeout 30s."
+  },
+  "tool_desc.search_memory": {
+    "zh": "搜索 Aide 的记忆数据。",
+    "en": "Search Aide's memory data."
+  },
+  "tool_desc.web": {
+    "zh": "联网搜索(action='search')或抓取 URL 内容(action='fetch')。",
+    "en": "Web search (action='search') or fetch URL content (action='fetch')."
+  },
+  "tool_desc.search_in_files": {
+    "zh": "搜索文件内容（正则，类似grep）或列出目录（pattern留空）。支持 glob 过滤和递归。",
+    "en": "Search file contents (regex, like grep) or list directory (empty pattern). Supports glob and recursion."
+  },
+  "tool_desc.search_chat": {
+    "zh": "搜索对话历史。不加 session_id 时全局搜索所有会话（语义+关键词），传入 session_id 时限定会话内搜索。",
+    "en": "Search chat history. Global semantic search across all sessions when no session_id; scoped keyword search within a session when session_id is given."
+  },
+  "tool.read_file.empty_path": {
+    "zh": "错误：file_path 不能为空",
+    "en": "Error: file_path cannot be empty"
+  },
+  "tool.read_file.not_found": {
+    "zh": "错误：文件不存在 — {path}",
+    "en": "Error: file not found — {path}"
+  },
+  "tool.read_file.is_dir": {
+    "zh": "错误：{path} 是一个目录，请指定文件路径",
+    "en": "Error: {path} is a directory, please specify a file path"
+  },
+  "tool.read_file.no_permission": {
+    "zh": "错误：没有读取权限 — {path}",
+    "en": "Error: no read permission — {path}"
+  },
+  "tool.read_file.read_failed": {
+    "zh": "错误：读取文件失败 — {e}",
+    "en": "Error: failed to read file — {e}"
+  },
+  "tool.read_file.truncated": {
+    "zh": "（文件过大，已截断显示前 ~100KB）",
+    "en": " (file too large, truncated to first ~100 KB)"
+  },
+  "tool.write_file.empty_path": {
+    "zh": "错误：file_path 不能为空",
+    "en": "Error: file_path cannot be empty"
+  },
+  "tool.write_file.is_dir": {
+    "zh": "错误：{path} 是一个目录，无法写入",
+    "en": "Error: {path} is a directory, cannot write"
+  },
+  "tool.write_file.no_permission": {
+    "zh": "错误：没有写入权限 — {path}",
+    "en": "Error: no write permission — {path}"
+  },
+  "tool.write_file.write_failed": {
+    "zh": "错误：写入文件失败 — {e}",
+    "en": "Error: failed to write file — {e}"
+  },
+  "tool.write_file.done": {
+    "zh": "已写入 {path}（{size} 字节）",
+    "en": "Written {path} ({size} bytes)"
+  },
+  "tool.write_file.too_large": {
+    "zh": "错误：内容过大 — 超过 {max_kb}KB 上限",
+    "en": "Error: content too large — exceeds {max_kb}KB limit"
+  },
+  "tool.write_file.mode_conflict": {
+    "zh": "错误：content 与 old_string/new_string 互斥，只能选一种模式",
+    "en": "Error: content and old_string/new_string are mutually exclusive — choose one mode"
+  },
+  "tool.write_file.edit_pair": {
+    "zh": "错误：old_string 和 new_string 必须同时提供或同时不提供",
+    "en": "Error: old_string and new_string must both be provided, or neither"
+  },
+  "tool.write_file.empty_old": {
+    "zh": "错误：old_string 不能为空",
+    "en": "Error: old_string cannot be empty"
+  },
+  "tool.write_file.not_found": {
+    "zh": "错误：文件不存在 — {path}",
+    "en": "Error: file not found — {path}"
+  },
+  "tool.write_file.not_file": {
+    "zh": "错误：路径不是文件 — {path}",
+    "en": "Error: path is not a file — {path}"
+  },
+  "tool.write_file.decode_error": {
+    "zh": "错误：无法以 UTF-8 解码文件 — {path}",
+    "en": "Error: cannot decode file as UTF-8 — {path}"
+  },
+  "tool.write_file.no_read_permission": {
+    "zh": "错误：无权限读取文件 — {path}",
+    "en": "Error: no permission to read file — {path}"
+  },
+  "tool.write_file.no_write_permission": {
+    "zh": "错误：无权限写入文件 — {path}",
+    "en": "Error: no permission to write file — {path}"
+  },
+  "tool.write_file.not_found_in_file": {
+    "zh": "错误：文件中未找到指定的 old_string",
+    "en": "Error: specified old_string not found in file"
+  },
+  "tool.write_file.not_unique": {
+    "zh": "错误：old_string 在文件中出现了 {count} 次，请提供更长的上下文使其唯一",
+    "en": "Error: old_string appears {count} times in the file. Provide more context to make it unique."
+  },
+  "tool.write_file.edited": {
+    "zh": "已编辑 {name}\n  {old_lines} 行 → {new_lines} 行，{old_char} 字符 → {new_char} 字符",
+    "en": "Edited {name}\n  {old_lines} lines → {new_lines} lines, {old_char} chars → {new_char} chars"
+  },
+  "tool.run_shell.empty_command": {
+    "zh": "错误：command 不能为空",
+    "en": "Error: command cannot be empty"
+  },
+  "tool.run_shell.timeout": {
+    "zh": "错误：命令超时（{timeout}s）— {command}",
+    "en": "Error: command timed out ({timeout}s) — {command}"
+  },
+  "tool.run_shell.failed": {
+    "zh": "错误：执行命令失败 — {e}",
+    "en": "Error: command execution failed — {e}"
+  },
+  "tool.run_shell.exit_code": {
+    "zh": "（退出码: {code}）",
+    "en": " (exit code: {code})"
+  },
+  "tool.run_shell.exit_code_no_output": {
+    "zh": "（退出码: {code}，无输出）",
+    "en": " (exit code: {code}, no output)"
+  },
+  "tool.run_shell.win_hint": {
+    "zh": "Windows cmd.exe 语法。获取时间: echo %date% %time%；列出文件: dir；当前目录: cd；搜索内容: findstr PATTERN FILE；输出重定向: > FILE；可用 PowerShell: powershell -Command \"...\"",
+    "en": "Windows cmd.exe syntax. Get time: echo %date% %time%; List files: dir; Current dir: cd; Search content: findstr PATTERN FILE; Redirect output: > FILE; Use PowerShell: powershell -Command \"...\""
+  },
+  "tool.run_shell.nix_hint": {
+    "zh": "POSIX sh 语法（兼容 bash/zsh）。列出文件: ls -la；当前目录: pwd；读文件: cat FILE；搜索内容: grep -r PATTERN DIR；查找文件: find DIR -name PATTERN；管道: |；输出重定向: > FILE；注意: shell=True 使用 /bin/sh，避免 bash/zsh 专有语法",
+    "en": "POSIX sh syntax (bash/zsh compatible). List files: ls -la; Current dir: pwd; Read file: cat FILE; Search content: grep -r PATTERN DIR; Find files: find DIR -name PATTERN; Pipe: |; Redirect output: > FILE; Note: shell=True uses /bin/sh, avoid bash/zsh-specific syntax"
+  },
+  "tool.search_in_files.dir_not_found": {
+    "zh": "错误：目录不存在 — {path}",
+    "en": "Error: directory not found — {path}"
+  },
+  "tool.search_in_files.not_dir": {
+    "zh": "错误：路径不是目录 — {path}",
+    "en": "Error: path is not a directory — {path}"
+  },
+  "tool.search_in_files.invalid_regex": {
+    "zh": "错误：无效的正则表达式 — {e}",
+    "en": "Error: invalid regex — {e}"
+  },
+  "tool.search_in_files.no_permission": {
+    "zh": "错误：无权限读取目录 — {path}",
+    "en": "Error: no permission to read directory — {path}"
+  },
+  "tool.search_in_files.no_match": {
+    "zh": "未找到匹配 '{pattern}' 的文件。",
+    "en": "No files matched '{pattern}'."
+  },
+  "tool.search_in_files.truncated": {
+    "zh": "…（已达到结果上限 {max}，可能还有更多匹配）",
+    "en": "... (result limit of {max} reached, there may be more matches)"
+  },
+  "tool.search_in_files.too_many_files": {
+    "zh": "…（已达到文件扫描上限 {max}，暂停搜索）",
+    "en": "... (file scan limit of {max} reached, search stopped)"
+  },
+  "tool.search_in_files.skipped_large": {
+    "zh": "（已跳过 {n} 个超 1MB 的大文件）",
+    "en": "(skipped {n} large files over 1MB)"
+  },
+  "tool.search_in_files.list_failed": {
+    "zh": "错误：列出目录失败 — {e}",
+    "en": "Error: failed to list directory — {e}"
+  },
+  "tool.search_in_files.empty_dir": {
+    "zh": "目录为空：{path}",
+    "en": "Directory is empty: {path}"
+  },
+  "tool.search_in_files.empty_pattern": {
+    "zh": "（模式: {pattern}）",
+    "en": " (pattern: {pattern})"
+  },
+  "tool.search_in_files.total": {
+    "zh": "共 {n} 项",
+    "en": "{n} item(s) total"
+  },
+  "tool.search_in_files.max_items": {
+    "zh": "…（已达 {max} 项上限，已截断）",
+    "en": "... (limit of {max} items reached, truncated)"
+  },
+  "tool.search_in_files.too_large": {
+    "zh": "…（输出过大，已截断）",
+    "en": "... (output too large, truncated)"
+  },
+  "tool.web.unknown_action": {
+    "zh": "错误：未知操作 '{action}'。可用：search, fetch",
+    "en": "Error: unknown action '{action}'. Available: search, fetch"
+  },
+  "tool.web.empty_query": {
+    "zh": "错误：query 不能为空",
+    "en": "Error: query cannot be empty"
+  },
+  "tool.web.search_failed": {
+    "zh": "错误：搜索失败 — {e}",
+    "en": "Error: search failed — {e}"
+  },
+  "tool.web.search_timeout": {
+    "zh": "错误：搜索超时（{timeout} 秒）— DuckDuckGo 可能暂时不可用",
+    "en": "Error: search timed out ({timeout}s) — DuckDuckGo may be temporarily unavailable"
+  },
+  "tool.web.no_results": {
+    "zh": "未找到与 '{query}' 相关的结果。",
+    "en": "No results found for '{query}'."
+  },
+  "tool.web.results_for": {
+    "zh": "搜索 '{query}' 的结果：",
+    "en": "Results for '{query}':"
+  },
+  "tool.web.untitled": {
+    "zh": "无标题",
+    "en": "Untitled"
+  },
+  "tool.web.empty_url": {
+    "zh": "错误：url 不能为空",
+    "en": "Error: url cannot be empty"
+  },
+  "tool.web.invalid_url": {
+    "zh": "错误：url 必须以 http:// 或 https:// 开头",
+    "en": "Error: url must start with http:// or https://"
+  },
+  "tool.web.truncated": {
+    "zh": "…（已截断，原始长度 {n} 字符）",
+    "en": "... (truncated, original length {n} characters)"
+  },
+  "tool.web.http_error": {
+    "zh": "错误：HTTP {code} — {reason}",
+    "en": "Error: HTTP {code} — {reason}"
+  },
+  "tool.web.unreachable": {
+    "zh": "错误：无法访问 URL — {reason}",
+    "en": "Error: cannot access URL — {reason}"
+  },
+  "tool.web.ssl_error": {
+    "zh": "错误：SSL 验证失败 — {e}",
+    "en": "Error: SSL verification failed — {e}"
+  },
+  "tool.web.timeout": {
+    "zh": "错误：请求超时（{timeout} 秒）",
+    "en": "Error: request timed out ({timeout} seconds)"
+  },
+  "tool.web.failed": {
+    "zh": "错误：抓取失败 — {type}: {e}",
+    "en": "Error: fetch failed — {type}: {e}"
+  },
+  "tool.web.private_host": {
+    "zh": "错误：安全限制 — 禁止访问内网地址 ({host})",
+    "en": "Error: security restriction — private/internal address blocked ({host})"
+  },
+  "tool.web.too_large": {
+    "zh": "错误：内容过大 — 超过 {max_mb}MB 下载上限",
+    "en": "Error: content too large — exceeds {max_mb}MB download limit"
+  },
+  "tool.search_memory.empty_query": {
+    "zh": "错误：query 不能为空",
+    "en": "Error: query cannot be empty"
+  },
+  "tool.search_memory.no_match": {
+    "zh": "未找到与 '{query}' 相关的记忆记录。\n记忆系统会在你使用 Aide 的过程中自动积累。",
+    "en": "No memories found matching '{query}'.\nThe memory system builds up automatically as you use Aide."
+  },
+  "tool.search_memory.found": {
+    "zh": "找到 {n} 条与 '{query}' 相关的记忆：",
+    "en": "Found {n} memories matching '{query}':"
+  },
+  "tool.search_memory.more": {
+    "zh": "…以及其他 {n} 条结果",
+    "en": "... and {n} more result(s)"
+  },
+  "mem.label_preferences": {
+    "zh": "偏好",
+    "en": "Preferences"
+  },
+  "mem.label_workflows": {
+    "zh": "工作流",
+    "en": "Workflows"
+  },
+  "mem.label_long_term_memory": {
+    "zh": "长记忆",
+    "en": "Long-Term Memory"
+  },
+  "mem.label_memory": {
+    "zh": "记忆",
+    "en": "Memory"
+  },
+  "mem.entry_type_preferences": {
+    "zh": "偏好条目",
+    "en": "Preference entry"
+  },
+  "mem.entry_type_workflows": {
+    "zh": "工作流条目",
+    "en": "Workflow entry"
+  },
+  "mem.entry_type_long_term_memory": {
+    "zh": "长记忆条目",
+    "en": "Long-term memory entry"
+  },
+  "mem.unknown_entry_type": {
+    "zh": "未知条目类型: {type}，有效值: {valid}",
+    "en": "Unknown entry type: {type}, valid values: {valid}"
+  },
+  "mem.new_entry": {
+    "zh": "新增条目 [{type}]: {content}…",
+    "en": "New entry [{type}]: {content}..."
+  },
+  "mem.captured": {
+    "zh": "截获 {n} 条: ...",
+    "en": "Captured {n} item(s): ..."
+  },
+  "mem.dedup_updated": {
+    "zh": "去重更新 [{type}] #{i}: ...",
+    "en": "Dedup update [{type}] #{i}: ..."
+  },
+  "mem.no_provider": {
+    "zh": "Provider 未初始化，无法更新 prompt",
+    "en": "Provider not initialized, cannot update prompts"
+  },
+  "mem.update_complete": {
+    "zh": "Prompt 更新完成: {results}",
+    "en": "Prompt update complete: {results}"
+  },
+  "mem.no_pending": {
+    "zh": "[{label}] 无 pending 条目，跳过",
+    "en": "[{label}] No pending entries, skipped"
+  },
+  "mem.orphaned": {
+    "zh": "[{label}] 条目标记 orphaned: ...",
+    "en": "[{label}] Entry marked orphaned: ..."
+  },
+  "mem.integrated": {
+    "zh": "[{label}] 更新完成: {n} 条 → integrated",
+    "en": "[{label}] Update complete: {n} item(s) → integrated"
+  },
+  "mem.session_bg": {
+    "zh": "[会话 {id}] 背景: ...",
+    "en": "[Session {id}] Background: ..."
+  },
+  "mem.entry_turn": {
+    "zh": " ← 条目产生轮",
+    "en": " ← Entry origin turn"
+  },
+  "mem.turn_user": {
+    "zh": "[轮 {t}{marker}] 用户: {text}",
+    "en": "[Turn {t}{marker}] User: {text}"
+  },
+  "ctx.others": {
+    "zh": "（其他： {items}）",
+    "en": " (Others: {items})"
+  },
+  "ctx.session_overview": {
+    "zh": "[会话历史总览]",
+    "en": "[Session History Overview]"
+  },
+  "ctx.recent_chat": {
+    "zh": "## 最近对话",
+    "en": "## Recent Conversation"
+  },
+  "ctx.no_messages_to_compact": {
+    "zh": "messages/ 目录不存在，无法压缩",
+    "en": "messages/ directory does not exist, cannot compress"
+  },
+  "ctx.no_records_to_compact": {
+    "zh": "无对话记录，无法压缩",
+    "en": "No conversation records, cannot compress"
+  },
+  "ctx.turn_label": {
+    "zh": "--- 第 {turn} 轮 ---",
+    "en": "--- Turn {turn} ---"
+  },
+  "ctx.turn_user_label": {
+    "zh": "用户: {text}",
+    "en": "User: {text}"
+  },
+  "ctx.turn_ai_label": {
+    "zh": "Aide: {text}",
+    "en": "Aide: {text}"
+  },
+  "ctx.tool_call": {
+    "zh": "[工具调用: {name}]",
+    "en": "[Tool call: {name}]"
+  },
+  "ctx.omitted_prefix": {
+    "zh": "…(前段省略)…",
+    "en": "...(earlier content omitted)..."
+  },
+  "ctx.conversation_record": {
+    "zh": "对话记录：",
+    "en": "Conversation record:"
+  },
+  "ctx.existing_overview": {
+    "zh": "已有的会话总览：",
+    "en": "Existing session overview:"
+  },
+  "ctx.generate_overview": {
+    "zh": "请基于以上信息生成更新后的总览。",
+    "en": "Please generate an updated overview based on the above information."
+  },
+  "ctx.compact_done": {
+    "zh": "压缩完成: {turns} 轮 → overview.md + 检查点 (to_turn={turn})",
+    "en": "Compression complete: {turns} turns → overview.md + checkpoint (to_turn={turn})"
+  },
+  "ctx.compact_llm_stream_error": {
+    "zh": "压缩 LLM 流处理类型错误",
+    "en": "Compression LLM stream type error"
+  },
+  "ctx.compact_llm_error": {
+    "zh": "压缩 LLM 调用失败",
+    "en": "Compression LLM call failed"
+  },
+  "ctx.ingest_session_start": {
+    "zh": "会话开始: {id}",
+    "en": "Session started: {id}"
+  },
+  "ctx.ingest_turn": {
+    "zh": "turn {turn} 已摄取: {summary}",
+    "en": "turn {turn} ingested: {summary}"
+  },
+  "ctx.ingest_tool_call": {
+    "zh": "[工具调用] {tools} → {preview}",
+    "en": "[Tool call] {tools} → {preview}"
+  },
+  "ctx.history_prefix": {
+    "zh": "[历史] {first}...",
+    "en": "[History] {first}..."
+  },
+  "ctx.discussed": {
+    "zh": "此前讨论了{topics}",
+    "en": "Previously discussed: {topics}"
+  },
+  "ctx.decided": {
+    "zh": "期间确定：{decisions}",
+    "en": "Decided: {decisions}"
+  },
+  "ctx.compact_system_prompt": {
+    "zh": "你是会话压缩器。将完整的对话记录压缩为 Markdown 结构化总览。\n\n用「## 话题」概括对话中讨论的所有主题，每条用 \"-\" 开头。\n用「## 用户偏好」记录用户表达的任何偏好、习惯、工作流程。\n用「## 纠正记录」记录用户纠正你行为的时刻。\n用「## 决策与结论」记录对话中作出的决策和结论。\n\n只输出结构化 Markdown，不要添加解释或前言。用中文输出。",
+    "en": "You are a session compressor. Compress the full conversation record into a structured Markdown overview.\n\nUse \"## Topics\" to summarize all topics discussed, each starting with \"-\".\nUse \"## User Preferences\" to record any preferences, habits, or workflows the user expressed.\nUse \"## Corrections\" to record moments where the user corrected your behavior.\nUse \"## Decisions & Conclusions\" to record decisions and conclusions made during the conversation.\n\nOutput only structured Markdown. Do not add explanations or preamble. Output in English."
+  },
+  "mem.updater_prefs_system": {
+    "zh": "你是 Aide 的偏好编辑器。你的任务是将用户偏好信号整合为一个简洁的 Markdown 文件，注入 AI 上下文。\n\n## 什么是偏好\n用户关于「你该怎么回答」的长期要求。例如：回复风格（简洁/详细）、语言偏好（中文/英文）、代码风格（有注释/无注释）、技术偏好（优先用什么库）。\n\n## 辨别规则 — 以下信号必须丢弃\n- 单次任务请求：\"帮我写个脚本\" \"解析这个CSV\" → 这是任务，不是偏好\n- 对当前回答的追问：\"这个变量是什么意思\" \"能展开说说吗\" → 临时澄清，不是偏好\n- 对任务结果的描述：\"这段代码运行报错\" → 临时状态，不是偏好\n- 不确定的模糊表达：\"好像还行\" \"可能不太对\" → 无明确偏好指向\n\n## 整理规则\n- 如果新信号和已有条目说的是同一件事，合并为一条更精炼的表述，不要重复列出\n- 如果新信号与已有条目矛盾，信任新信号，删除旧条目\n- 同类偏好合并（如 3 条关于\"代码简洁\"的信号 → 1 条）\n- 用 \"-\" 列表，每条不超过 40 字\n- 最多 15 条，超出时合并同类项、删最旧/最模糊的\n- **输出总字符数不超过 1200 字符**（包含标题），超长时优先删最旧条目\n\n## 输出格式\n# 偏好\n\n- 条目一\n- 条目二\n\n只输出上述 Markdown。不要加解释、不要加前言后记。",
+    "en": "You are Aide's preferences editor. Your task is to integrate user preference signals into a concise Markdown file injected into AI context.\n\n## What are preferences\nLong-term requirements about \"how you should respond\". Examples: response style (concise/detailed), language preference (Chinese/English), code style (with/without comments), technical preferences (preferred libraries).\n\n## Filtering rules — MUST discard these signals\n- One-time task requests: \"write me a script\" \"parse this CSV\" → tasks, not preferences\n- Follow-up questions: \"what does this variable mean\" \"can you elaborate\" → temporary clarification\n- Task outcome descriptions: \"this code throws an error\" → transient state\n- Vague expressions: \"seems ok\" \"maybe not quite right\" → no clear preference direction\n\n## Integration rules\n- If a new signal says the same thing as an existing entry, merge into one refined entry\n- If a new signal contradicts an existing entry, trust the new signal and remove the old one\n- Merge similar preferences (e.g., 3 signals about \"code conciseness\" → 1 entry)\n- Use \"-\" list format, each entry max 40 words\n- Max 15 entries; if exceeding, merge similar ones and remove the oldest/most vague\n- **Total output MUST NOT exceed 1200 characters** (including title). If over, remove the oldest entries first\n\n## Output format\n# Preferences\n\n- Entry one\n- Entry two\n\nOutput only the Markdown above. No explanations, no preamble."
+  },
+  "mem.updater_workflows_system": {
+    "zh": "你是 Aide 的工作流编辑器。你的任务是将用户工作流信号整合为一个简洁的 Markdown 文件，注入 AI 上下文。\n\n## 什么是工作流\n用户关于「你该怎么做事」的流程要求。例如：先读文件再修改、修改前先确认、先写测试再实现、使用特定工具/命令、被纠正后的正确做法。\n\n## 辨别规则 — 以下信号必须丢弃\n- 用户对自身问题的纠正：\"不对，这个变量是我写错了\" → 用户纠正自己，不是纠正你\n- 对任务目标的调整：\"算了，不用Docker了，直接跑就行\" → 临时决策变更\n- 对代码/项目的观察：\"这个函数应该返回None才对\" → 单次代码审查，不是流程要求\n- 无替代方案的批评：\"这个方案不够好\"（没说该怎么做）→ 不构成工作流\n\n## 整理规则\n- 如果新信号和已有条目说的是同一件事，合并为一条更精炼的表述\n- 如果新信号与已有条目矛盾，信任新信号，删除旧条目\n- 同一场景的流程合并（如\"部署前先测试\"+\"部署前先备份\"→\"部署前：测试→备份→部署\"）\n- 用 \"-\" 列表，每条不超过 40 字\n- 最多 15 条，超出时合并同类项、删最旧/最不具体的\n- **输出总字符数不超过 1200 字符**（包含标题），超长时优先删最旧条目\n\n## 输出格式\n# 工作流\n\n- 条目一\n- 条目二\n\n只输出上述 Markdown。不要加解释、不要加前言后记。",
+    "en": "You are Aide's workflows editor. Your task is to integrate user workflow signals into a concise Markdown file injected into AI context.\n\n## What are workflows\nProcess requirements about \"how you should do things\". Examples: read before editing, confirm before modifying, test before implementing, specific tool/command usage, corrected procedures.\n\n## Filtering rules — MUST discard these signals\n- User correcting their own mistake: \"no, I wrote this variable wrong\" → self-correction, not about you\n- Task goal adjustments: \"never mind, skip Docker and just run it\" → temporary decision change\n- Code/project observations: \"this function should return None\" → one-time code review, not workflow\n- Criticism without alternatives: \"this approach isn't good\" (doesn't say what to do instead) → doesn't form a workflow\n\n## Integration rules\n- If a new signal says the same thing as an existing entry, merge into one refined entry\n- If a new signal contradicts an existing entry, trust the new and remove the old\n- Merge workflows for the same scenario (e.g., \"test before deploy\"+\"backup before deploy\"→\"before deploy: test→backup→deploy\")\n- Use \"-\" list format, each entry max 40 words\n- Max 15 entries; if exceeding, merge similar ones and remove the oldest/least specific\n- **Total output MUST NOT exceed 1200 characters** (including title). If over, remove the oldest entries first\n\n## Output format\n# Workflows\n\n- Entry one\n- Entry two\n\nOutput only the Markdown above. No explanations, no preamble."
+  },
+  "mem.updater_longterm_system": {
+    "zh": "你是 Aide 的长记忆编辑器。你的任务是将跨会话的重要事实整合为一个简洁的 Markdown 文件，注入 AI 上下文。\n\n## 什么是长记忆\n跨会话持久的事实信息。例如：用户身份/职业、技术栈、项目背景、工作环境、长期约束。\n\n## 辨别规则 — 以下信号必须丢弃\n- 临时状态：\"最近在学 Rust\" → \"最近\"说明是阶段性的，不是稳定事实\n- 单次项目信息：\"这个项目的 deadline 是下周五\" → 临时项目信息，过期后无用\n- 偏好类信号：\"我喜欢简洁的代码\" → 应归入偏好 prompt，不是长记忆\n- 工作流类信号：\"先读文件再修改\" → 应归入工作流 prompt，不是长记忆\n- 可推断的信息：\"今天天气很热\" → 与 Aide 行为无关\n\n## 整理规则\n- 如果新信号和已有条目说的是同一件事，合并为更精炼的一条\n- 如果新信号与已有条目矛盾，信任新信号，删除旧条目\n- 同一主题的信息合并（如 2 条关于技术栈的信号 → 1 条 \"技术栈: Python, Rust, PostgreSQL\"）\n- 用 \"-\" 列表，每条不超过 40 字\n- 最多 15 条，超出时合并同类项、删最旧/最不重要的\n- **输出总字符数不超过 1200 字符**（包含标题），超长时优先删最旧条目\n\n## 输出格式\n# 长记忆\n\n- 条目一\n- 条目二\n\n只输出上述 Markdown。不要加解释、不要加前言后记。",
+    "en": "You are Aide's long-term memory editor. Your task is to integrate cross-session facts into a concise Markdown file injected into AI context.\n\n## What is long-term memory\nPersistent facts that span sessions. Examples: user identity/occupation, tech stack, project background, work environment, long-term constraints.\n\n## Filtering rules — MUST discard these signals\n- Temporary states: \"I'm learning Rust lately\" → \"lately\" indicates transitional, not stable\n- One-time project info: \"this project's deadline is next Friday\" → expires and becomes useless\n- Preference signals: \"I like concise code\" → belongs in preferences prompt, not long-term memory\n- Workflow signals: \"read the file before editing\" → belongs in workflows prompt, not long-term memory\n- Inferences about the world: \"it's hot today\" → irrelevant to Aide's behavior\n\n## Integration rules\n- If a new signal says the same thing as an existing entry, merge into one refined entry\n- If a new signal contradicts an existing entry, trust the new and remove the old\n- Merge same-topic info (e.g., 2 signals about tech stack → 1 entry \"Tech stack: Python, Rust, PostgreSQL\")\n- Use \"-\" list format, each entry max 40 words\n- Max 15 entries; if exceeding, merge similar ones and remove the oldest/least important\n- **Total output MUST NOT exceed 1200 characters** (including title). If over, remove the oldest entries first\n\n## Output format\n# Long-Term Memory\n\n- Entry one\n- Entry two\n\nOutput only the Markdown above. No explanations, no preamble."
+  },
+  "mem.updater_user_template": {
+    "zh": "## 说明\n以下条目由规则引擎从最近对话中自动截获，分为两类：\n- [可信] 标记 = 显式声明（\"记住…\"\"以后…\"），信号可信，直接整合\n- [待辨别] 标记 = 隐式信号（身份/技术栈声明），需要你逐条判断真假\n\n你的任务：\n1. [可信] 条目直接整合——和当前 prompt 合并、去重、精炼\n2. [待辨别] 条目逐条判断——长期事实还是临时对话，决定保留 or 丢弃\n3. 控制体量——输出不超过 15 条，超出时优先删最旧/最模糊的\n4. 解决矛盾——新旧信号冲突时信任新信号，删除旧条目\n\n## 当前 prompt（可能是空的）\n{current_prompt}\n\n## 截获条目的原始对话上下文（用于判断真假阳性）\n{signals}\n\n## 可信条目（直接整合，不需辨别）\n{explicit_entries}\n\n## 待辨别条目（逐条判断：保留 or 丢弃）\n{pending_entries}\n\n## 要求\n- 严格遵循 system prompt 的辨别规则，宁可漏过不可滥收\n- 输出完整的新 prompt（覆盖旧文件），不要只输出增量\n- 输出格式严格按 system prompt 的要求\n\n## 自检\n整合完成后，逐条问自己：\n- 这条信息是否可能在未来的对话中有用？\n- 如果用户的措辞稍微不同，我是否还会认为这是同一个意思？\n有疑问的条目保留但末尾标注 [存疑]，不要直接丢弃。",
+    "en": "## Instructions\nThe following entries were auto-captured by a rule engine from recent conversations, grouped into two types:\n- [Trusted] entries = explicit declarations (\"remember…\" \"next time…\"), signal is trusted, integrate directly\n- [Review] entries = implicit signals (identity/tech stack declarations), need your judgment\n\nYour task:\n1. [Trusted] entries — integrate directly: merge with current prompt, dedup, refine\n2. [Review] entries — judge each: persistent fact or transient conversation, KEEP or DISCARD\n3. Control size — output max 15 entries; if exceeding, remove the oldest/most vague first\n4. Resolve conflicts — when old and new signals conflict, trust the new and remove the old\n\n## Current prompt (may be empty)\n{current_prompt}\n\n## Source conversation context (for judging true/false positives)\n{signals}\n\n## Trusted entries (integrate directly, no judgment needed)\n{explicit_entries}\n\n## Review entries (judge each: KEEP or DISCARD)\n{pending_entries}\n\n## Requirements\n- Strictly follow the system prompt filtering rules — prefer false negative over false positive\n- Output the complete new prompt (overwrites old file), not just incremental changes\n- Output format must follow system prompt exactly\n\n## Self-Check\nAfter integration, ask yourself for each entry:\n- Could this information be useful in future conversations?\n- If the user phrased it slightly differently, would I still recognize it as the same intent?\nKeep questionable entries but mark them [REVIEW] at the end — don't silently discard."
+  },
+  "tool.search_chat.empty_query": {
+    "zh": "错误：搜索查询不能为空",
+    "en": "Error: search query cannot be empty"
+  },
+  "tool.search_chat.no_results": {
+    "zh": "该会话无对话记录。",
+    "en": "No conversation records in this session."
+  },
+  "tool.search_chat.no_match": {
+    "zh": "未找到匹配 \"{query}\" 的对话。",
+    "en": "No conversations found matching \"{query}\"."
+  },
+  "tool.search_chat.session_not_found": {
+    "zh": "会话不存在: {session_id}",
+    "en": "Session not found: {session_id}"
+  },
+  "tool.search_chat.session_read_error": {
+    "zh": "读取会话记录失败。",
+    "en": "Failed to read session records."
+  },
+  "tool.search_chat.index_empty": {
+    "zh": "搜索索引为空，暂无对话历史可供搜索。",
+    "en": "Search index is empty. No conversation history available."
+  },
+  "tool.search_chat.session_header": {
+    "zh": "会话 {session_id}（共 {total} 条匹配）：",
+    "en": "Session {session_id} ({total} match(es)):"
+  },
+  "tool.search_chat.global_header": {
+    "zh": "全局搜索（共 {total} 条匹配）：",
+    "en": "Global search ({total} match(es)):"
+  },
+  "tool.search_chat.match": {
+    "zh": "匹配度",
+    "en": "match"
+  },
+  "tool.search_chat.score": {
+    "zh": "相关度",
+    "en": "relevance"
+  },
+  "mcp.not_connected": {
+    "zh": "错误：MCP 服务端未连接: {server}",
+    "en": "Error: MCP server not connected: {server}"
+  },
+  "mcp.reconnect_failed": {
+    "zh": "错误：MCP 工具调用失败（重连后）: {e}",
+    "en": "Error: MCP tool call failed (after reconnect): {e}"
+  },
+  "mcp.disconnected_reconnect_failed": {
+    "zh": "错误：MCP 服务端 {server} 已断开且重连失败",
+    "en": "Error: MCP server {server} disconnected and reconnect failed"
+  },
+  "mcp.timeout": {
+    "zh": "错误：MCP 工具 {tool} 执行超时 ({timeout}s)",
+    "en": "Error: MCP tool {tool} timed out ({timeout}s)"
+  },
+  "mcp.call_failed": {
+    "zh": "错误：MCP 工具调用失败: {e}",
+    "en": "Error: MCP tool call failed: {e}"
+  },
+  "mcp.error_response": {
+    "zh": "错误：MCP 工具返回错误: {msg}",
+    "en": "Error: MCP tool returned error: {msg}"
+  },
+  "mcp.invalid_tool_name": {
+    "zh": "错误：无效的 MCP 工具名: {name}",
+    "en": "Error: Invalid MCP tool name: {name}"
+  },
+  "tool.registry.not_found": {
+    "zh": "错误：未找到工具 '{name}'。可用工具：{tools}",
+    "en": "Error: Tool '{name}' not found. Available: {tools}"
+  },
+  "tool.registry.no_execute": {
+    "zh": "错误：工具 '{name}' 已注册但无可执行体。",
+    "en": "Error: Tool '{name}' is registered but has no executor."
+  },
+  "tool.retry.error": {
+    "zh": "错误：{msg}",
+    "en": "Error: {msg}"
+  },
+  "tool.retry.exhausted": {
+    "zh": "错误：{msg}（已重试 {n} 次）",
+    "en": "Error: {msg} (retried {n} time(s))"
+  },
+  "llm.unsupported_provider": {
+    "zh": "不支持的 LLM provider: {provider}\n支持: {supported}",
+    "en": "Unsupported LLM provider: {provider}\nSupported: {supported}"
+  }
+}

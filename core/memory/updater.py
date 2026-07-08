@@ -188,23 +188,25 @@ class PromptUpdater:
 
     async def _update_type(self, entry_type: str, config: dict) -> bool:
         """更新单类 prompt。"""
-        # ── 1. 收集 pending 条目 ──
-        pending = await self._entries.get_pending(entry_type)
-        if not pending:
+        # ── 1. 收集待整合条目（explicit + pending）──
+        inbox = await self._entries.get_inbox(entry_type)
+        if not inbox:
             logger.info(t("mem.no_pending", label=config['label']))
             return True
 
+        explicit = [e for e in inbox if e.get("status") == "explicit"]
+        pending = [e for e in inbox if e.get("status") == "pending"]
+
         # ── 2. 回溯源会话，标记丢失的源会话为 orphaned ──
-        source_context, orphaned_indices = await self._gather_source_context(pending, entry_type)
+        source_context, orphaned_indices = await self._gather_source_context(inbox, entry_type)
 
         # 标记孤儿条目
         for orphaned_idx in orphaned_indices:
-            pending_entry = pending[orphaned_idx]
-            # 需要在 all_entries 中找到对应位置
+            orphaned_entry = inbox[orphaned_idx]
             all_current = await self._entries.load(entry_type)
             for i, e in enumerate(all_current):
-                if (e.get("content") == pending_entry.get("content") and
-                    e.get("status") == "pending"):
+                if (e.get("content") == orphaned_entry.get("content") and
+                    e.get("status") in ("pending", "explicit")):
                     await self._entries.mark_status(entry_type, i, "orphaned")
                     logger.info(f"[{config['label']}] 条目标记 orphaned: {e['content'][:40]}...")
                     break
@@ -216,13 +218,18 @@ class PromptUpdater:
             current_prompt = prompt_path.read_text(encoding="utf-8")
 
         # ── 4. 组装 LLM 请求 ──
+        explicit_text = "\n".join(
+            f"- [可信] {e.get('content', '')}" for e in explicit
+        ) if explicit else "（无）"
+
         pending_text = "\n".join(
-            f"- {e.get('content', '')}" for e in pending
-        )
+            f"- [待辨别] {e.get('content', '')}" for e in pending
+        ) if pending else "（无）"
 
         user_msg = t("mem.updater_user_template",
             current_prompt=current_prompt if current_prompt else "",
             signals=source_context if source_context else "",
+            explicit_entries=explicit_text,
             pending_entries=pending_text,
         )
 
@@ -262,15 +269,18 @@ class PromptUpdater:
         # ── 7. 标记条目为 integrated ──
         all_entries = await self._entries.load(entry_type)
         for i, e in enumerate(all_entries):
-            if e.get("status") == "pending":
+            if e.get("status") in ("pending", "explicit"):
                 await self._entries.mark_status(entry_type, i, "integrated")
 
-        logger.info(t("mem.integrated", label=config['label'], n=len(pending)))
+        logger.info(t("mem.integrated", label=config['label'], n=len(inbox)))
         return True
 
     async def _gather_source_context(self, pending_entries: list[dict],
                                       entry_type: str) -> tuple[str, list[int]]:
         """回溯源会话，收集 pending 条目产生时的上下文。
+
+        先按 session_id 分组，同一 session 的文件只读取一次，
+        避免 N 个 entry 同属一个 session 时重复 I/O。
 
         Returns:
             (context_text, orphaned_indices)
@@ -278,24 +288,29 @@ class PromptUpdater:
         contexts: list[str] = []
         orphaned: list[int] = []
 
+        # 按 session_id 分组：(session_id, turn, entry_index)
+        from collections import defaultdict
+        session_groups: dict[str, list[tuple[int, int]]] = defaultdict(list)
         for idx, entry in enumerate(pending_entries):
             source = entry.get("source", {})
-            session_id = source.get("session_id", "")
+            sid = source.get("session_id", "")
             turn = source.get("turn", 0)
-
-            if not session_id or not turn:
+            if not sid or not turn:
                 continue
+            session_groups[sid].append((turn, idx))
 
+        # 每个 session 读取一次文件，服务其中所有 entry
+        for session_id, turns_and_indices in session_groups.items():
             session_dir = SESSIONS_ROOT / session_id
             messages_dir = session_dir / "messages"
 
             if not messages_dir.exists():
-                # 源会话丢失 → 标记 orphaned
-                logger.warning(f"源会话丢失: {session_id}")
-                orphaned.append(idx)
+                for _, idx in turns_and_indices:
+                    logger.warning(f"源会话丢失: {session_id}")
+                    orphaned.append(idx)
                 continue
 
-            # 读取会话总览用于快速了解会话背景
+            # 会话概览（一次读取）
             overview_path = session_dir / "overview.md"
             if overview_path.exists():
                 try:
@@ -304,28 +319,45 @@ class PromptUpdater:
                     sections = parse_overview_md(text)
                     topics = sections.get("话题", [])
                     if topics:
-                        contexts.append(f"[会话 {session_id}] 背景: {'; '.join(topics[:3])}")
+                        contexts.append(
+                            f"[会话 {session_id}] 背景: {'; '.join(topics[:3])}"
+                        )
                 except (OSError, Exception):
                     pass
 
-            # 读取前后各 5 轮原文
-            for offset in range(-5, 6):
-                t = turn + offset
-                if t < 1:
-                    continue
+            # 收集该 session 所有需要读取的 turn（去重 + 去噪）
+            turns_to_read: set[int] = set()
+            for turn, _ in turns_and_indices:
+                for offset in range(-5, 6):
+                    t = turn + offset
+                    if t >= 1:
+                        turns_to_read.add(t)
 
-                turn_path = messages_dir / f"turn_{t:03d}.json"
-                if not turn_path.exists():
-                    continue
+            # 缓存已读 turn（同 session 不同 entry 的窗口可能重叠）
+            turn_cache: dict[int, str] = {}
+            for turn, idx in turns_and_indices:
+                for offset in range(-5, 6):
+                    t = turn + offset
+                    if t < 1:
+                        continue
 
-                try:
-                    data = json.loads(turn_path.read_text(encoding="utf-8"))
-                    marker = " ← 条目产生轮" if offset == 0 else ""
-                    contexts.append(
-                        f"[轮 {t}{marker}] 用户: {data.get('user','')[:120]}"
-                    )
-                except (json.JSONDecodeError, OSError):
-                    continue
+                    if t not in turn_cache:
+                        turn_path = messages_dir / f"turn_{t:03d}.json"
+                        if turn_path.exists():
+                            try:
+                                data = json.loads(turn_path.read_text(encoding="utf-8"))
+                                turn_cache[t] = data.get("user", "")[:120]
+                            except (json.JSONDecodeError, OSError):
+                                turn_cache[t] = ""
+                        else:
+                            turn_cache[t] = ""
+
+                    user_text = turn_cache.get(t, "")
+                    if user_text:
+                        marker = " ← 条目产生轮" if offset == 0 else ""
+                        contexts.append(
+                            f"[轮 {t}{marker}] 用户: {user_text}"
+                        )
 
         if not contexts:
             return "", orphaned
