@@ -138,8 +138,7 @@ class MessageList(VerticalScroll):
         content = Text.from_markup(escape(display))
         msg = MessageWidget(
             display_text or ("\n".join(display_lines)),
-            renderable=Panel(content, border_style="#555555",
-                             title="You", title_align="right"),
+            renderable=Panel(content, border_style="#555555"),
             image_paths=image_paths if image_paths else None,
             file_paths=all_file_paths if all_file_paths else None,
         )

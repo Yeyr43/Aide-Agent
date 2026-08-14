@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 
 from rich.console import Group
 from rich.markdown import Markdown as RichMarkdown
 from rich.markup import escape
+from rich.padding import Padding
 from rich.text import Text
 from textual.containers import Vertical
 from textual.events import Click
@@ -49,6 +49,19 @@ def _format_args(arguments: dict) -> str:
     return s[:60] + ("..." if len(s) > 60 else "")
 
 
+def _guide_indented(text: str, indent: str = "   ", style: str = "") -> Text:
+    """多行内容渲染：每行加 │ 引导前缀，缩进到文本列。"""
+    t = Text()
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if i:
+            t.append("\n")
+        t.append("│ ", style="#555555")
+        t.append(indent)
+        t.append(line, style=style)
+    return t
+
+
 class TreeNode(Static):
     """树节点基类：● + 内容。
 
@@ -67,8 +80,9 @@ class TreeNode(Static):
 
     def _label_line(self, label: str, bullet_style: str | None = None) -> Text:
         t = Text()
-        t.append("● ", style=bullet_style or self._bullet_style)
-        t.append(label, style="")  # 文本一律正常色
+        t.append("│ ", style="#555555")   # 引导列：贯穿整个消息树
+        t.append("● ", style=bullet_style or self._bullet_style)  # 子弹列
+        t.append(label, style="")  # 文本列，一律正常色
         return t
 
     def _build_renderable(self):
@@ -136,11 +150,10 @@ class ThinkNode(TreeNode):
     def _build_renderable(self):
         if self._expanded:
             t = Text()
-            t.append("● ", style=self._bullet_style)
-            t.append("think", style="")
+            t.append_text(self._label_line("think", self._bullet_style))
             if self._thinking:
                 t.append("\n")
-                t.append(self._thinking, style="italic #888888")
+                t.append_text(_guide_indented(self._thinking, style="italic #888888"))
             return t
         return self._label_line("think", self._bullet_style)
 
@@ -204,13 +217,9 @@ class ToolNode(TreeNode):
             return line
         t = Text()
         t.append_text(line)
-        t.append("\n  ")
-        t.append(body.replace("\n", "\n  "), style="dim")
+        t.append("\n")
+        t.append_text(_guide_indented(body, style="dim"))
         return t
-
-
-# 以代码围栏/标题开头的正文，● 不能塞进 markdown 结构里
-_MD_BLOCK_START = re.compile(r"^\s*(?:```|~~~|#{1,6}\s|>\s)")
 
 
 class BodyNode(TreeNode):
@@ -252,19 +261,14 @@ class BodyNode(TreeNode):
         if not self._buffer:
             return self._label_line("")
         if not self._finished:
-            return Text.from_markup(escape("● " + self._buffer))
-        safe = "● " + self._buffer.replace("<", "&lt;").replace(">", "&gt;")
-        if _MD_BLOCK_START.match(self._buffer):
-            safe_body = self._buffer.replace("<", "&lt;").replace(">", "&gt;")
-            try:
-                md = RichMarkdown(safe_body, code_theme=self._code_theme)
-            except Exception:
-                md = Text(self._buffer)
-            return Group(Text("● "), md)
+            return Text.from_markup(escape("│ ● " + self._buffer))
+        safe_body = self._buffer.replace("<", "&lt;").replace(">", "&gt;")
         try:
-            return RichMarkdown(safe, code_theme=self._code_theme)
+            md = RichMarkdown(safe_body, code_theme=self._code_theme)
         except Exception:
-            return Text.from_markup(escape("● " + self._buffer))
+            md = Text(self._buffer)
+        # 正文：│ ● 首行 + 正文缩进到文本列（RichMarkdown 无法逐行加引导前缀）
+        return Group(Text("│ ● "), Padding(md, (0, 0, 0, 4)))
 
 
 class ErrorNode(TreeNode):
@@ -292,8 +296,8 @@ class ErrorNode(TreeNode):
         if self._expanded:
             t = Text()
             t.append_text(self._label_line("error", self._bullet_style))
-            t.append("\n  ")
-            t.append(self._text.replace("\n", "\n  "), style="")
+            t.append("\n")
+            t.append_text(_guide_indented(self._text))
             return t
         return self._label_line("error " + self._summary(), self._bullet_style)
 
@@ -323,8 +327,8 @@ class SystemNode(TreeNode):
         if self._expanded:
             t = Text()
             t.append_text(self._label_line(self._summary() + "（展开）", self._bullet_style))
-            t.append("\n  ")
-            t.append(self._text.replace("\n", "\n  "), style="")
+            t.append("\n")
+            t.append_text(_guide_indented(self._text))
             return t
         return self._label_line(self._summary(), self._bullet_style)
 
