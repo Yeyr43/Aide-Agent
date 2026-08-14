@@ -8,12 +8,12 @@ import json
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
 
-from core.tools.mcp.protocol import (
+from core.mcp.protocol import (
     JSONRPCRequest,
     JSONRPCResponse,
     parse_response,
 )
-from core.tools.mcp.transport import (
+from core.mcp.transport import (
     StdioTransport,
     HTTPTransport,
     create_transport,
@@ -307,7 +307,7 @@ class TestHTTPTransportRequest:
 class TestCreateTransport:
     @pytest.mark.asyncio
     async def test_creates_stdio_transport(self):
-        with patch("core.tools.mcp.transport.StdioTransport.connect") as mock_conn:
+        with patch("core.mcp.transport.StdioTransport.connect") as mock_conn:
             mock_conn.return_value = None
             transport = await create_transport(command="echo", args=["hello"])
             assert isinstance(transport, StdioTransport)
@@ -315,7 +315,7 @@ class TestCreateTransport:
 
     @pytest.mark.asyncio
     async def test_creates_http_transport(self):
-        with patch("core.tools.mcp.transport.HTTPTransport.connect") as mock_conn:
+        with patch("core.mcp.transport.HTTPTransport.connect") as mock_conn:
             mock_conn.return_value = None
             transport = await create_transport(url="http://localhost:8080/mcp")
             assert isinstance(transport, HTTPTransport)

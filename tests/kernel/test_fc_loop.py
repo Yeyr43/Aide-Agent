@@ -30,7 +30,7 @@ class TestTruncateResult:
         long_text = "abcdefghij" * 2000  # 20000 chars, well over 8000
         result = FunctionCallingLoop._truncate_result(long_text)
         assert len(result) < len(long_text)
-        assert "截断" in result
+        assert "仅展示前" in result  # actionable hint
         # 应保留头部
         assert result.startswith("abcdefghij")
         # 应保留尾部
@@ -42,7 +42,7 @@ class TestTruncateResult:
         assert result == ""
 
         result = FunctionCallingLoop._truncate_result("a" * (TOOL_RESULT_MAX_CHARS + 1))
-        assert "截断" in result
+        assert "仅展示前" in result
 
 
 class TestParallelExecution:

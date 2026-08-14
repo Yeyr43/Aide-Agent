@@ -59,7 +59,7 @@ _EN_STOP_WORDS = frozenset({
 # ── 种子词汇表（冷启动）─────────────────────────────────────────────
 
 _SEED_VOCABULARY: frozenset[str] = frozenset({
-    # 技术栈（广覆盖，不挖深）
+    # 技术栈 — 中文
     "编程", "测试", "部署", "数据库", "前端", "后端", "代码", "文件",
     "配置", "性能", "安全", "日志", "缓存", "容器", "服务",
     "接口", "框架", "模块", "函数", "异常", "调试", "构建", "发布",
@@ -68,14 +68,31 @@ _SEED_VOCABULARY: frozenset[str] = frozenset({
     "文档", "注释", "规范", "架构", "设计", "模式", "脚本", "插件",
     "模板", "路由", "状态", "命令", "终端",
     "进程", "线程", "并发", "异步", "同步", "内存", "请求", "响应",
-    # 偏好/工作流（用户高频表达）
+    # Tech stack — English
+    "code", "test", "deploy", "database", "frontend", "backend", "file",
+    "config", "performance", "security", "log", "cache", "container", "service",
+    "api", "framework", "module", "function", "error", "debug", "build", "release",
+    "version", "dependency", "environment", "network", "storage", "message", "task",
+    "auth", "encrypt", "backup", "restore", "monitor", "scale", "optimize", "refactor",
+    "document", "comment", "standard", "architecture", "design", "pattern", "script", "plugin",
+    "template", "route", "state", "command", "terminal",
+    "process", "thread", "async", "memory", "request", "response",
+    # 偏好/工作流 — 中文
     "回复", "提醒", "命名", "规则", "习惯", "自动", "手动",
     "稳定", "可靠", "安静", "背景",
     "简洁", "详细", "快速", "风格", "格式", "颜色", "主题", "布局",
-    # 操作（通用）
+    # Preferences/workflows — English
+    "reply", "remind", "naming", "rule", "habit", "auto", "manual",
+    "stable", "reliable", "quiet", "background",
+    "concise", "detailed", "quick", "style", "format", "color", "theme", "layout",
+    # 操作 — 中文
     "搜索", "过滤", "排序", "导入", "导出", "上传", "下载", "安装",
     "卸载", "更新", "升级", "迁移", "删除", "创建", "修改", "查看",
     "运行", "停止", "重启", "连接", "发送", "处理",
+    # Operations — English
+    "search", "filter", "sort", "import", "export", "upload", "download", "install",
+    "update", "upgrade", "migrate", "delete", "create", "modify", "view",
+    "run", "stop", "restart", "connect", "send", "process",
 })
 
 _SEED_DF: dict[str, int] = {w: 1 for w in _SEED_VOCABULARY}
@@ -95,11 +112,34 @@ class VocabularyIndex:
 _vocab_index: VocabularyIndex = VocabularyIndex()
 
 
-def _build_vocabulary(agent_root: Path | None = None) -> VocabularyIndex:
-    """从 entry JSON 文件中构建词汇表和 DF 表。
+# ── 语言检测 ──────────────────────────────────────────────────────────
 
-    扫描 ~/.aide/agent/data/*.json 中的所有条目 content，
-    提取 2-4 字中文片段（出现 ≥2 次）作为词汇表。
+
+def _detect_language(text: str) -> str:
+    """检测文本主要语言（"zh" 或 "en"）。
+
+    基于 CJK 字符占比判断：CJK 字符 > 30% → "zh"，否则 "en"。
+    专为简短约束文本优化（如"用中文回复"、"prefer English answers"）。
+
+    P5: 反馈闭环新增。供 FeedbackVerifier 使用。
+    """
+    if not text:
+        return "zh"
+    # 去除非字母/CJK 字符后计数
+    cleaned = ''.join(c for c in text if c.isalpha() or '一' <= c <= '鿿')
+    if not cleaned:
+        return "zh"
+    cjk_count = sum(1 for c in cleaned if '一' <= c <= '鿿')
+    return "zh" if cjk_count / len(cleaned) >= 0.3 else "en"
+
+
+def _build_vocabulary(agent_root: Path | None = None) -> VocabularyIndex:
+    """从 agent/*.md 记忆文件中构建词汇表和 DF 表。
+
+    扫描 ~/.aide/agent/*.md 中的内容行，
+    提取 2-4 字中/英文片段（出现 ≥2 次）作为词汇表。
+
+    P5: 切换到 .md 文件（不再有 JSON 条目）。
     """
     global _vocab_index
     if _vocab_index.built:
@@ -108,44 +148,44 @@ def _build_vocabulary(agent_root: Path | None = None) -> VocabularyIndex:
     if agent_root is None:
         agent_root = aide_dir() / "agent"
 
-    data_dir = agent_root / "data"
-    if not data_dir.exists():
-        _vocab_index = VocabularyIndex(
-            vocab=_SEED_VOCABULARY, df=_SEED_DF,
-            N=len(_SEED_VOCABULARY), built=True,
-        )
-        return _vocab_index
-
-    all_entries: list[str] = []
-    for fname in ["preferences.json", "workflows.json", "long_term_memory.json"]:
-        path = data_dir / fname
+    # 收集所有记忆文件的非标题行
+    all_lines: list[str] = []
+    for fname in ["preferences.md", "workflows.md", "long_term_memory.md"]:
+        path = agent_root / fname
         if not path.exists():
             continue
         try:
-            import json
-            entries = json.loads(path.read_text(encoding="utf-8"))
-            for e in entries:
-                content = e.get("content", "")
-                if content:
-                    all_entries.append(content)
+            for line in path.read_text(encoding="utf-8").split("\n"):
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                clean = line[2:].strip() if line.startswith("- ") else line
+                if clean:
+                    all_lines.append(clean)
         except Exception:
             continue
 
-    if not all_entries:
+    if not all_lines:
         _vocab_index = VocabularyIndex(
             vocab=_SEED_VOCABULARY, df=_SEED_DF,
             N=len(_SEED_VOCABULARY), built=True,
         )
         return _vocab_index
 
+    # 提取中/英文片段
     fragment_counter: Counter = Counter()
-    for text in all_entries:
+    for text in all_lines:
+        # CJK 片段
         for run in _CJK_RE.findall(text):
             for n in [2, 3, 4]:
                 for i in range(len(run) - n + 1):
                     frag = run[i:i + n]
                     if frag not in _ZH_STOP_WORDS:
                         fragment_counter[frag] += 1
+        # ASCII 词
+        for word in _ASCII_WORD_RE.findall(text.lower()):
+            if len(word) >= 2 and word not in _EN_STOP_WORDS:
+                fragment_counter[word] += 1
 
     vocab = frozenset({frag for frag, cnt in fragment_counter.items() if cnt >= 2})
     if len(vocab) < 20:
@@ -153,15 +193,18 @@ def _build_vocabulary(agent_root: Path | None = None) -> VocabularyIndex:
 
     df: dict[str, int] = {}
     for token in vocab:
-        if token in _SEED_VOCABULARY and token not in {frag for frag, cnt in fragment_counter.items() if cnt >= 2}:
+        # Seed vocab tokens get df=1 unless they actually appear
+        seed_only = (token in _SEED_VOCABULARY and
+                     token not in {frag for frag, cnt in fragment_counter.items() if cnt >= 2})
+        if seed_only:
             df[token] = 1
         else:
-            for text in all_entries:
+            for text in all_lines:
                 if token in text:
                     df[token] = df.get(token, 0) + 1
 
-    _vocab_index = VocabularyIndex(vocab=vocab, df=df, N=len(all_entries), built=True)
-    logger.debug(f"词汇索引构建完成: {len(vocab)} 词, {len(all_entries)} 条目")
+    _vocab_index = VocabularyIndex(vocab=vocab, df=df, N=len(all_lines), built=True)
+    logger.debug(f"词汇索引构建完成: {len(vocab)} 词, {len(all_lines)} 行")
     return _vocab_index
 
 

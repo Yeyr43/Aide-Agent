@@ -177,7 +177,7 @@ class HomeScreen(Screen):
         self.query_one("#new-session-input", Input).focus()
 
     def _load_sessions(self) -> None:
-        """扫描 ~/.aide/sessions/ 加载会话卡片（按最后活动时间倒序）。"""
+        """加载会话卡片 — 从 meta.json 读取 last_active_at（P5: ingester 已写入）。"""
         session_list = self.query_one("#session-list", SessionList)
 
         if not SESSIONS_ROOT.exists():
@@ -190,39 +190,27 @@ class HomeScreen(Screen):
                 continue
             sid = session_dir.name
 
-            # ── 最后活动时间（用于排序和显示） ──
-            sort_key = ""   # ISO 时间戳，用于排序
-            date_str = ""   # 显示日期
+            name = self._derive_name(session_dir, sid)
 
-            # 1) 从 messages/ 目录获取最新 turn 文件的 mtime
-            messages_dir = session_dir / "messages"
-            if messages_dir.is_dir():
-                turn_files = sorted(messages_dir.glob("turn_*.json"))
-                if turn_files:
-                    mtime = turn_files[-1].stat().st_mtime
-                    dt = datetime.fromtimestamp(mtime)
-                    sort_key = dt.isoformat()
-                    date_str = dt.strftime("%Y-%m-%d")
+            # 从 meta.json 读取 last_active_at
+            sort_key = ""
+            date_str = ""
+            meta = session_dir / "meta.json"
+            if meta.exists():
+                try:
+                    data = json.loads(meta.read_text(encoding="utf-8"))
+                    ts = data.get("last_active_at", "")
+                    if ts:
+                        sort_key = ts
+                        try:
+                            dt = datetime.fromisoformat(ts)
+                            date_str = dt.strftime("%Y-%m-%d")
+                        except ValueError:
+                            date_str = ts[:10]
+                except (json.JSONDecodeError, OSError):
+                    pass
 
-            # 2) 回退：timeline.json 最后条目
-            if not sort_key:
-                timeline = session_dir / "timeline.json"
-                if timeline.exists():
-                    try:
-                        data = json.loads(timeline.read_text(encoding="utf-8"))
-                        if data:
-                            ts = data[-1].get("timestamp", "")
-                            if ts:
-                                sort_key = ts
-                                try:
-                                    dt = datetime.fromisoformat(ts)
-                                    date_str = dt.strftime("%Y-%m-%d")
-                                except ValueError:
-                                    date_str = ts[:10]
-                    except (json.JSONDecodeError, OSError):
-                        pass
-
-            # 3) 最终回退：目录 mtime
+            # 回退：目录 mtime（旧会话无 last_active_at）
             if not sort_key:
                 mtime = session_dir.stat().st_mtime
                 dt = datetime.fromtimestamp(mtime)
@@ -234,17 +222,14 @@ class HomeScreen(Screen):
                 except (IndexError, ValueError):
                     date_str = "—"
 
-            name = self._derive_name(session_dir, sid)
             sessions.append((sid, name, date_str, sort_key))
 
         if not sessions:
             session_list.show_placeholder(t("ui.home.no_sessions"))
             return
 
-        # 按最后活动时间倒序排列
         sessions.sort(key=lambda s: s[3], reverse=True)
 
-        # 限制最近 20 个会话
         for sid, name, date_str, _ in sessions[:20]:
             card = SessionCard(sid, name, date_str)
             card.add_class("session-card")
@@ -267,7 +252,7 @@ class HomeScreen(Screen):
         overview = session_dir / "overview.md"
         if overview.exists():
             try:
-                from core.context.compactor import parse_overview_md
+                from core.context.overview import parse_overview_md
                 text = overview.read_text(encoding="utf-8")
                 sections = parse_overview_md(text)
                 topics = sections.get("话题", []) or sections.get("Topics", [])
@@ -280,7 +265,8 @@ class HomeScreen(Screen):
         timeline = session_dir / "timeline.json"
         if timeline.exists():
             try:
-                data = json.loads(timeline.read_text(encoding="utf-8"))
+                from core.storage import read_jsonl
+                data = read_jsonl(timeline)
                 if data:
                     summary = data[0].get("summary", "")
                     if summary and len(summary) > 2:

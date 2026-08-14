@@ -13,17 +13,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from dataclasses import dataclass
 
 from .protocols import ExecutorUI
+from .safety import check_tool_safety, strip_quoted
+from .xml_tool_parser import extract_xml_tool_calls, try_parse_xml
 from core.tools import ToolRegistry
 from core.tools.truncation import truncate_output
-from core.llm_gateway import TextDelta, StreamEnd
+from core.llm_gateway import TextDelta, ThinkingDelta, StreamEnd
+from core.errors import ProviderError
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_TURNS = 5
+DEFAULT_MAX_TURNS = 10
 
 
 def _sanitize_messages(messages: list[dict],
@@ -65,18 +67,9 @@ def _sanitize_messages(messages: list[dict],
     return sanitized
 TOOL_TIMEOUT = 30.0            # 单个工具执行超时（秒）
 MCP_TOOL_TIMEOUT = 120.0       # MCP 工具超时（需匹配 transport.CALL_TIMEOUT）
+DELEGATE_TOOL_TIMEOUT = 180.0  # delegate 子 agent 跑多轮 LLM，需要更长超时
 TOOL_RESULT_MAX_CHARS = 8000   # 工具结果最大字符数（超出截断）
 MAX_WEB_CALLS = 3              # 单次 FC 循环中 web 工具总调用上限
-
-# 匹配 Claude/Anthropic 格式的 XML 工具调用
-_XML_INVOKE_RE = re.compile(
-    r'<invoke\s+name="(\w+)"[^>]*>(.*?)</invoke>',
-    re.DOTALL,
-)
-_XML_PARAM_RE = re.compile(
-    r'<parameter\s+name="(\w+)"[^>]*>(.*?)</parameter>',
-    re.DOTALL,
-)
 
 
 @dataclass
@@ -105,12 +98,14 @@ class FunctionCallingLoop:
     })
 
     def __init__(self, provider, tool_registry: ToolRegistry,
-                 max_turns: int = DEFAULT_MAX_TURNS) -> None:
+                 max_turns: int = DEFAULT_MAX_TURNS,
+                 hook_runner: object | None = None) -> None:
         self.provider = provider
         self.registry = tool_registry
         self.max_turns = max_turns
         self.supports_vision: bool = getattr(provider, 'supports_vision', False)
         self._web_call_count = 0
+        self.hook_runner = hook_runner  # P7: PermissionRequest hook
         # 同轮工具结果缓存（仅缓存无副作用工具）
         self._result_cache: dict[tuple[str, str], str] = {}
 
@@ -143,6 +138,7 @@ class FunctionCallingLoop:
             final = result.stream_end
 
             # ── 无 tool_calls：检查 XML fallback → 正常回复 ──────
+            xml_calls: list[dict] = []
             if not final.tool_calls:
                 xml_calls = self._extract_xml_tool_calls(result.response_text)
                 if xml_calls:
@@ -154,19 +150,28 @@ class FunctionCallingLoop:
                         "content": text_content or "",
                         "tool_calls": final.tool_calls,
                     })
+                    # 跳过下方通用的 messages.append，直接进入工具执行
                 else:
                     messages.append({
                         "role": "assistant",
                         "content": result.response_text,
                     })
+                    # P6: 若模型因 max_tokens 被截断，自动续写
+                    if (final.native_stop_reason == "max_tokens"
+                            and turn < self.max_turns):
+                        messages.append({"role": "user", "content": "(continue)"})
+                        continue
                     break
 
             # ── 有 tool_calls：并行执行 → 错误喂回 LLM ──────────
-            messages.append({
-                "role": "assistant",
-                "content": result.response_text or "",
-                "tool_calls": final.tool_calls,
-            })
+            if final.tool_calls:
+                # 原生 tool_calls 路径：追加 assistant 消息
+                if not xml_calls:
+                    messages.append({
+                        "role": "assistant",
+                        "content": result.response_text or "",
+                        "tool_calls": final.tool_calls,
+                    })
 
             tool_results = await self._execute_tools(final.tool_calls, ui)
 
@@ -222,8 +227,22 @@ class FunctionCallingLoop:
                     ui.on_tool_error(tool_name, result)
                     return {"content": result, "tool_id": tool_id}
 
+            # ── 高危工具检查（BLOCKED 状态 + PermissionRequest hook）──
+            if blocked_reason := await self._should_block(tool_name, arguments):
+                ui.on_tool_error(tool_name, f"[警告] {blocked_reason}")
+                result = (
+                    f"⚠️ 高风险操作已被阻止: {blocked_reason}\n"
+                    f"请选择替代方案或向用户说明风险后请求确认。"
+                )
+                return {"content": result, "tool_id": tool_id}
+
             # MCP 工具使用更长的超时（匹配 MCP CALL_TIMEOUT=120s）
-            tool_timeout = MCP_TOOL_TIMEOUT if tool_name.startswith("mcp_") else TOOL_TIMEOUT
+            # delegate 子 agent 跑多轮 LLM，需要更长的超时
+            tool_timeout = (
+                MCP_TOOL_TIMEOUT if tool_name.startswith("mcp_")
+                else DELEGATE_TOOL_TIMEOUT if tool_name == "delegate"
+                else TOOL_TIMEOUT
+            )
 
             # ── 同轮缓存：相同工具+参数直接返回缓存（仅无副作用工具）──
             cacheable = tool_name not in self._uncacheable_tools
@@ -268,7 +287,10 @@ class FunctionCallingLoop:
         """截断过长的工具结果，避免撑爆 LLM 上下文。"""
         return truncate_output(
             result, TOOL_RESULT_MAX_CHARS,
-            label=f"已从 {len(result)} 字符截断至 {TOOL_RESULT_MAX_CHARS} 字符",
+            label=(
+                f"输出 {len(result)} 字符，仅展示前 {TOOL_RESULT_MAX_CHARS} 字符。"
+                "用更精确的工具参数或 head/tail/grep 获取其余部分"
+            ),
         )
 
     # ── helpers ───────────────────────────────────────────────────
@@ -287,7 +309,9 @@ class FunctionCallingLoop:
             async for event in self.provider.chat_with_tools(
                 _sanitize_messages(messages, self.supports_vision), tools_schema,
             ):
-                if isinstance(event, TextDelta):
+                if isinstance(event, ThinkingDelta):
+                    ui.on_thinking_token(event.content)
+                elif isinstance(event, TextDelta):
                     response_text += event.content
                     if not _in_xml:
                         if "<invoke" in response_text:
@@ -305,15 +329,20 @@ class FunctionCallingLoop:
         except Exception as e:
             logger.exception("LLM 调用失败")
             msg = str(e)
+            status_code = None
             # 尝试提取 HTTP 响应体（DeepSeek 400 等错误的详细信息在 body 里）
             resp = getattr(e, 'response', None)
             if resp is not None:
+                status_code = getattr(resp, 'status_code', None)
                 try:
                     body = resp.text[:600]
                     if body:
                         msg = f"{msg}\n响应体: {body}"
                 except Exception:
                     pass
+            perr = ProviderError(msg, provider=self.provider.__class__.__name__,
+                                 status_code=status_code)
+            logger.warning("ProviderError: %s (status=%s)", perr, perr.status_code)
             ui.on_tool_error("LLM", msg)
             return None
 
@@ -342,6 +371,41 @@ class FunctionCallingLoop:
                     event.tool_calls = xml_calls
         return event
 
+    async def _should_block(self, tool_name: str, arguments: dict) -> str | None:
+        """检查工具调用是否高风险。委托给 core.kernel.safety.check_tool_safety。
+
+        P7: 触发 PermissionRequest hook — 插件可审批高风险操作。
+        """
+        reason = check_tool_safety(tool_name, arguments)
+        if reason is None:
+            return None
+
+        # ── P7: PermissionRequest hook — 插件可覆盖阻止决定 ──
+        if self.hook_runner is not None:
+            try:
+                from core.plugins.hook_runner import HookContext, check_hook_results
+                ctx = HookContext(
+                    event="PermissionRequest",
+                    tool_name=tool_name,
+                    tool_args=arguments,
+                )
+                results = await self.hook_runner.run("PermissionRequest", ctx)
+                ok, msg, modified = check_hook_results(results)
+                if ok and modified:
+                    # 插件批准了操作（modified_input 存在表示审批）
+                    return None
+                if not ok:
+                    return f"{reason}（插件审批未通过: {msg}）"
+            except Exception:
+                pass
+
+        return reason
+
+    @staticmethod
+    def _strip_quoted(text: str) -> str:
+        """移除 shell 命令中引号包裹的内容。委托给 core.kernel.safety.strip_quoted。"""
+        return strip_quoted(text)
+
     @staticmethod
     def _parse_args(raw_args: str | dict) -> dict:
         """解析工具参数（JSON 字符串或已解析的 dict）。"""
@@ -354,23 +418,5 @@ class FunctionCallingLoop:
 
     @staticmethod
     def _extract_xml_tool_calls(text: str) -> list[dict]:
-        """从文本中提取 Claude/Anthropic 格式的 XML 工具调用。"""
-        calls: list[dict] = []
-        for i, match in enumerate(_XML_INVOKE_RE.finditer(text)):
-            tool_name = match.group(1)
-            params_block = match.group(2)
-
-            args: dict[str, str] = {}
-            for pm in _XML_PARAM_RE.finditer(params_block):
-                args[pm.group(1)] = pm.group(2).strip()
-
-            calls.append({
-                "id": f"xml_{i}",
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "arguments": json.dumps(args, ensure_ascii=False),
-                },
-            })
-
-        return calls
+        """从文本中提取 XML 工具调用。委托给 core.kernel.xml_tool_parser。"""
+        return extract_xml_tool_calls(text)

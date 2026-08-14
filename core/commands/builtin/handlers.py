@@ -74,24 +74,6 @@ async def handle_profile(app: CommandContext, args: str) -> str:
             lines.append(content)
             lines.append("")
 
-    # 显示 pending 条目数
-    data_dir = AGENT_ROOT / "data"
-    for fname, label_key in [
-        ("preferences.json", "cmd.profile.label_preferences"),
-        ("workflows.json", "cmd.profile.label_workflows"),
-        ("long_term_memory.json", "cmd.profile.label_long_term_memory"),
-    ]:
-        label = t(label_key)
-        path = data_dir / fname
-        if path.exists():
-            try:
-                entries = json.loads(path.read_text(encoding="utf-8"))
-                pending = sum(1 for e in entries if e.get("status") == "pending")
-                if pending:
-                    lines.append(t("cmd.profile.pending", label=label, pending=pending))
-            except (json.JSONDecodeError, OSError):
-                pass
-
     result = "\n".join(lines)
     if len(result) > 8000:
         result = result[:8000] + "\n\n" + t("cmd.profile.truncated")
@@ -117,17 +99,11 @@ async def _handle_profile_rollback(args: str) -> str:
         return t("cmd.profile.rollback_bad_type", type=prompt_type,
                  valid=", ".join(valid_types))
 
-    from core.memory.updater import rollback_prompt
+    from core.memory.version import rollback_prompt
     success, message = rollback_prompt(prompt_type, n)
     if success:
         return t("cmd.profile.rollback_done", message=message)
     return t("cmd.profile.rollback_failed", reason=message)
-
-
-async def handle_compress(app: CommandContext, args: str) -> str:
-    """kind="maintenance" — CommandHandler 在 handler 执行前已启动 compress_worker，
-    此函数实际不会被调用，仅作为 COMMANDS dict 注册锚点。"""
-    return "__COMPRESS__"
 
 
 async def handle_export(app: CommandContext, args: str) -> str:
@@ -225,43 +201,38 @@ async def handle_session(app: CommandContext, args: str) -> str:
 
 
 async def handle_memory(app: CommandContext, args: str) -> str:
-    """查看记忆条目的捕获状态。"""
-    data_dir = AGENT_ROOT / "data"
+    """查看记忆条目（P5 .md 格式）。"""
+    from core.memory import MEMORY_FILES
+
     lines = [t("cmd.memory.title")]
 
-    total_pending = 0
-    total_confirmed = 0
+    total_entries = 0
 
     for fname, label_key in [
-        ("preferences.json", "mem.label_preferences"),
-        ("workflows.json", "mem.label_workflows"),
-        ("long_term_memory.json", "mem.label_long_term_memory"),
+        ("preferences.md", "mem.label_preferences"),
+        ("workflows.md", "mem.label_workflows"),
+        ("long_term_memory.md", "mem.label_long_term_memory"),
     ]:
         label = t(label_key)
-        path = data_dir / fname
+        path = AGENT_ROOT / fname
         if path.exists():
             try:
-                entries = json.loads(path.read_text(encoding="utf-8"))
-                pending = sum(1 for e in entries if e.get("status") == "pending")
-                confirmed = sum(1 for e in entries if e.get("status") == "confirmed")
-                total_pending += pending
-                total_confirmed += confirmed
-                parts = [f"- **{label}**: {t('cmd.memory.confirmed', confirmed=confirmed)}"]
-                if pending:
-                    parts.append(f" / {t('cmd.memory.pending_count', pending=pending)}")
-                lines.append("".join(parts))
-            except (json.JSONDecodeError, OSError):
+                content = path.read_text(encoding="utf-8")
+                count = sum(1 for l in content.split("\n") if l.strip().startswith("- "))
+                total_entries += count
+                lines.append(f"- **{label}**: {t('cmd.memory.confirmed', confirmed=count)}")
+            except OSError:
                 lines.append(f"- **{label}**: {t('cmd.memory.read_error')}")
         else:
             lines.append(f"- **{label}**: {t('cmd.memory.no_data')}")
 
     lines.append("")
-    if total_pending > 0:
-        lines.append(t("cmd.memory.pending_hint", total=total_pending))
+    if total_entries > 0:
+        lines.append(t("cmd.memory.confirmed_summary", total=total_entries))
     else:
-        lines.append(t("cmd.memory.no_pending"))
+        lines.append("")
+        lines.append(t("cmd.memory.empty_hint"))
 
-    lines.append(t("cmd.memory.confirmed_summary", total=total_confirmed))
     lines.append("")
     lines.append(t("cmd.memory.hint"))
 
@@ -303,17 +274,6 @@ async def handle_tools(app: CommandContext, args: str) -> str:
 
     return "\n".join(lines)
 
-
-async def handle_update(app: CommandContext, args: str) -> str:
-    """kind="maintenance" — CommandHandler 在 handler 执行前已启动 profile_update_worker，
-    此函数实际不会被调用，仅作为 COMMANDS dict 注册锚点。"""
-    return "__PROFILE_UPDATE__"
-
-
-async def handle_clear(app: CommandContext, args: str) -> str:
-    """kind="confirm" — CommandHandler 在 handler 执行前已进入确认流，
-    此函数实际不会被调用，仅作为 COMMANDS dict 注册锚点。"""
-    return "__CLEAR_CONFIRM__"
 
 
 async def handle_rollback(app: CommandContext, args: str) -> str:
@@ -428,8 +388,8 @@ def register_builtin_commands(registry: Any) -> None:
         handler=handle_profile,
     ))
     registry.register(CommandDefinition(
-        name="/compact", description=t("cmd.compact.desc"),
-        handler=handle_compress, kind="maintenance",
+        name="/reflect", description=t("cmd.reflect.desc"),
+        kind="maintenance",
     ))
     registry.register(CommandDefinition(
         name="/export", description=t("cmd.export.desc"),
@@ -442,6 +402,10 @@ def register_builtin_commands(registry: Any) -> None:
     registry.register(CommandDefinition(
         name="/plugin", description=t("cmd.plugin.desc"),
         handler=_handle_plugin,
+    ))
+    registry.register(CommandDefinition(
+        name="/plugins", description="插件状态面板 — Ready / Needs Setup / Disabled",
+        handler=_handle_plugins_status,
     ))
     # P4 Batch 2: 新增命令
     registry.register(CommandDefinition(
@@ -456,13 +420,14 @@ def register_builtin_commands(registry: Any) -> None:
         name="/tools", description=t("cmd.tools.desc"),
         handler=handle_tools,
     ))
+    # P5: 新增命令
     registry.register(CommandDefinition(
-        name="/update", description=t("cmd.update.desc"),
-        handler=handle_update, kind="maintenance",
+        name="/think", description=t("cmd.think.desc"),
+        kind="think",
     ))
     registry.register(CommandDefinition(
         name="/clear", description=t("cmd.clear.desc"),
-        handler=handle_clear, kind="confirm",
+        kind="confirm",
     ))
     registry.register(CommandDefinition(
         name="/rollback", description=t("cmd.rollback.desc"),
@@ -488,3 +453,4 @@ def register_builtin_commands(registry: Any) -> None:
 
 
 from core.commands.builtin.plugin_commands import handle_plugin as _handle_plugin  # noqa: E402
+from core.commands.builtin.plugin_commands import handle_plugins_status as _handle_plugins_status  # noqa: E402

@@ -296,12 +296,13 @@ class TestFlushCache:
         # 有 entry 数据时应构建非空词汇表
         assert pipeline._vocab_index.N > 0
 
-    def test_flush_cache_clears_file_cache(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_flush_cache_clears_file_cache(self, tmp_path):
         agent_root = _make_agent_dir(tmp_path)
         pipeline = ContextPipeline(agent_root=agent_root)
 
         soul_path = agent_root / "soul.md"
-        _ = pipeline._read_cached(soul_path)
+        _ = await pipeline._read_cached(soul_path)
         assert str(soul_path) in pipeline._cache
 
         pipeline.flush_cache()

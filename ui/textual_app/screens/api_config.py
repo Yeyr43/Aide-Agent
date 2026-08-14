@@ -38,6 +38,7 @@ class ApiConfigScreen(Screen):
         super().__init__()
         self._edit_name = edit_name
         self._supports_vision = False
+        self._thinking = False
         self._provider = ""  # 用于判断未设置时的默认值
 
         # 预填：优先从 API 配置文件加载，其次用当前活跃 LLM 配置
@@ -49,6 +50,7 @@ class ApiConfigScreen(Screen):
                 self._provider = api_cfg.get("provider", "")
                 saved = api_cfg.get("supports_vision")
                 self._supports_vision = _default_vision(self._provider, saved)
+                self._thinking = api_cfg.get("thinking", False)
         else:
             # 新建模式：用当前活跃 LLM 的默认值
             from core.config import Config as Cfg
@@ -62,6 +64,7 @@ class ApiConfigScreen(Screen):
                 "base_url": config.llm.base_url,
             }
             self._supports_vision = _default_vision(self._provider, config.llm.supports_vision)
+            self._thinking = config.llm.thinking
 
     def compose(self) -> ComposeResult:
         with Container(id="api-config-container"):
@@ -113,6 +116,9 @@ class ApiConfigScreen(Screen):
             # Vision toggle
             label = t("ui.onboard.vision_on") if self._supports_vision else t("ui.onboard.vision_off")
             yield Button(label, id="api-vision-toggle")
+            # Thinking toggle
+            think_label = t("ui.onboard.thinking_on") if self._thinking else t("ui.onboard.thinking_off")
+            yield Button(think_label, id="api-thinking-toggle")
             # Buttons
             yield Static(
                 t("ui.api.hint_newline"),
@@ -130,6 +136,12 @@ class ApiConfigScreen(Screen):
         self._supports_vision = not self._supports_vision
         btn = self.query_one("#api-vision-toggle", Button)
         btn.label = t("ui.onboard.vision_on") if self._supports_vision else t("ui.onboard.vision_off")
+
+    @on(Button.Pressed, "#api-thinking-toggle")
+    def _on_thinking_toggle(self) -> None:
+        self._thinking = not self._thinking
+        btn = self.query_one("#api-thinking-toggle", Button)
+        btn.label = t("ui.onboard.thinking_on") if self._thinking else t("ui.onboard.thinking_off")
 
     @on(Button.Pressed, "#api-btn-cancel")
     def _on_cancel(self) -> None:
@@ -173,6 +185,7 @@ class ApiConfigScreen(Screen):
             "base_url": self.query_one("#api-field-baseurl", Input).value.strip(),
             "context_window": self.query_one("#api-field-ctx", Input).value.strip(),
             "supports_vision": self._supports_vision,
+            "thinking": self._thinking,
         }
         self.dismiss(result)
 

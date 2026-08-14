@@ -20,7 +20,7 @@ from typing import AsyncIterator
 
 import httpx
 
-from .provider import TextDelta, StreamEnd
+from .provider import TextDelta, ThinkingDelta, StreamEnd
 from .tool_call_builder import ToolCallAccumulator, build_tool_calls
 
 logger = logging.getLogger(__name__)
@@ -40,10 +40,11 @@ class AnthropicProvider:
     """
 
     def __init__(self, model: str, base_url: str, api_key: str,
-                 supports_vision: bool = True) -> None:
+                 supports_vision: bool = True, thinking: bool = False) -> None:
         self.model = model
         self.api_key = api_key
         self.supports_vision = supports_vision
+        self.thinking = thinking
 
         # 智能拼接 endpoint：兼容 proxy 和官方 API
         base = base_url.rstrip("/")
@@ -66,7 +67,7 @@ class AnthropicProvider:
         self,
         messages: list[dict],
         tools: list[dict],
-    ) -> AsyncIterator[TextDelta | StreamEnd]:
+    ) -> AsyncIterator[TextDelta | ThinkingDelta | StreamEnd]:
         """流式对话 + tool calling。
 
         Args:
@@ -90,6 +91,12 @@ class AnthropicProvider:
             body["system"] = system
         if anthropic_tools:
             body["tools"] = anthropic_tools
+
+        # 深度思考：Anthropic Extended Thinking
+        if self.thinking:
+            body["thinking"] = {"type": "enabled", "budget_tokens": 4000}
+            # Anthropic 要求启用 extended thinking 时不能设置 temperature
+            body["max_tokens"] = max(ANTHROPIC_DEFAULT_MAX_TOKENS, 8192)
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
             async with client.stream(
@@ -285,7 +292,7 @@ class AnthropicProvider:
 
     async def _parse_sse(
         self, response: httpx.Response,
-    ) -> AsyncIterator[TextDelta | StreamEnd]:
+    ) -> AsyncIterator[TextDelta | ThinkingDelta | StreamEnd]:
         """解析 Anthropic SSE 事件流。
 
         Anthropic SSE 格式（每行以 event: 或 data: 开头）:
@@ -329,7 +336,9 @@ class AnthropicProvider:
         """
         current_event: str | None = None
         tool_use_accumulators: dict[int, ToolCallAccumulator] = {}
+        thinking_block_indices: set[int] = set()  # 深度思考内容块索引（跳过渲染）
         stop_reason = "stop"
+        native_stop_reason = None
 
         async for line in response.aiter_lines():
             # event: 行 — 记录当前事件类型
@@ -356,17 +365,28 @@ class AnthropicProvider:
             if event_type == "content_block_start":
                 index = data.get("index", 0)
                 block = data.get("content_block", {})
-                if block.get("type") == "tool_use":
+                block_type = block.get("type", "")
+                if block_type == "tool_use":
                     tool_use_accumulators[index] = ToolCallAccumulator(
                         id=block.get("id", ""),
                         name=block.get("name", ""),
                     )
+                elif block_type in ("thinking", "redacted_thinking"):
+                    thinking_block_indices.add(index)
 
             # content_block_delta — 文本增量或工具参数增量
             elif event_type == "content_block_delta":
                 delta = data.get("delta", {})
                 delta_type = delta.get("type", "")
                 index = data.get("index", 0)
+
+                # 深度思考内容块 — 渲染为 dimmed 思考过程
+                if index in thinking_block_indices:
+                    if delta_type == "thinking_delta":
+                        text = delta.get("thinking", "")
+                        if text:
+                            yield ThinkingDelta(text, kind="thinking")
+                    continue
 
                 if delta_type == "text_delta":
                     text = delta.get("text", "")
@@ -381,6 +401,7 @@ class AnthropicProvider:
             # message_delta — stop_reason
             elif event_type == "message_delta":
                 sr = data.get("delta", {}).get("stop_reason", "end_turn")
+                native_stop_reason = sr
                 stop_reason = self._map_stop_reason(sr)
 
             # message_stop — 流结束
@@ -391,6 +412,7 @@ class AnthropicProvider:
         yield StreamEnd(
             finish_reason=stop_reason,
             tool_calls=build_tool_calls(tool_use_accumulators),
+            native_stop_reason=native_stop_reason,
         )
 
     @staticmethod

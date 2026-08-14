@@ -5,7 +5,7 @@ stdin=DEVNULL, UTF-8 decode with locale fallback.
 """
 
 import pytest
-from core.tools.builtin.run_shell import execute, _shell_hint
+from core.tools.run_shell import execute, _shell_hint, _compress_repeats
 
 
 # ── Basic execution ──────────────────────────────────────────────────────
@@ -84,13 +84,13 @@ async def test_run_shell_binary_output_no_crash():
 
 @pytest.mark.asyncio
 async def test_run_shell_truncates_large_output():
-    """Output exceeding 100KB should be truncated with a notice."""
-    # Generate ~200KB of output (well above MAX_OUTPUT_BYTES=100KB)
+    """Output exceeding MAX_OUTPUT_CHARS should be truncated with head-only view."""
+    # Generate ~200KB of output (well above MAX_OUTPUT_CHARS=6000)
     result = await execute({
         "command": 'python -c "print(\'X\' * 200000)"',
         "timeout": 15,
     })
-    assert "截断" in result or "truncat" in result.lower()
+    assert "输出过长" in result or "head/tail/grep" in result
     assert len(result) < 200000  # Must be truncated
 
 
@@ -156,6 +156,51 @@ async def test_run_shell_interactive_command_no_hang():
     })
     # Must complete instantly (input() raises EOFError with stdin=DEVNULL)
     assert result
+
+
+# ── Repeat compression ───────────────────────────────────────────────────
+
+def test_compress_repeats_empty_input():
+    assert _compress_repeats("") == ""
+    assert _compress_repeats("single line") == "single line"
+
+
+def test_compress_repeats_below_threshold():
+    """4 repeats of same line < threshold (5) → unchanged."""
+    text = "err\n" * 4
+    result = _compress_repeats(text.strip())
+    assert result == text.strip()
+    assert "重复" not in result
+
+
+def test_compress_repeats_at_threshold():
+    """5 repeats = threshold → compressed."""
+    text = "err\n" * 5
+    result = _compress_repeats(text.strip())
+    assert "重复 5 次" in result
+    assert result.count("err") == 1  # compressed: one line + count marker (no keyword)
+
+
+def test_compress_repeats_many_repeats():
+    """30 repeats → compressed + only 2 lines in output."""
+    text = "error: timeout\n" * 30
+    result = _compress_repeats(text.strip())
+    assert "重复 30 次" in result
+    assert result.count("error: timeout") == 1  # compressed to one occurrence
+
+
+def test_compress_repeats_mixed_content():
+    """Non-repeating content mixed with repeats → only repeats compressed."""
+    text = "\n".join(["ok", "err", "err", "err", "err", "err", "ok", "err"])
+    result = _compress_repeats(text)
+    assert "重复 5 次" in result  # the block of 5 errs compressed
+    assert result.count("ok") == 2     # non-repeating lines preserved
+
+
+def test_compress_repeats_disabled():
+    """threshold=0 disables compression."""
+    text = "x\n" * 10
+    assert _compress_repeats(text, threshold=0) == text
 
 
 # ── Platform shell hint ──────────────────────────────────────────────────

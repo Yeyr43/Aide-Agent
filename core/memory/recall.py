@@ -12,6 +12,7 @@ from pathlib import Path
 
 from core.context.relevance import _tokenize, _tfidf_score, _expand_query, get_vocab_index
 from core.locale import t
+from core.memory import MEMORY_FILES
 from core.setup import aide_dir
 
 logger = logging.getLogger(__name__)
@@ -20,29 +21,33 @@ logger = logging.getLogger(__name__)
 async def recall(
     query: str,
     aide_root: Path | None = None,
-    entry_manager=None,
+    agent_root: Path | None = None,
     max_results: int = 10,
     max_sessions: int = 50,
+    search_index: object | None = None,
 ) -> list[dict]:
     """搜索记忆数据，返回相关结果。
 
     两阶段搜索：
       1. 全局搜索索引（_search_index.json）快速筛选候选会话
       2. 对候选会话读 meta.json + overview.md 补充细节
-      3. 搜索条目目录（JSON）
+      3. 搜索 agent/*.md 记忆文件
 
     Args:
         query: 搜索关键词
         aide_root: ~/.aide/ 根目录
-        entry_manager: EntryManager 实例（用于搜索条目目录）
+        agent_root: agent/ 目录（用于搜索 .md 记忆文件）
         max_results: 最大返回条数（默认 10）
         max_sessions: 搜索索引无结果时的 fallback 扫描上限
+        search_index: SearchIndex 实例（由 ToolContext 注入）。
 
     Returns:
         匹配结果列表，每项: {"source": str, "snippet": str, "score": float}
     """
     if aide_root is None:
         aide_root = aide_dir()
+    if agent_root is None:
+        agent_root = aide_root / "agent"
 
     vocab = get_vocab_index()
     keywords = _expand_query(query, vocab=vocab.vocab)
@@ -53,8 +58,7 @@ async def recall(
     matched_session_ids: set[str] = set()
     if sessions_root.exists():
         try:
-            from core.search.index import get_search_index
-            search_idx = get_search_index(sessions_root)
+            search_idx = search_index
             idx_results = await search_idx.search(query, top_k=20)
             for r in idx_results:
                 matches.append({
@@ -84,9 +88,8 @@ async def recall(
             if session_count >= max_sessions:
                 break
 
-    # 4. 搜索条目目录
-    if entry_manager is not None:
-        await _search_entries(entry_manager, keywords, matches)
+    # 4. 搜索记忆文件
+    _search_memory_files(agent_root, keywords, matches)
 
     # 5. 保存原始关键词分数 → TF-IDF 重排序 → 清理内部字段 → 截断
     for m in matches:
@@ -121,7 +124,8 @@ def _search_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
     timeline_path = session_dir / "timeline.json"
     if timeline_path.exists():
         try:
-            data = json.loads(timeline_path.read_text(encoding="utf-8"))
+            from core.storage import read_jsonl
+            data = read_jsonl(timeline_path)
             _search_timeline(data, keywords, session_dir.name, matches)
         except (json.JSONDecodeError, OSError):
             logger.debug("Failed to read timeline.json for session %s, skipping", session_dir.name)
@@ -130,7 +134,7 @@ def _search_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
     overview_path = session_dir / "overview.md"
     if overview_path.exists():
         try:
-            from core.context.compactor import parse_overview_md
+            from core.context.overview import parse_overview_md
             text = overview_path.read_text(encoding="utf-8")
             sections = parse_overview_md(text)
             for section_name, items in sections.items():
@@ -170,7 +174,7 @@ def _enrich_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
     overview_path = session_dir / "overview.md"
     if overview_path.exists():
         try:
-            from core.context.compactor import parse_overview_md
+            from core.context.overview import parse_overview_md
             text = overview_path.read_text(encoding="utf-8")
             sections = parse_overview_md(text)
             for section_name, items in sections.items():
@@ -203,28 +207,29 @@ def _search_timeline(data: list, keywords: set[str], session_id: str, matches: l
             })
 
 
-async def _search_entries(entry_manager, keywords: set[str], matches: list[dict]) -> None:
-    """搜索条目目录。"""
-    for entry_type, label in [
-        ("preferences", t("mem.entry_type_preferences")),
-        ("workflows", t("mem.entry_type_workflows")),
-        ("long_term_memory", t("mem.entry_type_long_term_memory")),
-    ]:
+def _search_memory_files(agent_root: Path, keywords: set[str],
+                         matches: list[dict]) -> None:
+    """搜索 agent/*.md 记忆文件（偏好、工作流、长记忆）。"""
+    for key, fname in MEMORY_FILES.items():
+        label = t(f"mem.label_{key}")
+        path = agent_root / fname
+        if not path.exists():
+            continue
         try:
-            entries = await entry_manager.load(entry_type)
-            for entry in entries:
-                content = entry.get("content", "")
-                status = entry.get("status", "?")
-                score = _keyword_score(content, keywords)
+            content = path.read_text(encoding="utf-8")
+            for line in content.split("\n"):
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                score = _keyword_score(line, keywords)
                 if score > 0:
                     matches.append({
-                        "source": f"[{label}] status={status}",
-                        "snippet": content[:200],
+                        "source": f"[{label}]",
+                        "snippet": line[:200],
                         "score": score,
                     })
-        except Exception:
-            logger.debug("Failed to load entries for type %s, skipping", entry_type)
-            continue
+        except OSError:
+            logger.debug("Failed to read memory file %s, skipping", fname)
 
 
 def _keyword_score(text: str, keywords: set[str], vocab: frozenset[str] | None = None) -> float:

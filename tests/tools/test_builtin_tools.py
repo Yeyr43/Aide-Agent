@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.tools.builtin import search_in_files
+from core.tools import search_in_files
 
 
 class TestSearchInFilesListMode:

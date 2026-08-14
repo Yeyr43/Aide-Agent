@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
-from core.tools.builtin.web import execute, schema, _html_to_text, _extract_charset
+from core.tools.web import execute, schema, _html_to_text, _extract_charset
 
 
 # ── Schema ─────────────────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ class TestWebSearch:
 
     @pytest.mark.asyncio
     async def test_search_returns_results(self):
-        with patch("core.tools.builtin.web.DDGS") as mock_ddgs:
+        with patch("core.tools.web.DDGS") as mock_ddgs:
             mock_instance = MagicMock()
             mock_instance.text.return_value = [
                 {"title": "Result 1", "href": "http://a.com", "body": "snippet A"},
@@ -61,14 +61,14 @@ class TestWebFetch:
 
     @pytest.mark.asyncio
     async def test_fetch_success(self):
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("urllib.request.OpenerDirector.open") as mock_open:
             mock_resp = MagicMock()
             mock_resp.headers = {"Content-Type": "text/html; charset=utf-8"}
             mock_resp.read.side_effect = [
                 b"<html><body><h1>Hello</h1><p>World</p></body></html>",
                 b"",
             ]
-            mock_urlopen.return_value.__enter__.return_value = mock_resp
+            mock_open.return_value.__enter__.return_value = mock_resp
 
             result = await execute({"action": "fetch", "url": "http://example.com"})
             assert "# Hello" in result
@@ -77,8 +77,8 @@ class TestWebFetch:
     @pytest.mark.asyncio
     async def test_http_error(self):
         import urllib.error
-        with patch("urllib.request.urlopen") as mock_urlopen:
-            mock_urlopen.side_effect = urllib.error.HTTPError(
+        with patch("urllib.request.OpenerDirector.open") as mock_open:
+            mock_open.side_effect = urllib.error.HTTPError(
                 "http://example.com", 404, "Not Found", {}, None
             )
             result = await execute({"action": "fetch", "url": "http://example.com"})
@@ -86,14 +86,14 @@ class TestWebFetch:
 
     @pytest.mark.asyncio
     async def test_max_chars_truncation(self):
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("urllib.request.OpenerDirector.open") as mock_open:
             mock_resp = MagicMock()
             mock_resp.headers = {"Content-Type": "text/html; charset=utf-8"}
             mock_resp.read.side_effect = [
                 b"<p>" + b"x" * 500 + b"</p>",
                 b"",
             ]
-            mock_urlopen.return_value.__enter__.return_value = mock_resp
+            mock_open.return_value.__enter__.return_value = mock_resp
 
             result = await execute({"action": "fetch", "url": "http://example.com", "max_chars": 200})
             assert "截断" in result or len(result) <= 350

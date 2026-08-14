@@ -91,7 +91,7 @@ def _bring_to_front(title: str) -> bool:
         user32.ShowWindow(hwnd, 9)  # SW_RESTORE
         user32.SetForegroundWindow(hwnd)
         return True
-    except Exception:
+    except OSError:
         return False
 
 
@@ -119,7 +119,7 @@ def decorate_console(ico_path: Path | None = None) -> None:
         if hicon:
             user32.SendMessageW(hwnd, 0x0080, 0, hicon)  # ICON_SMALL
             user32.SendMessageW(hwnd, 0x0080, 1, hicon)  # ICON_BIG
-    except Exception:
+    except OSError:
         pass
 
 

@@ -13,16 +13,17 @@ class TestEnsureAideRoot:
     """测试目录初始化（幂等）。"""
 
     def test_creates_directory_tree(self, tmp_path):
-        """首次调用应创建完整目录树。"""
+        """P5: 首次调用应创建完整目录树（不含 data/ 和 archives/）。"""
         with patch('core.setup.aide_dir', return_value=tmp_path):
             result = ensure_aide_root()
             assert result == tmp_path
             assert (tmp_path / "agent").is_dir()
-            assert (tmp_path / "agent" / "data").is_dir()
             assert (tmp_path / "sessions").is_dir()
             assert (tmp_path / "plugins").is_dir()
             assert (tmp_path / "logs").is_dir()
-            assert (tmp_path / "archives").is_dir()
+            # P5: data/ 和 archives/ 已移除
+            assert not (tmp_path / "agent" / "data").is_dir()
+            assert not (tmp_path / "archives").is_dir()
 
     def test_creates_soul_template(self, tmp_path):
         """应创建 soul.md 模板文件。"""
@@ -44,18 +45,15 @@ class TestEnsureAideRoot:
                 assert path.exists()
 
     def test_creates_data_json_files(self, tmp_path):
-        """应创建四个空的条目 JSON 文件。"""
+        """P5: 条目 JSON 文件不再创建（改用 .md 文件）。"""
         with patch('core.setup.aide_dir', return_value=tmp_path):
             ensure_aide_root()
+            # P5: data/ 目录不存在
             data_dir = tmp_path / "agent" / "data"
-            prefs = json.loads((data_dir / "preferences.json").read_text(encoding="utf-8"))
-            assert prefs == []
-            wf = json.loads((data_dir / "workflows.json").read_text(encoding="utf-8"))
-            assert wf == []
-            lt = json.loads((data_dir / "long_term_memory.json").read_text(encoding="utf-8"))
-            assert lt == []
-            tf = json.loads((data_dir / "topic_frequency.json").read_text(encoding="utf-8"))
-            assert tf == {}
+            assert not data_dir.exists()
+            # P5: .md 文件存在
+            agent_dir = tmp_path / "agent"
+            assert (agent_dir / "preferences.md").read_text(encoding="utf-8")
 
     def test_idempotent(self, tmp_path):
         """重复调用不应报错，不覆盖已有文件。"""
@@ -85,26 +83,51 @@ class TestEnsureAideRoot:
 
 
 class TestIsColdStart:
-    """测试冷启动判断。"""
+    """测试冷启动判断（P5: 基于 soul.md + settings.json）。"""
 
-    def test_empty_data_is_cold_start(self, tmp_path):
-        """所有条目文件为空数组 → 冷启动。"""
-        data_dir = tmp_path / "agent" / "data"
-        data_dir.mkdir(parents=True)
-        for f in ["preferences.json", "workflows.json", "long_term_memory.json"]:
-            (data_dir / f).write_text("[]", encoding="utf-8")
+    def test_no_soul_is_cold_start(self, tmp_path):
+        """soul.md 不存在 → 冷启动。"""
+        import json
+        config_dir = tmp_path / "config"
+        config_dir.mkdir(parents=True)
+        settings = {"llm": {"provider": "openai", "model": "gpt-4o"}}
+        (config_dir / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
 
         with patch('core.setup.aide_dir', return_value=tmp_path):
             assert is_cold_start() is True
 
-    def test_non_empty_data_not_cold_start(self, tmp_path):
-        """至少一个条目文件非空 → 非冷启动。"""
-        data_dir = tmp_path / "agent" / "data"
-        data_dir.mkdir(parents=True)
-        (data_dir / "preferences.json").write_text("[]", encoding="utf-8")
-        (data_dir / "workflows.json").write_text("[]", encoding="utf-8")
-        (data_dir / "long_term_memory.json").write_text(
-            '[{"content":"test","status":"integrated"}]', encoding="utf-8")
+    def test_no_settings_is_cold_start(self, tmp_path):
+        """settings.json 不存在 → 冷启动。"""
+        agent_dir = tmp_path / "agent"
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "soul.md").write_text("# Test Soul", encoding="utf-8")
+
+        with patch('core.setup.aide_dir', return_value=tmp_path):
+            assert is_cold_start() is True
+
+    def test_no_provider_is_cold_start(self, tmp_path):
+        """settings.json 无 provider → 冷启动。"""
+        import json
+        agent_dir = tmp_path / "agent"
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "soul.md").write_text("# Test Soul", encoding="utf-8")
+        config_dir = tmp_path / "config"
+        config_dir.mkdir(parents=True)
+        (config_dir / "settings.json").write_text('{"app": {"locale": "zh"}}', encoding="utf-8")
+
+        with patch('core.setup.aide_dir', return_value=tmp_path):
+            assert is_cold_start() is True
+
+    def test_fully_configured_not_cold_start(self, tmp_path):
+        """soul.md + 有效 settings.json → 非冷启动。"""
+        import json
+        agent_dir = tmp_path / "agent"
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "soul.md").write_text("# Test Soul", encoding="utf-8")
+        config_dir = tmp_path / "config"
+        config_dir.mkdir(parents=True)
+        settings = {"llm": {"provider": "openai", "model": "gpt-4o"}}
+        (config_dir / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
 
         with patch('core.setup.aide_dir', return_value=tmp_path):
             assert is_cold_start() is False

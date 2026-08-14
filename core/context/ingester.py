@@ -1,13 +1,16 @@
 """ContextIngester — 每轮对话后写入 session 数据。
 
 负责：
-  - 首条消息时延迟创建 session 目录
+  - 绑定当前 session 目录（由 SessionManager 创建）
   - 写入 messages/turn_{NNN}.json（完整原文存档）
   - 追加 timeline.json（一句话事件索引 + 窗口上下文摘要）
 
 所有写操作通过 JsonStore 保证原子性。
+
+Session 目录由 SessionManager 统一创建，ContextIngester 不重复创建。
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -16,12 +19,7 @@ from pathlib import Path
 from core.storage import JsonStore
 from core.locale import t
 
-from core.setup import aide_dir
-
 logger = logging.getLogger(__name__)
-
-# 所有 session 的父目录
-SESSIONS_ROOT = aide_dir() / "sessions"
 
 # ── 摘要生成（规则模板，不用 LLM）───────────────────────────────────
 
@@ -51,46 +49,51 @@ class ContextIngester:
     """每轮对话后摄取写入。
 
     用法:
-        ingester = ContextIngester(store)
-        session_id = await ingester.ensure_session()  # 首条消息时
-        await ingester.ingest(session_id, turn, user_msg, assistant_msg, tool_calls)
+        ingester = ContextIngester(store, sessions_root)
+        ingester.set_session(session_id)
+        await ingester.ingest(turn, user_msg, assistant_msg, turn_messages)
     """
 
     def __init__(self, store: JsonStore,
+                 sessions_root: Path | None = None,
                  search_index = None) -> None:
         self._store = store
+        from core.setup import aide_dir
+        self._sessions_root = sessions_root or (aide_dir() / "sessions")
         self._search_index = search_index  # SearchIndex | None
         self._session_id: str | None = None
         self._session_dir: Path | None = None
 
     # ── session 生命周期 ──────────────────────────────────────────
 
-    def ensure_session(self, session_id: str | None = None) -> Path:
-        """确保 session 目录存在，延迟创建。
+    def set_session(self, session_id: str) -> Path:
+        """绑定当前会话（目录由 SessionManager 预先创建）。
 
-        首次调用时创建 session 目录。
-        之后返回已有目录。
+        支持两种输入：
+        - 会话 ID（如 "20260701_120000"）→ 从 _sessions_root 解析路径
+        - 完整路径（如 Path("/tmp/sessions/test")）→ 直接使用
+
+        此后 ingest() 写入该会话目录。
 
         Args:
-            session_id: 会话 ID（格式 YYYYMMDD_HHMMSS），为空则自动生成
+            session_id: 会话 ID 或完整路径（str 或 Path）
 
         Returns:
             session 目录路径
         """
-        if self._session_dir is not None:
+        sid = str(session_id)
+        if self._session_dir is not None and self._session_id == sid:
             return self._session_dir
 
-        if session_id is None:
-            session_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        self._session_id = sid
+        # 若传入的是完整路径则直接使用，否则从 _sessions_root 拼接
+        candidate = Path(sid) if "/" in sid or "\\" in sid else self._sessions_root / sid
+        self._session_dir = candidate
 
-        self._session_id = session_id
-        self._session_dir = SESSIONS_ROOT / session_id
+        # messages/ 子目录若不存在则创建（兼容从旧版本恢复的会话）
+        (self._session_dir / "messages").mkdir(parents=True, exist_ok=True)
 
-        # 创建子目录
-        self._session_dir.mkdir(parents=True, exist_ok=True)
-        (self._session_dir / "messages").mkdir(exist_ok=True)
-
-        logger.info(t("ctx.ingest_session_start", id=session_id))
+        logger.debug("ContextIngester bound to session %s", sid)
         return self._session_dir
 
     @property
@@ -117,32 +120,45 @@ class ContextIngester:
             turn_messages: 本轮增量消息（只存当轮，不存完整历史）
         """
         if self._session_dir is None:
-            raise RuntimeError("session 未创建，请先调用 ensure_session()")
+            raise RuntimeError("session 未创建，请先调用 set_session()")
 
         timestamp = datetime.now(timezone.utc).isoformat()
         summary = _turn_summary(user_msg, assistant_msg, tool_calls)
 
         # ── 1. 写入 messages/turn_{NNN}.json（仅当轮增量消息）──
+        # P5: tool_calls 已从顶层移除（在 messages 内），保留 user 和 assistant
         turn_data = {
             "turn": turn,
             "timestamp": timestamp,
             "user": user_msg,
             "assistant": assistant_msg,
-            "tool_calls": tool_calls or [],
-            "messages": turn_messages or [],  # 仅本轮增量消息
+            "messages": turn_messages or [],
         }
         turn_path = self._session_dir / "messages" / f"turn_{turn:03d}.json"
         await self._store.write(turn_path, turn_data)
 
-        # ── 2. 追加 timeline.json ──
-        timeline_path = self._session_dir / "timeline.json"
-        timeline = await self._store.read(timeline_path) or []
-        timeline.append({
+        # ── 1.5 更新 meta.json 的 last_active_at ──
+        meta_path = self._session_dir / "meta.json"
+        from core.storage import atomic_write_json
+        meta: dict = {}
+        if meta_path.exists():
+            try:
+                meta_raw = await asyncio.to_thread(
+                    meta_path.read_text, encoding="utf-8",
+                )
+                meta = json.loads(meta_raw)
+            except (json.JSONDecodeError, OSError):
+                meta = {}
+        meta["last_active_at"] = timestamp
+        atomic_write_json(meta_path, meta)
+
+        # ── 2. 追加 timeline.json（JSONL 格式：每行一个 JSON 对象）──
+        from core.storage import append_jsonl
+        append_jsonl(self._session_dir / "timeline.json", {
             "turn": turn,
             "timestamp": timestamp,
             "summary": summary,
         })
-        await self._store.write(timeline_path, timeline)
 
         # ── 3. 追加全局搜索索引 ──
         if self._search_index is not None and self._session_id:

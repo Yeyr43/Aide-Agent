@@ -1,0 +1,270 @@
+{
+  "ui.onboard.lang_title": {
+    "zh": "语言 / Language",
+    "en": "语言 / Language"
+  },
+  "ui.onboard.lang_zh": {
+    "zh": "中文",
+    "en": "中文"
+  },
+  "ui.onboard.lang_en": {
+    "zh": "English",
+    "en": "English"
+  },
+  "ui.onboard.model_title": {
+    "zh": "模型配置",
+    "en": "Model Configuration"
+  },
+  "ui.onboard.label_provider": {
+    "zh": "协议",
+    "en": "Protocol"
+  },
+  "ui.onboard.label_model": {
+    "zh": "模型",
+    "en": "Model"
+  },
+  "ui.onboard.label_api_key": {
+    "zh": "API Key",
+    "en": "API Key"
+  },
+  "ui.onboard.label_base_url": {
+    "zh": "Base URL",
+    "en": "Base URL"
+  },
+  "ui.onboard.label_context_window": {
+    "zh": "上下文窗口（token）",
+    "en": "Context Window (tokens)"
+  },
+  "ui.onboard.ctx_placeholder": {
+    "zh": "128000（0 = 不限制）",
+    "en": "128000 (0 = unlimited)"
+  },
+  "ui.onboard.vision_on": {
+    "zh": "多模态（on）",
+    "en": "Vision (on)"
+  },
+  "ui.onboard.vision_off": {
+    "zh": "多模态（off）",
+    "en": "Vision (off)"
+  },
+  "ui.onboard.thinking_on": {
+    "zh": "深度思考（on）",
+    "en": "Deep Think (on)"
+  },
+  "ui.onboard.thinking_off": {
+    "zh": "深度思考（off）",
+    "en": "Deep Think (off)"
+  },
+  "ui.onboard.role_title": {
+    "zh": "选择角色",
+    "en": "Choose Your Role"
+  },
+  "ui.onboard.role_desc": {
+    "zh": "选择一个预设角色快速配置，或跳过手动设置：",
+    "en": "Pick a preset role for quick setup, or skip to customize manually:"
+  },
+  "ui.onboard.role_dev_label": {
+    "zh": "开发者",
+    "en": "Developer"
+  },
+  "ui.onboard.role_dev_desc": {
+    "zh": "代码导向 · 简洁实用",
+    "en": "Code-focused · Concise & practical"
+  },
+  "ui.onboard.role_writer_label": {
+    "zh": "写作者",
+    "en": "Writer"
+  },
+  "ui.onboard.role_writer_desc": {
+    "zh": "文字导向 · 注重表达",
+    "en": "Content-focused · Style matters"
+  },
+  "ui.onboard.role_mgr_label": {
+    "zh": "管理者",
+    "en": "Manager"
+  },
+  "ui.onboard.role_mgr_desc": {
+    "zh": "任务导向 · 有条理",
+    "en": "Task-focused · Organized"
+  },
+  "ui.onboard.role_skip": {
+    "zh": "跳过，手动设置",
+    "en": "Skip, customize manually"
+  },
+  "ui.onboard.personal_title": {
+    "zh": "个性化",
+    "en": "Personalization"
+  },
+  "ui.onboard.label_name": {
+    "zh": "怎么称呼我？",
+    "en": "What should I call you?"
+  },
+  "ui.onboard.label_personality": {
+    "zh": "你希望我的个性是怎样的？",
+    "en": "What personality should I have?"
+  },
+  "ui.onboard.default_personality": {
+    "zh": "简洁、友好、直接",
+    "en": "Concise, friendly, direct"
+  },
+  "ui.onboard.label_workstyle": {
+    "zh": "偏好的工作方式？",
+    "en": "Preferred work style?"
+  },
+  "ui.onboard.default_workstyle": {
+    "zh": "回复简洁，直击要点",
+    "en": "Concise replies, get to the point"
+  },
+  "ui.onboard.label_longterm": {
+    "zh": "我需要记住关于你的哪些事？（可选）",
+    "en": "What should I remember about you? (optional)"
+  },
+  "ui.onboard.nav_prev": {
+    "zh": "< 上一页",
+    "en": "< Previous"
+  },
+  "ui.onboard.nav_next": {
+    "zh": "下一页 >",
+    "en": "Next >"
+  },
+  "ui.onboard.nav_done": {
+    "zh": "✓ 完成",
+    "en": "✓ Done"
+  },
+  "ui.onboard.hint_newline": {
+    "zh": "Ctrl+J / Ctrl+Enter 换行，Enter 下一步",
+    "en": "Ctrl+J / Ctrl+Enter for newline, Enter to continue"
+  },
+  "ui.api.label_name": {
+    "zh": "API 名称（用于切换）",
+    "en": "API Name (for switching)"
+  },
+  "ui.api.btn_save": {
+    "zh": "✓ 保存",
+    "en": "✓ Save"
+  },
+  "ui.api.btn_cancel": {
+    "zh": "取消",
+    "en": "Cancel"
+  },
+  "ui.api.hint_newline": {
+    "zh": "Enter 保存，Esc 取消",
+    "en": "Enter to save, Esc to cancel"
+  },
+  "ui.api.saved": {
+    "zh": "✅ API 配置已保存：**{name}**（{provider}/{model}）",
+    "en": "✅ API config saved: **{name}** ({provider}/{model})"
+  },
+  "ui.api.error_required": {
+    "zh": "⚠️ 名称、Provider、Model 为必填项",
+    "en": "⚠ Name, Provider, and Model are required"
+  },
+  "ui.api.error_duplicate": {
+    "zh": "⚠️ API 名称 **{name}** 已被占用，请换一个",
+    "en": "⚠ API name **{name}** is already taken, please use another"
+  },
+  "ui.home.no_sessions": {
+    "zh": "暂无历史会话",
+    "en": "No session history"
+  },
+  "ui.home.input_placeholder": {
+    "zh": "输入消息开始新会话...",
+    "en": "Type a message to start a new session..."
+  },
+  "ui.cmd_handler.confirm_delete_named": {
+    "zh": "⚠️ 确定要删除会话「**{name}**」吗？\n\n此操作不可撤销。输入 **确认** 或 **yes** 来确认，任意其他内容取消。",
+    "en": "⚠️ Are you sure you want to delete session \"**{name}**\"?\n\nThis action is irreversible. Type **confirm** or **yes** to proceed, anything else to cancel."
+  },
+  "ui.cmd_handler.confirm_delete": {
+    "zh": "⚠️ 确定要删除当前会话吗？\n\n此操作不可撤销。输入 **确认** 或 **yes** 来确认，任意其他内容取消。",
+    "en": "⚠️ Are you sure you want to delete the current session?\n\nThis action is irreversible. Type **confirm** or **yes** to proceed, anything else to cancel."
+  },
+  "ui.cmd_handler.rollback_cancelled": {
+    "zh": "已取消回溯。",
+    "en": "Rollback cancelled."
+  },
+  "ui.cmd_handler.clear_cancelled": {
+    "zh": "已取消删除。",
+    "en": "Delete cancelled."
+  },
+  "ui.cmd_handler.cmd_failed": {
+    "zh": "命令执行失败: {e}",
+    "en": "Command execution failed: {e}"
+  },
+  "ui.cmd_handler.session_missing": {
+    "zh": "❌ 会话目录不存在。",
+    "en": "❌ Session directory does not exist."
+  },
+  "ui.cmd_handler.rollback_failed": {
+    "zh": "回滚失败：{e}",
+    "en": "Rollback failed: {e}"
+  },
+  "ui.cmd_handler.rollback_done": {
+    "zh": "✅ 已回溯到第 **{target}** 轮（删除了 {deleted} 轮对话记录）。\n\n⚠️ **注意**：已执行的工具调用（文件写入、Shell 命令等）的副作用**不会被撤销**。",
+    "en": "✅ Rolled back to turn **{target}** ({deleted} turns deleted).\n\n⚠️ **Note**: Side effects from executed tool calls (file writes, shell commands, etc.) **will NOT be undone**."
+  },
+  "ui.cmd_handler.session_deleted": {
+    "zh": "✅ 会话已删除。",
+    "en": "✅ Session deleted."
+  },
+  "ui.bridge.tool_error": {
+    "zh": "工具 [{name}] 执行失败: {error}",
+    "en": "Tool [{name}] execution failed: {error}"
+  },
+  "ui.bridge.max_turns": {
+    "zh": "已达到最大工具调用轮次 (5)。任务可能需要你手动介入。",
+    "en": "Maximum tool call turns reached (5). The task may need your manual intervention."
+  },
+  "ui.widget.no_match": {
+    "zh": " 无匹配命令",
+    "en": " No matching commands"
+  },
+  "ui.widget.input_placeholder": {
+    "zh": "输入消息...",
+    "en": "Type a message..."
+  },
+  "ui.widget.unknown_command": {
+    "zh": "未知的命令：{text}",
+    "en": "Unknown command: {text}"
+  },
+  "app.bootstrap_failed": {
+    "zh": "Bootstrap 失败: {e}",
+    "en": "Bootstrap failed: {e}"
+  },
+  "app.return_home": {
+    "zh": "返回首页",
+    "en": "Return home"
+  },
+  "app.provider_init_failed": {
+    "zh": "冷启动后 provider 初始化失败: {e}",
+    "en": "Provider initialization failed after cold start: {e}"
+  },
+  "app.no_provider": {
+    "zh": "⚠️ 尚未配置 API。\n\n请输入 `/api` 添加 API 配置（需填写 API 名称、协议、模型和 Key），然后用 `/model <名称>` 切换。\n\n也支持 Ollama 本地模型：`/api add ollama ollama llama3.2 '' http://localhost:11434/v1`",
+    "en": "⚠️ No API configured yet.\n\nType `/api` to add an API configuration (name, provider, model, key), then `/model <name>` to switch.\n\nAlso supports local Ollama: `/api add ollama ollama llama3.2 '' http://localhost:11434/v1`"
+  },
+  "app.image_msg": {
+    "zh": "{n} 张图片",
+    "en": "{n} image(s)"
+  },
+  "app.image_msg_fallback": {
+    "zh": "图片消息",
+    "en": "Image message"
+  },
+  "app.files_attached": {
+    "zh": "{n} 个文件",
+    "en": "{n} file(s)"
+  },
+  "app.exec_error": {
+    "zh": "执行异常: {e}",
+    "en": "Execution error: {e}"
+  },
+  "app.compact_topics_line": {
+    "zh": "话题: {topics}",
+    "en": "Topics: {topics}"
+  },
+  "cmd.think.prompt": {
+    "zh": "请先思考和分析这个问题，列出关键考虑因素和可能的方案，暂不调用工具。",
+    "en": "Please think through this problem first. Outline key considerations and possible approaches. Do not call tools yet."
+  }
+}

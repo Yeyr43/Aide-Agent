@@ -104,6 +104,7 @@ class MessageList(VerticalScroll):
         super().__init__(**kwargs)
         self._ai_stream: Static | None = None
         self._ai_buffer: str = ""
+        self._thinking_buffer: str = ""
         self._code_theme = code_theme
 
     # ── 用户消息（右对齐，有边框） ──────────────────────────────────
@@ -154,18 +155,41 @@ class MessageList(VerticalScroll):
     # ── AI 流式消息（无名字，无标题） ────────────────────────────────
 
     def add_ai_chunk(self, chunk: str) -> None:
+        self._ensure_stream()
+        self._ai_buffer += chunk
+        self._render_combined()
+        self._scroll_end()
+
+    # ── 深度思考（灰色字体，同一面板内） ──────────────────────────────
+
+    def add_thinking_chunk(self, chunk: str) -> None:
+        """添加深度思考 token（同一面板内灰色渲染）。"""
+        self._ensure_stream()
+        self._thinking_buffer += chunk
+        self._render_combined()
+        self._scroll_end()
+
+    def _ensure_stream(self) -> None:
         if self._ai_stream is None:
             self._ai_stream = Static("")
             self._ai_stream.add_class("ai-message")
             self.mount(self._ai_stream)
 
-        self._ai_buffer += chunk
-        # escape Rich markup 元字符（[u8;32] 会被当 tag 吞掉）
-        content = Text.from_markup(escape(self._ai_buffer))
-        self._ai_stream.update(
-            Panel(content, border_style="#555555"),
-        )
-        self._scroll_end()
+    def _render_combined(self) -> None:
+        """将思考内容（灰色）和正文（正常）渲染在同一 Panel 中。"""
+        content = Text()
+        if self._thinking_buffer:
+            # 思考内容用灰色斜体（Text.append 不加 escape，appended text 是 literal）
+            content.append(self._thinking_buffer, style="italic #888888")
+        if self._thinking_buffer and self._ai_buffer:
+            content.append("\n", style="")
+        if self._ai_buffer:
+            # 用 Text.from_markup(escape(...)) 保留原始转义逻辑，防止 [tag] 被当 Rich markup
+            content.append_text(Text.from_markup(escape(self._ai_buffer)))
+        if self._ai_stream:
+            self._ai_stream.update(
+                Panel(content, border_style="#555555"),
+            )
 
     def replace_streamed_text(self, clean_text: str) -> None:
         """XML fallback: 用干净文本替换当前正在渲染的 AI 消息。"""
@@ -180,36 +204,39 @@ class MessageList(VerticalScroll):
         full = self._ai_buffer
 
         # 转义所有 < 和 >，防止 RichMarkdown 把它们当 HTML 标签隐藏。
-        # Rust 泛型 <T>、C++ 模板 <int>、XML <tag> 等都会被破坏。
-        # 代价：autolink <https://...> 失效（AI 输出中极少出现）。
         if "<" in full or ">" in full:
             full = full.replace("<", "&lt;").replace(">", "&gt;")
             self._ai_buffer = full
 
-        if self._ai_stream is not None and full:
-            try:
-                md = RichMarkdown(full, code_theme=self._code_theme)
-                # 替换流式 Static 为可双击复制的 MessageWidget
-                self._ai_stream.remove()
-                ai_msg = MessageWidget(
-                    full,
-                    renderable=Panel(md, border_style="#555555"),
-                )
-                ai_msg.add_class("ai-message")
-                self.mount(ai_msg)
-            except Exception:
-                logger.warning("Markdown rendering failed, falling back to plain text",
-                               exc_info=True)
-                # 渲染失败时回退到纯文本显示
-                ai_msg = MessageWidget(
-                    full,
-                    renderable=Panel(full, border_style="#555555"),
-                )
-                ai_msg.add_class("ai-message")
-                self.mount(ai_msg)
+        has_content = bool(full) or bool(self._thinking_buffer)
+        if self._ai_stream is not None and has_content:
+            # 构建组合 renderable：思考（灰色）+ 正文（Markdown）
+            parts: list = []
+            if self._thinking_buffer:
+                safe_think = self._thinking_buffer.replace("<", "&lt;").replace(">", "&gt;")
+                parts.append(Text(safe_think, style="italic #888888"))
+            if self._thinking_buffer and full:
+                parts.append(Text(""))  # spacer
+            if full:
+                try:
+                    parts.append(RichMarkdown(full, code_theme=self._code_theme))
+                except Exception:
+                    parts.append(Text(full))
+
+            from rich.console import Group
+            renderable = Group(*parts) if len(parts) > 1 else parts[0]
+
+            self._ai_stream.remove()
+            ai_msg = MessageWidget(
+                full,
+                renderable=Panel(renderable, border_style="#555555"),
+            )
+            ai_msg.add_class("ai-message")
+            self.mount(ai_msg)
 
         self._ai_stream = None
         self._ai_buffer = ""
+        self._thinking_buffer = ""
         return full
 
     # ── 错误 ────────────────────────────────────────────────────────
@@ -256,12 +283,13 @@ class MessageList(VerticalScroll):
     # ── 状态 ────────────────────────────────────────────────────────
 
     def has_pending(self) -> bool:
-        return self._ai_stream is not None and bool(self._ai_buffer)
+        return self._ai_stream is not None and (bool(self._ai_buffer) or bool(self._thinking_buffer))
 
     def clear(self) -> None:
         """清空所有消息。"""
         self._ai_stream = None
         self._ai_buffer = ""
+        self._thinking_buffer = ""
         for child in list(self.children):
             child.remove()
 

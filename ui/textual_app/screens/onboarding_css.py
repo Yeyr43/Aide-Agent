@@ -137,6 +137,18 @@ OnboardingScreen {
     color: #c8c8c0;
 }
 
+#field-thinking-toggle {
+    border: none;
+    background: transparent;
+    color: #7ec8e3;
+    min-width: 16;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+#field-thinking-toggle:hover {
+    color: #c8c8c0;
+}
+
 #role-row {
     width: 100%;
     height: auto;

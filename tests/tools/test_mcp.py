@@ -3,7 +3,7 @@
 import json
 import pytest
 
-from core.tools.mcp.protocol import (
+from core.mcp.protocol import (
     JSONRPCRequest,
     JSONRPCNotification,
     JSONRPCResponse,
@@ -14,7 +14,7 @@ from core.tools.mcp.protocol import (
     make_tools_call_request,
     MCP_VERSION,
 )
-from core.tools.mcp.adapter import MCPAdapter, MCPServerConfig
+from core.mcp.adapter import MCPAdapter, MCPServerConfig
 
 
 # ── Protocol Tests ───────────────────────────────────────────────────
@@ -122,7 +122,7 @@ class TestMCPAdapter:
     def test_add_server(self):
         adapter = MCPAdapter()
         adapter.add_server(MCPServerConfig(name="test", command="echo"))
-        assert "test" in adapter._servers
+        assert "test" in adapter._registry.names
 
     def test_add_multiple_servers(self):
         adapter = MCPAdapter()

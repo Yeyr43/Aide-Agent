@@ -1,38 +1,64 @@
-"""ContextPipeline — 组装六层上下文为 LLM messages 列表。
+"""ContextPipeline — 上下文优先级队列。
 
-六层：
-  1. Soul（agent/soul.md）— 始终首条 system 消息
-  2. Tools Prompt（不可变常量）— 工具列表 + 使用策略
-  3. 技能上下文（插件 ContextProvider）— 按需注入
-  4. 动态 prompt（agent/*.md）— Jaccard 相关性过滤
-  5. 会话总览（overview.md）— 有则注入
-  6. 窗口上下文（timeline.json）— 近 N 轮全文 + 扩展 M 轮摘要索引
+不再使用固定六层拼接，而是：
+  1. 收集所有候选上下文片段（Soul、Tools、技能、记忆段落、overview、timeline）
+  2. 按与当前用户消息的相关性评分排序
+  3. 按 token 预算填充 —— 相关的浮上来，无关的沉下去
 
-分层窗口策略：近 3 轮保留全文（连续操作上下文），
-额外 15 轮注入 timeline 摘要（跨轮记忆），更早轮次由 overview.md 覆盖。
+Pinned（始终保留）：Soul、Tools Prompt
+Scored（按相关性排序）：记忆条目、技能注入、会话总览、timeline
+
+P5: 切换为优先级队列模型，消除固定层级假设。
 """
 
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.locale import build_tools_prompt, t
+from core.memory import MEMORY_FILES
+from core.memory.entries import parse_memory_file
 from core.setup import aide_dir
 
-from ._tokenizer import (
+from .tokenizer import (
     VocabularyIndex, _build_vocabulary, _tokenize, _jaccard, _bigrams,
     _tfidf_score, _decay_factor, _expand_query, flush_vocab_cache,
 )
-from ._overview import _extract_topics, _extract_decisions, _build_overview, _split_conversation
+from .overview import _build_overview, _split_conversation
+from .token_counter import estimate_tokens
 
 logger = logging.getLogger(__name__)
+
+
+# ── ContextFragment ────────────────────────────────────────────────────
+
+
+@dataclass
+class ContextFragment:
+    """一个上下文片段：来源类型、内容、token 估算、相关性评分。"""
+    type: str           # "soul" | "tools" | "skill" | "memory" | "overview" | "timeline"
+    content: str
+    tokens: int = 0     # 估算 token 数（构造时计算）
+    score: float = 0.0  # 与当前用户消息的相关性 (0-1)
+    pinned: bool = False  # 始终包含，不参与排序
+    metadata: dict = None  # 额外元数据（如 entry_id）
+
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}
+        if self.tokens == 0 and self.content:
+            self.tokens = max(estimate_tokens(self.content), 1)
 
 
 # ── ContextPipeline ──────────────────────────────────────────────────
 
 
 class ContextPipeline:
-    """组装上下文，分层窗口：近 N 轮全文 + 扩展 M 轮摘要索引。
+    """上下文优先级队列 — 按任务相关性动态排序，token 预算驱动。
 
     用法:
         pipeline = ContextPipeline(agent_root=config.aide_root / "agent")
@@ -43,41 +69,44 @@ class ContextPipeline:
         updated = await executor.run(full, ui=app)
     """
 
-    # 相关性阈值（可通过构造参数覆盖）
+    # 相关性阈值
     RELEVANCE_THRESHOLD = 0.15
+    # system 上下文占总窗口的比例
+    SYSTEM_BUDGET_RATIO = 0.40
+    # 默认上下文窗口
+    DEFAULT_CONTEXT_WINDOW = 128000
 
     def __init__(self, agent_root: Path | None = None,
                  full_text_turns: int = 3,
                  summary_turns: int = 15,
-                 relevance_threshold: float = 0.15) -> None:
-        # 内存缓存
-        self._cache: dict[str, str] = {}  # path → content
+                 relevance_threshold: float = 0.15,
+                 context_window: int = 128000,
+                 feedback_store=None) -> None:
+        self._cache: dict[str, str] = {}
         self._agent_root = agent_root or (aide_dir() / "agent")
         self.full_text_turns = full_text_turns
         self.summary_turns = summary_turns
         self.relevance_threshold = relevance_threshold
-        # 词汇索引（实例级，替代模块全局 _vocab_index）
+        self.context_window = context_window
         self._vocab_index = VocabularyIndex()
+        self._feedback_store = feedback_store   # FeedbackStore | None
+        self._last_memory_fragments: list = []  # 本轮注入的记忆片段
 
     # ── 缓存管理 ──────────────────────────────────────────────────
 
-    def _read_cached(self, path: Path) -> str:
-        """读取文件，优先使用内存缓存。"""
+    async def _read_cached(self, path: Path) -> str:
         key = str(path)
         if key not in self._cache:
             try:
-                self._cache[key] = path.read_text(encoding="utf-8")
+                self._cache[key] = await asyncio.to_thread(
+                    path.read_text, encoding="utf-8",
+                )
             except OSError:
                 self._cache[key] = ""
         return self._cache[key]
 
     def flush_cache(self) -> None:
-        """刷新内存缓存 + 词汇索引（/profile update 后调用）。
-
-        调用 flush_vocab_cache() 重置模块全局索引，
-        再通过 _build_vocabulary() 重建，确保 pipeline / recall / capture
-        三子系统共享同一份词汇表。
-        """
+        """刷新内存缓存 + 词汇索引（/reflect 后调用）。"""
         self._cache.clear()
         flush_vocab_cache()
         self._vocab_index = _build_vocabulary(self._agent_root)
@@ -94,141 +123,233 @@ class ContextPipeline:
     ) -> tuple[list[dict], list[dict]]:
         """组装上下文为 (system_messages, trimmed_conversation)。
 
-        Args:
-            session_dir: 当前 session 目录（可能为 None）
-            user_msg: 当前用户消息
-            conversation: 完整对话历史（含当前轮之前的所有消息）
-            context_providers: 插件/技能注册的 ContextProvider 列表
-            tool_descriptions: 已注册工具的描述列表（来自 ToolRegistry），
-                               用于动态生成 Tools Prompt
-
-        Returns:
-            (system_messages, trimmed_conversation)
-            - system_messages: LLM system 消息列表
-            - trimmed_conversation: 裁剪后的对话（最近 full_text_turns 轮全文）
+        三步流程：收集 → 评分 → 打包。
         """
-        system_parts: list[str] = []
         conv = conversation or []
-
-        # ── 切分对话：近 N 轮全文 vs 早期轮次 ──
         older, recent = _split_conversation(conv, window=self.full_text_turns)
 
-        # ── 第 1 层：Soul ──
-        soul = self._read_cached(self._agent_root / "soul.md")
+        # Step 1: 收集所有候选片段
+        fragments = await self._collect_fragments(
+            session_dir, older, recent, context_providers, tool_descriptions,
+        )
+
+        # 保存本轮 memory 片段供 FeedbackVerifier 使用
+        self._last_memory_fragments = [
+            f for f in fragments if f.type == "memory" and f.score > self.relevance_threshold
+        ]
+
+        # Step 2: 评分
+        fragments = await self._score_fragments(fragments, user_msg)
+
+        # Step 3: 打包（pinned 置顶，按分数填充 token 预算）
+        token_budget = int(self.context_window * self.SYSTEM_BUDGET_RATIO)
+        combined_system = self._pack_fragments(fragments, token_budget)
+
+        messages: list[dict] = []
+        if combined_system:
+            messages.append({"role": "system", "content": combined_system})
+
+        return messages, recent
+
+    # ── 收集 ────────────────────────────────────────────────────────
+
+    async def _collect_fragments(
+        self,
+        session_dir: Path | None,
+        older: list[dict],
+        recent: list[dict],
+        context_providers: list | None,
+        tool_descriptions: list[str] | None,
+    ) -> list[ContextFragment]:
+        """收集所有候选上下文片段。"""
+        fragments: list[ContextFragment] = []
+
+        # Soul（pinned）
+        soul = await self._read_cached(self._agent_root /"soul.md")
         if soul:
-            system_parts.append(soul)
+            fragments.append(ContextFragment(
+                type="soul", content=soul, pinned=True,
+            ))
 
-        # ── 第 1b 层：Tools Prompt（不可变）──
-        system_parts.append(build_tools_prompt(tool_descriptions))
+        # Tools Prompt（pinned）
+        tools_prompt = build_tools_prompt(tool_descriptions)
+        fragments.append(ContextFragment(
+            type="tools", content=tools_prompt, pinned=True,
+        ))
 
-        # ── 1.5 层：技能/插件上下文（来自已加载的 Skills/Python 插件） ──
+        # 技能上下文（pinned per provider — 技能主动声明了相关性）
         if context_providers:
             for provider in context_providers:
                 try:
-                    injection = await provider.provide(user_msg, session_dir)
+                    injection = await provider.provide("", session_dir)
                     if injection:
-                        system_parts.append(injection)
+                        fragments.append(ContextFragment(
+                            type="skill", content=injection, score=0.6,
+                        ))
                 except Exception:
                     logger.debug("Context provider failed, skipping", exc_info=True)
 
-        # ── 第 2 层：动态 prompt（词级分词 + 同义词扩展 + TF-IDF 相关性过滤） ──
-        # 惰性构建词汇索引（实例级，不再依赖模块全局）
-        self._vocab_index = _build_vocabulary(self._agent_root)
-        user_word_tokens, user_char_bigrams = _tokenize(user_msg, vocab=self._vocab_index.vocab)
-
-        # 同义词扩展：查询词 + 同义词 → 扩大匹配面（"博客" 也能匹配 "静态站点"）
-        expanded_query_terms = _expand_query(user_msg)
-        user_word_tokens_expanded = user_word_tokens | {
-            t for t in expanded_query_terms if len(t) >= 2
-        }
-
-        for fname in ["preferences.md", "workflows.md", "long_term_memory.md"]:
-            prompt_text = self._read_cached(self._agent_root / fname)
+        # 记忆文件（结构化解析，兼容 frontmatter + 旧格式）
+        for fname in MEMORY_FILES.values():
+            prompt_text = await self._read_cached(self._agent_root /fname)
             if not prompt_text:
                 continue
-
-            paragraphs = prompt_text.split("\n\n")
-            relevant_sections: list[str] = []
-
-            # 时间衰减：基于文件 mtime（30 天半衰期）
             file_path = self._agent_root / fname
             decay = _decay_factor(file_path)
 
-            for para in paragraphs:
-                para = para.strip()
-                if not para or para.startswith("<!--"):
+            entries = parse_memory_file(prompt_text, filename=fname)
+            for entry in entries:
+                if not entry.content:
                     continue
+                score = _decay_factor(file_path) * 0.5  # 基础分 × 衰减
+                # frontmatter 中的 weight 叠加
+                if entry.has_meta and entry.weight != 1.0:
+                    score *= entry.weight
+                meta = {}
+                if entry.id:
+                    meta["entry_id"] = entry.id
+                fragments.append(ContextFragment(
+                    type="memory", content=entry.content, score=score,
+                    metadata=meta,
+                ))
 
-                para_word_tokens, _ = _tokenize(para, vocab=self._vocab_index.vocab)
-
-                # 优先用 TF-IDF（含同义词扩展）；fallback 到 Jaccard
-                if self._vocab_index.built and self._vocab_index.N > 1:
-                    score = _tfidf_score(
-                        user_word_tokens_expanded, para_word_tokens,
-                        df=self._vocab_index.df, N=self._vocab_index.N,
-                    )
-                else:
-                    para_bigrams = _bigrams(para)
-                    score = _jaccard(user_char_bigrams, para_bigrams)
-
-                # 应用时间衰减
-                score *= decay
-
-                if score >= self.relevance_threshold:
-                    relevant_sections.append(para)
-
-            if relevant_sections:
-                prompt_header = (
-                    f"## {fname.replace('.md', '').replace('_', ' ').title()}"
-                )
-                section_text = "\n\n".join(relevant_sections)
-                system_parts.append(f"{prompt_header}\n{section_text}")
-
-        # ── 第 3 层：会话总览（overview.md） ──
+        # 会话总览（overview.md）
         if session_dir is not None:
             overview_path = session_dir / "overview.md"
             if overview_path.exists():
                 try:
-                    overview = overview_path.read_text(encoding="utf-8")
-                    system_parts.append(t("ctx.session_overview") + "\n" + overview)
+                    overview = await asyncio.to_thread(overview_path.read_text, encoding="utf-8")
+                    fragments.append(ContextFragment(
+                        type="overview",
+                        content=t("ctx.session_overview") + "\n" + overview,
+                        score=0.4,  # 中等相关性
+                    ))
                 except OSError:
                     logger.debug("Failed to read overview.md, skipping")
 
-        # ── 第 4 层：早期轮次总览 + 分层窗口摘要 ──
-        if session_dir is not None and conv:
-            timeline_path = session_dir / "timeline.json"
-            timeline_entries: list[dict] = []
-            if timeline_path.exists():
-                try:
-                    timeline_entries = json.loads(
-                        timeline_path.read_text(encoding="utf-8")
-                    )
-                except (OSError, json.JSONDecodeError):
-                    logger.debug("Failed to read timeline.json, skipping")
-
-            # 早期轮次 → 总览（全文窗口之前的轮次）
+            # 早期轮次总览
             if older:
-                overview = _build_overview(session_dir, older)
-                if overview:
-                    system_parts.append(overview)
+                overview_text = _build_overview(session_dir, older)
+                if overview_text:
+                    fragments.append(ContextFragment(
+                        type="timeline", content=overview_text, score=0.25,
+                    ))
 
-            # 分层摘要：全文窗口 + 额外摘要窗口 → 逐条索引
-            # 近 full_text_turns 轮已有全文，这里提供更大跨度的快速定位线索
-            if timeline_entries and recent:
-                total_summary = self.full_text_turns + self.summary_turns
-                recent_entries = timeline_entries[-total_summary:]
-                summaries = [
-                    f"- [{e.get('turn', '?')}] {e.get('summary', '')}"
-                    for e in recent_entries
-                ]
-                if summaries:
-                    recent_text = t("ctx.recent_chat") + "\n" + "\n".join(summaries)
-                    system_parts.append(recent_text)
+            # Timeline 摘要
+            if recent:
+                timeline_path = session_dir / "timeline.json"
+                if timeline_path.exists():
+                    try:
+                        from core.storage import read_jsonl
+                        entries = read_jsonl(timeline_path)
+                        total = self.full_text_turns + self.summary_turns
+                        recent_entries = entries[-total:]
+                        summaries = [
+                            f"- [{e.get('turn', '?')}] {e.get('summary', '')}"
+                            for e in recent_entries
+                        ]
+                        if summaries:
+                            timeline_text = t("ctx.recent_chat") + "\n" + "\n".join(summaries)
+                            fragments.append(ContextFragment(
+                                type="timeline", content=timeline_text, score=0.2,
+                            ))
+                    except (OSError, json.JSONDecodeError):
+                        logger.debug("Failed to read timeline.json, skipping")
 
-        # ── 组装最终 messages ──
-        messages: list[dict] = []
-        if system_parts:
-            combined_system = "\n\n".join(system_parts)
-            messages.append({"role": "system", "content": combined_system})
+        return fragments
 
-        return messages, recent
+    def _compute_memory_score(self, content: str, fname: str, decay: float) -> float:
+        """计算单条记忆的初始评分（不含 query 相关性）——仅含时间衰减。"""
+        return decay * 0.5  # 基础分 × 衰减
+
+    # ── 评分 ────────────────────────────────────────────────────────
+
+    async def _score_fragments(self, fragments: list[ContextFragment],
+                         user_msg: str) -> list[ContextFragment]:
+        """用 TF-IDF/Jaccard 对非 pinned 片段评分。
+
+        Pinned 片段保持 score=1.0，不参与评分。
+        记忆片段在已有时间衰减的基础上叠加内容相关性。
+        """
+        if not user_msg.strip():
+            return fragments
+
+        # 构建词汇索引（I/O 在 thread pool 中执行）
+        self._vocab_index = await asyncio.to_thread(
+            _build_vocabulary, self._agent_root,
+        )
+        user_word_tokens, user_char_bigrams = _tokenize(
+            user_msg, vocab=self._vocab_index.vocab,
+        )
+        expanded = _expand_query(user_msg)
+        user_tokens_expanded = user_word_tokens | {
+            t for t in expanded if len(t) >= 2
+        }
+
+        for frag in fragments:
+            if frag.pinned:
+                frag.score = 1.0
+                continue
+
+            para_word_tokens, _ = _tokenize(
+                frag.content, vocab=self._vocab_index.vocab,
+            )
+
+            # TF-IDF or Jaccard fallback
+            if self._vocab_index.built and self._vocab_index.N > 1:
+                content_score = _tfidf_score(
+                    user_tokens_expanded, para_word_tokens,
+                    df=self._vocab_index.df, N=self._vocab_index.N,
+                )
+            else:
+                para_bigrams = _bigrams(frag.content)
+                content_score = _jaccard(user_char_bigrams, para_bigrams)
+
+            # 叠加内容相关性到已有基础分（时间衰减）
+            if frag.type == "memory":
+                frag.score *= (1.0 + content_score)
+                # 反馈闭环：偏离过的约束提权（优先用 stable id）
+                if self._feedback_store:
+                    entry_id = (frag.metadata or {}).get("entry_id", "")
+                    fw = self._feedback_store.get_weight(frag.content, entry_id=entry_id)
+                    if fw != 1.0:
+                        frag.score *= fw
+            else:
+                frag.score += content_score * 0.5
+
+        return fragments
+
+    # ── 打包 ────────────────────────────────────────────────────────
+
+    def _pack_fragments(self, fragments: list[ContextFragment],
+                        token_budget: int) -> str:
+        """按分数降序排列，pinned 置顶，填满 token 预算。"""
+        # 分离 pinned 和 scored
+        pinned = [f for f in fragments if f.pinned]
+        scored = sorted(
+            [f for f in fragments if not f.pinned],
+            key=lambda f: f.score, reverse=True,
+        )
+
+        # pinned 优先
+        used = 0
+        parts: list[str] = []
+
+        for frag in pinned:
+            parts.append(frag.content)
+            used += frag.tokens
+
+        # 按分数填充 scored，不超过预算
+        for frag in scored:
+            if frag.score < self.relevance_threshold:
+                continue  # 低于阈值的不注入
+            if used + frag.tokens > token_budget:
+                continue  # 超出预算
+            parts.append(frag.content)
+            used += frag.tokens
+
+        return "\n\n".join(parts)
+
+    def get_last_memory_fragments(self) -> list:
+        """返回本轮上下文注入的记忆片段（供 FeedbackVerifier 使用）。"""
+        return self._last_memory_fragments

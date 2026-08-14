@@ -30,7 +30,6 @@ class TestChatResult:
         result = ChatResult()
         assert result.conversation == []
         assert result.assistant_text == ""
-        assert result.captured_entries == []
         assert isinstance(result.usage, TokenUsage)
 
     def test_with_conversation(self):
@@ -42,24 +41,16 @@ class TestChatResult:
         result = ChatResult(assistant_text="Hello!")
         assert result.assistant_text == "Hello!"
 
-    def test_with_captured_entries(self):
-        entries = [{"content": "user prefers short replies", "status": "pending"}]
-        result = ChatResult(captured_entries=entries)
-        assert len(result.captured_entries) == 1
-        assert result.captured_entries[0]["status"] == "pending"
-
     def test_full_result(self):
         conv = [{"role": "user", "content": "hi"}]
         usage = TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
         result = ChatResult(
             conversation=conv,
             assistant_text="Hi!",
-            captured_entries=[{"content": "x"}],
             usage=usage,
         )
         assert result.conversation == conv
         assert result.assistant_text == "Hi!"
-        assert len(result.captured_entries) == 1
         assert result.usage.total_tokens == 15
 
 

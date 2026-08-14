@@ -81,6 +81,12 @@ def render_model_page(screen, title: Static) -> None:
     screen._mount_before_nav(
         Button(label, id="field-vision-toggle"),
     )
+    # 深度思考 toggle
+    thinking_val = screen._model_cfg.get("thinking", False)
+    think_label = t("ui.onboard.thinking_on") if thinking_val else t("ui.onboard.thinking_off")
+    screen._mount_before_nav(
+        Button(think_label, id="field-thinking-toggle"),
+    )
 
 
 def render_role_page(screen, title: Static) -> None:

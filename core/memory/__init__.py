@@ -1,13 +1,13 @@
-"""Memory — 记忆系统: CaptureEngine + EntryManager + PromptUpdater + TopicFrequencyTracker。"""
+"""Memory — 记忆系统: ReflectEngine 统一反思引擎 + 反馈闭环。"""
 
-from .capture import CaptureEngine
-from .entries import EntryManager
-from .updater import PromptUpdater
-from .tracker import TopicFrequencyTracker
+from .reflector import ReflectEngine, MEMORY_FILES
+from .version import rollback_prompt
+from .feedback import FeedbackStore, FeedbackVerifier
 
 __all__ = [
-    "CaptureEngine",
-    "EntryManager",
-    "PromptUpdater",
-    "TopicFrequencyTracker",
+    "ReflectEngine",
+    "FeedbackStore",
+    "FeedbackVerifier",
+    "rollback_prompt",
+    "MEMORY_FILES",
 ]

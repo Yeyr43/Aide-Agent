@@ -176,11 +176,12 @@ def register(api):
         info = asyncio.run(host.load("cmd-plugin"))
         assert info is not None
         assert info.id == "cmd-plugin"
-        cmd = host._command_registry.get("//demo-cmd")
+        # P7: namespace-prefixed command name
+        cmd = host._command_registry.get("//cmd-plugin:demo-cmd")
         assert cmd is not None
         assert cmd.source == "plugin:cmd-plugin"
 
         # unload removes the command
         result = asyncio.run(host.unload("cmd-plugin"))
         assert result is True
-        assert host._command_registry.get("//demo-cmd") is None
+        assert host._command_registry.get("//cmd-plugin:demo-cmd") is None

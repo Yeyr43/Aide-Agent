@@ -1,117 +1,173 @@
-"""EntryManager — 条目目录 CRUD。
+"""MemoryEntry — 结构化记忆条目 + 解析器。
 
-管理 agent/data/ 下三个条目 JSON 文件：
-  - preferences.json
-  - workflows.json
-  - long_term_memory.json
+支持带 YAML frontmatter 的记忆条目格式：
 
-每条记录结构：
-  {"content": "…", "source": {"session_id": "…", "turn": N},
-   "status": "pending|integrated|replaced|orphaned",
-   "created_at": "ISO", "updated_at": "ISO"}
+    ---
+    id: pref_001
+    created: 2026-07-15
+    source: 20260715_120000/turn_3
+    ---
+    - 用户喜欢简洁回复
+
+兼容无 frontmatter 的旧格式（bare "- " 条目）。
 """
 
-import json
-import logging
-from datetime import datetime, timezone
-from pathlib import Path
+from __future__ import annotations
 
-from core.storage import JsonStore
-from core.locale import t
-from core.setup import aide_dir
+import re
+from dataclasses import dataclass, field
 
-logger = logging.getLogger(__name__)
+# ── frontmatter 解析 ──────────────────────────────────────────────────
 
-DATA_DIR = aide_dir() / "agent" / "data"
-
-ENTRY_FILES = {
-    "preferences": "preferences.json",
-    "workflows": "workflows.json",
-    "long_term_memory": "long_term_memory.json",
-}
+# 匹配 "---\n key: value\n ... \n---" 块
+_FRONTMATTER_RE = re.compile(
+    r'^---\s*\n(.*?)\n---\s*\n',
+    re.DOTALL,
+)
 
 
-class EntryManager:
-    """条目目录管理器。
+def _parse_simple_frontmatter(text: str) -> tuple[dict, str]:
+    """解析简单的 YAML-like frontmatter（无依赖，仅支持 key: value 格式）。
 
-    用法:
-        entries = EntryManager(store)
-        all_prefs = await entries.load("preferences")
-        await entries.add("preferences", {"content": "…", "source": {…}})
+    Args:
+        text: 以 ---...--- 开头的文本块
+
+    Returns:
+        (meta_dict, remaining_text)
     """
+    meta: dict[str, str] = {}
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
+        return meta, text
 
-    def __init__(self, store: JsonStore) -> None:
-        self._store = store
+    yaml_block = m.group(1)
+    remaining = text[m.end():]
 
-    def _path(self, entry_type: str) -> Path:
-        fname = ENTRY_FILES.get(entry_type)
-        if fname is None:
-            raise ValueError(t("mem.unknown_entry_type", type=entry_type, valid=list(ENTRY_FILES)))
-        return DATA_DIR / fname
+    for line in yaml_block.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" in line:
+            key, _, val = line.partition(":")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key:
+                meta[key] = val
 
-    async def load(self, entry_type: str) -> list[dict]:
-        """加载全部条目。"""
-        path = self._path(entry_type)
-        data = await self._store.read(path)
-        return data if data is not None else []
+    return meta, remaining
 
-    async def _save(self, entry_type: str, entries: list[dict]) -> None:
-        path = self._path(entry_type)
-        await self._store.write(path, entries)
 
-    async def add(self, entry_type: str, content: str,
-                  source: dict | None = None) -> dict:
-        """添加新条目（status=pending）。"""
-        entries = await self.load(entry_type)
-        now = datetime.now(timezone.utc).isoformat()
+# ── MemoryEntry ────────────────────────────────────────────────────────
 
-        entry = {
-            "content": content,
-            "source": source or {},
-            "status": "pending",
-            "created_at": now,
-            "updated_at": now,
-        }
-        entries.append(entry)
-        await self._save(entry_type, entries)
 
-        logger.debug(f"新增条目 [{entry_type}]: {content[:60]}…")
-        return entry
+@dataclass
+class MemoryEntry:
+    """一条结构化的记忆条目。
 
-    async def update(self, entry_type: str, index: int,
-                     content: str | None = None,
-                     status: str | None = None) -> dict | None:
-        """更新指定索引的条目。
+    Attributes:
+        id: 稳定标识符（如 "pref_001"），旧条目为空字符串
+        content: 条目内容（去掉了 "- " 前缀和 frontmatter）
+        file: 所属记忆文件（"preferences.md" / "workflows.md" / "long_term_memory.md"）
+        created: 创建时间
+        source: 来源会话/轮次
+        weight: 权重（feedback 调整后）
+        deviations: 偏离次数
+    """
+    id: str = ""
+    content: str = ""
+    file: str = ""
+    created: str = ""
+    source: str = ""
+    weight: float = 1.0
+    deviations: int = 0
 
-        Args:
-            index: 条目在列表中的索引
-            content: 新内容（None 表示不变）
-            status: 新状态（None 表示不变）
+    @property
+    def has_meta(self) -> bool:
+        """是否有结构化元数据（非旧格式）。"""
+        return bool(self.id)
 
-        Returns:
-            更新后的条目，索引无效返回 None
-        """
-        entries = await self.load(entry_type)
-        if index < 0 or index >= len(entries):
-            return None
 
-        now = datetime.now(timezone.utc).isoformat()
-        entry = entries[index]
-        if content is not None:
-            entry["content"] = content
-        if status is not None:
-            entry["status"] = status
-        entry["updated_at"] = now
+# ── 解析器 ────────────────────────────────────────────────────────────
 
-        await self._save(entry_type, entries)
-        return entry
 
-    async def get_pending(self, entry_type: str) -> list[dict]:
-        """获取所有 status=pending 的条目。"""
-        entries = await self.load(entry_type)
-        return [e for e in entries if e.get("status") == "pending"]
+def parse_memory_file(text: str, filename: str = "") -> list[MemoryEntry]:
+    """解析记忆文件（.md），提取所有结构化条目。
 
-    async def mark_status(self, entry_type: str, index: int, status: str) -> bool:
-        """更新单条条目的状态。"""
-        result = await self.update(entry_type, index, status=status)
-        return result is not None
+    支持两种格式：
+      - 新格式：---\\n id: ... \\n---\\n- 内容
+      - 旧格式：bare "- 内容"（生成临时 id）
+
+    Args:
+        text: 记忆文件的完整 Markdown 内容
+        filename: 文件名（用于填充 entry.file）
+
+    Returns:
+        MemoryEntry 列表
+    """
+    entries: list[MemoryEntry] = []
+    lines = text.split("\n")
+    i = 0
+
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # 跳过标题行和空行
+        if not line or line.startswith("#") or line.startswith("<!--"):
+            i += 1
+            continue
+
+        # 检测 frontmatter 块开始
+        if line == "---":
+            # 收集 frontmatter + content
+            block = "\n".join(lines[i:])
+            meta, rest = _parse_simple_frontmatter(block)
+            # 找 "- " 开头的内容行
+            rest_lines = rest.split("\n")
+            content_parts = []
+            for rl in rest_lines:
+                rl_stripped = rl.strip()
+                if rl_stripped.startswith("- "):
+                    content_parts.append(rl_stripped[2:].strip())
+                    break  # 只取第一条
+            entries.append(MemoryEntry(
+                id=meta.get("id", ""),
+                content=content_parts[0] if content_parts else "",
+                file=filename,
+                created=meta.get("created", ""),
+                source=meta.get("source", ""),
+                weight=float(meta.get("weight", 1.0)),
+                deviations=int(meta.get("deviations", 0)),
+            ))
+            # 跳过已处理的 frontmatter 块
+            i += block.count("\n") + 1
+            continue
+
+        # "- " 前缀条目
+        if line.startswith("- "):
+            content = line[2:].strip()
+            if content:
+                entries.append(MemoryEntry(content=content, file=filename))
+        else:
+            # 旧格式兼容：bare content line（无 "- " 前缀）
+            entries.append(MemoryEntry(content=line, file=filename))
+        i += 1
+
+    return entries
+
+
+def format_memory_entry(entry: MemoryEntry) -> str:
+    """将 MemoryEntry 格式化为带 frontmatter 的 Markdown 字符串。"""
+    lines = ["---"]
+    if entry.id:
+        lines.append(f"id: {entry.id}")
+    if entry.created:
+        lines.append(f"created: {entry.created}")
+    if entry.source:
+        lines.append(f"source: {entry.source}")
+    if entry.weight != 1.0:
+        lines.append(f"weight: {entry.weight}")
+    if entry.deviations > 0:
+        lines.append(f"deviations: {entry.deviations}")
+    lines.append("---")
+    lines.append(f"- {entry.content}")
+    return "\n".join(lines)

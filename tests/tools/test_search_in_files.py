@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from core.tools.builtin.search_in_files import execute, schema, _search_file, _iter_files
+from core.tools.search_in_files import execute, schema, _search_file, _iter_files
 
 
 class TestSearchInFiles:

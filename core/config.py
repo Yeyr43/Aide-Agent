@@ -23,13 +23,14 @@ class LLMConfig:
     temperature: float = 0.7
     max_tokens: int = 4096
     supports_vision: bool | None = None  # None=使用 Provider 默认, True/False=用户显式覆盖
+    thinking: bool = False            # True=启用深度思考（Anthropic extended thinking / OpenAI reasoning_effort）
 
 
 @dataclass
 class AppConfig:
     locale: str = "zh"            # UI 语言：zh / en
     active_api: str = ""          # 当前 API 配置名
-    max_turns: int = 5
+    max_turns: int = 10
     full_text_turns: int = 3     # 近 N 轮保留全文（连续操作上下文）
     summary_turns: int = 15      # 额外 M 轮注入摘要索引（跨轮记忆）
     relevance_threshold: float = 0.15
@@ -44,6 +45,7 @@ DEFAULT_LLM = {
     "temperature": 0.7,
     "max_tokens": 4096,
     "supports_vision": None,  # None = 使用 Provider 默认，True/False = 用户覆盖
+    "thinking": False,        # True = 启用深度思考
 }
 
 DEFAULT_APP = {
@@ -109,6 +111,9 @@ class Config:
                 # supports_vision 允许 False（显式关闭），只用 in 检查
                 if "supports_vision" in api_cfg:
                     llm_data["supports_vision"] = api_cfg["supports_vision"]
+                # thinking 允许 False（显式关闭），只用 in 检查
+                if "thinking" in api_cfg:
+                    llm_data["thinking"] = api_cfg["thinking"]
 
         # 3. 环境变量 (AIDE_*)
         env_map = {
@@ -248,6 +253,7 @@ class Config:
                     "api_key": cfg.get("api_key", ""),
                     "base_url": cfg.get("base_url", ""),
                     "supports_vision": cfg.get("supports_vision", False),
+                    "thinking": cfg.get("thinking", False),
                 }
                 Config.save_api_config(name, ordered)
                 migrated += 1
@@ -264,6 +270,7 @@ class Config:
                     "api_key": llm.get("api_key", ""),
                     "base_url": llm.get("base_url", ""),
                     "supports_vision": llm.get("supports_vision", False),
+                    "thinking": llm.get("thinking", False),
                 }
                 Config.save_api_config(active, ordered)
                 migrated += 1

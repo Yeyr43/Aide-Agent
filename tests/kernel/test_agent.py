@@ -5,36 +5,41 @@ from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock
 
 from core.kernel.agent import AgentKernel, ChatResult
-from core.kernel.context import KernelContext
+from core.kernel.context import KernelContext, MemoryContext, ToolingContext, SessionContext
 from core.config import Config
 
 
 def _make_context(tmp_path):
     """构建 KernelContext，所有字段用 MagicMock 填充。"""
     config = Config(aide_root=tmp_path / ".aide")
+    # ingester: MagicMock (set_session is sync, ingest is async)
+    ingester_mock = MagicMock()
+    ingester_mock.ingest = AsyncMock()
+
     return KernelContext(
         config=config,
         provider=MagicMock(),
-        tool_registry=MagicMock(),
-        command_registry=MagicMock(),
-        context_pipeline=AsyncMock(),
-        ingester=AsyncMock(),
-        compactor=MagicMock(),
-        session_manager=MagicMock(),
-        capture_engine=AsyncMock(),
-        entry_manager=MagicMock(),
-        prompt_updater=AsyncMock(),
-        topic_tracker=MagicMock(),
-        plugin_host=MagicMock(),
-        slot_registry=MagicMock(),
+        tooling=ToolingContext(
+            tool_registry=MagicMock(),
+            command_registry=MagicMock(),
+            plugin_host=MagicMock(),
+            slot_registry=MagicMock(),
+        ),
+        memory=MemoryContext(
+            reflector=MagicMock(),
+        ),
+        session=SessionContext(
+            context_pipeline=AsyncMock(),
+            ingester=ingester_mock,
+            session_manager=MagicMock(),
+        ),
     )
 
 
 @pytest.fixture
 def kernel(tmp_path):
     ctx = _make_context(tmp_path)
-    ctx.context_pipeline.assemble.return_value = ([], [])
-    ctx.capture_engine.capture.return_value = []
+    ctx.session.context_pipeline.assemble.return_value = ([], [])
     return AgentKernel(ctx)
 
 
@@ -84,13 +89,10 @@ class TestAgentKernelChat:
     @pytest.fixture
     def kernel_with_fc(self, tmp_path):
         ctx = _make_context(tmp_path)
-        ctx.context_pipeline.assemble.return_value = (
+        ctx.session.context_pipeline.assemble.return_value = (
             [{"role": "system", "content": "You are helpful."}],
             [{"role": "user", "content": "hello"}],
         )
-        ctx.capture_engine.capture.return_value = [
-            {"content": "用户偏好简洁", "status": "pending"},
-        ]
         kernel = AgentKernel(ctx)
 
         # Mock the FC loop
@@ -118,8 +120,6 @@ class TestAgentKernelChat:
 
         assert isinstance(result, ChatResult)
         assert result.assistant_text == "Hi there!"
-        assert len(result.captured_entries) == 1
-        assert result.captured_entries[0]["content"] == "用户偏好简洁"
 
     @pytest.mark.asyncio
     async def test_chat_calls_pipeline_assemble(self, kernel_with_fc, tmp_path):
@@ -135,7 +135,6 @@ class TestAgentKernelChat:
             ui=ui,
         )
 
-        # P4 Batch 2: assemble now accepts context_providers from PluginHost
         call_args = kernel_with_fc._pipeline.assemble.call_args
         assert call_args is not None
         assert call_args[0][0] == session_dir
@@ -164,12 +163,13 @@ class TestAgentKernelChat:
         assert call_kwargs["assistant_msg"] == "Hi there!"
 
     @pytest.mark.asyncio
-    async def test_chat_calls_capture_engine(self, kernel_with_fc, tmp_path):
+    async def test_chat_returns_without_capture(self, kernel_with_fc, tmp_path):
+        """P5 重构后 chat() 不再调用 capture engine。"""
         session_dir = tmp_path / "session"
         session_dir.mkdir()
 
         ui = MagicMock()
-        await kernel_with_fc.chat(
+        result = await kernel_with_fc.chat(
             user_msg="hello",
             session_dir=session_dir,
             turn=1,
@@ -177,10 +177,6 @@ class TestAgentKernelChat:
             ui=ui,
         )
 
-        # P4: capture 在 LLM 之后运行 → 下轮注入上下文让 AI 自然回应
-        kernel_with_fc._capture.capture.assert_called_once_with(
-            user_msg="hello",
-            assistant_msg="Hi there!",
-            session_id=session_dir.name,
-            turn=1,
-        )
+        # 验证结果不含 captured_entries
+        assert not hasattr(result, 'captured_entries')
+        assert result.assistant_text == "Hi there!"

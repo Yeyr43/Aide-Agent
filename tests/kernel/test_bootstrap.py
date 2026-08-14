@@ -45,11 +45,7 @@ class TestAppBootstrap:
              patch("core.kernel.bootstrap.CommandRegistry") as mock_cr, \
              patch("core.kernel.bootstrap.ContextPipeline") as mock_pipe, \
              patch("core.kernel.bootstrap.ContextIngester") as mock_ingest, \
-             patch("core.kernel.bootstrap.ContextCompactor") as mock_comp, \
-             patch("core.kernel.bootstrap.CaptureEngine") as mock_ce, \
-             patch("core.kernel.bootstrap.EntryManager") as mock_em, \
-             patch("core.kernel.bootstrap.PromptUpdater") as mock_pu, \
-             patch("core.kernel.bootstrap.TopicFrequencyTracker") as mock_tt, \
+             patch("core.kernel.bootstrap.ReflectEngine") as mock_re, \
              patch("core.kernel.bootstrap.SlotRegistry") as mock_sr, \
              patch("core.kernel.bootstrap.PluginHost") as mock_ph, \
              patch("core.kernel.bootstrap.SessionManager") as mock_sm, \
@@ -65,7 +61,7 @@ class TestAppBootstrap:
             mock_prov.return_value = MagicMock()
             # MCP mock
             mock_mcp.return_value = MagicMock()
-            mock_mcp.return_value.load_builtin_servers = AsyncMock(return_value=0)
+            mock_mcp.return_value.load_builtin_servers = AsyncMock(return_value=(0, []))
             mock_mcp.return_value.discover_all_tools = AsyncMock(return_value=[])
             mock_mcp.return_value.start_watcher = MagicMock()
             mock_mcp.return_value.connected_servers = []
@@ -80,11 +76,7 @@ class TestAppBootstrap:
             mock_ak.return_value = MagicMock()
             # Other mocks
             mock_ingest.return_value = MagicMock()
-            mock_comp.return_value = MagicMock()
-            mock_em.return_value = MagicMock()
-            mock_tt.return_value = MagicMock()
-            mock_ce.return_value = MagicMock()
-            mock_pu.return_value = MagicMock()
+            mock_re.return_value = MagicMock()
             mock_sr.return_value = MagicMock()
             mock_sm.return_value = MagicMock()
             mock_ph.return_value = MagicMock()
@@ -110,11 +102,7 @@ class TestAppBootstrap:
              patch("core.kernel.bootstrap.CommandRegistry"), \
              patch("core.kernel.bootstrap.ContextPipeline"), \
              patch("core.kernel.bootstrap.ContextIngester"), \
-             patch("core.kernel.bootstrap.ContextCompactor"), \
-             patch("core.kernel.bootstrap.CaptureEngine"), \
-             patch("core.kernel.bootstrap.EntryManager"), \
-             patch("core.kernel.bootstrap.PromptUpdater"), \
-             patch("core.kernel.bootstrap.TopicFrequencyTracker"), \
+             patch("core.kernel.bootstrap.ReflectEngine"), \
              patch("core.kernel.bootstrap.SlotRegistry"), \
              patch("core.kernel.bootstrap.PluginHost"), \
              patch("core.kernel.bootstrap.SessionManager"), \
@@ -127,7 +115,7 @@ class TestAppBootstrap:
             )
             mock_prov.side_effect = ValueError("API key missing")
             mock_mcp.return_value = MagicMock()
-            mock_mcp.return_value.load_builtin_servers = AsyncMock(return_value=0)
+            mock_mcp.return_value.load_builtin_servers = AsyncMock(return_value=(0, []))
             mock_mcp.return_value.discover_all_tools = AsyncMock(return_value=[])
             mock_mcp.return_value.start_watcher = MagicMock()
             mock_mcp.return_value.connected_servers = []

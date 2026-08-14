@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
 
 from textual import events, on
 from textual.app import ComposeResult
@@ -31,7 +30,6 @@ from .onboarding_pages import (
 logger = logging.getLogger(__name__)
 
 AGENT_ROOT = aide_dir() / "agent"
-DATA_DIR = AGENT_ROOT / "data"
 CONFIG_DIR = aide_dir() / "config"
 
 # ── 页码常量 ────────────────────────────────────────────────────────
@@ -67,6 +65,7 @@ _FIELD_IDS = [
     "field-name", "field-personality",
     "field-provider", "field-model", "field-apikey",
     "field-baseurl", "field-context-window", "field-vision-toggle",
+    "field-thinking-toggle",
     "field-workstyle", "field-longterm",
     "field-hint-name", "field-hint-personality",
     "field-hint-provider", "field-hint-model",
@@ -251,6 +250,15 @@ class OnboardingScreen(Screen):
             except Exception:
                 logger.debug("Failed to query vision toggle button, skipping")
 
+            # 深度思考 toggle
+            try:
+                think_btn = self.query_one("#field-thinking-toggle", Button)
+                self._model_cfg["thinking"] = (
+                    think_btn.label == t("ui.onboard.thinking_on")
+                )
+            except Exception:
+                logger.debug("Failed to query thinking toggle button, skipping")
+
             # 上下文窗口
             val = self._safe_value("#field-context-window", Input)
             if val is not None:
@@ -310,6 +318,17 @@ class OnboardingScreen(Screen):
         except Exception:
             logger.debug("Failed to query vision toggle button in _on_vision_toggle, skipping")
 
+    @on(Button.Pressed, "#field-thinking-toggle")
+    def _on_thinking_toggle(self) -> None:
+        current = self._model_cfg.get("thinking", False)
+        new_val = not current
+        self._model_cfg["thinking"] = new_val
+        try:
+            btn = self.query_one("#field-thinking-toggle", Button)
+            btn.label = t("ui.onboard.thinking_on") if new_val else t("ui.onboard.thinking_off")
+        except Exception:
+            logger.debug("Failed to query thinking toggle button in _on_thinking_toggle, skipping")
+
     # ── 键盘处理 ──────────────────────────────────────────────────────
 
     def on_key(self, event: events.Key) -> None:
@@ -348,17 +367,20 @@ class OnboardingScreen(Screen):
         # ── soul.md（从模板 + 用户输入生成）──
         soul_content = build_soul(name)
 
+        from core.storage import atomic_write_text
         AGENT_ROOT.mkdir(parents=True, exist_ok=True)
-        (AGENT_ROOT / "soul.md").write_text(soul_content, encoding="utf-8")
+        atomic_write_text(AGENT_ROOT / "soul.md", soul_content)
 
         if preferences:
-            (AGENT_ROOT / "preferences.md").write_text(
-                f"# {t('mem.label_preferences')}\n\n{preferences}\n", encoding="utf-8"
+            atomic_write_text(
+                AGENT_ROOT / "preferences.md",
+                f"# {t('mem.label_preferences')}\n\n{preferences}\n",
             )
 
         if long_term:
-            (AGENT_ROOT / "long_term_memory.md").write_text(
-                f"# {t('mem.label_long_term_memory')}\n\n{long_term}\n", encoding="utf-8"
+            atomic_write_text(
+                AGENT_ROOT / "long_term_memory.md",
+                f"# {t('mem.label_long_term_memory')}\n\n{long_term}\n",
             )
 
         # ── settings.json ──
@@ -367,6 +389,7 @@ class OnboardingScreen(Screen):
         api_key = self._model_cfg.get("api_key", "")
         base_url = self._model_cfg.get("base_url", "")
         supports_vision = self._model_cfg.get("supports_vision", False)
+        thinking = self._model_cfg.get("thinking", False)
 
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         settings: dict = {}
@@ -389,6 +412,7 @@ class OnboardingScreen(Screen):
                 "api_key": str(api_key),
                 "base_url": str(base_url),
                 "supports_vision": bool(supports_vision),
+                "thinking": bool(thinking),
             }
 
             # API 名称 → 保存为独立配置文件 config/api/<name>.json
@@ -401,6 +425,7 @@ class OnboardingScreen(Screen):
                     "api_key": str(api_key),
                     "base_url": str(base_url),
                     "supports_vision": bool(supports_vision),
+                    "thinking": bool(thinking),
                 }
                 Config.save_api_config(apiname, api_cfg)
                 # 必须在 settings dict 也写上 active_api，否则后面的
@@ -417,36 +442,7 @@ class OnboardingScreen(Screen):
                 settings["app"] = {}
             settings["app"]["context_window"] = ctx_val
 
-        settings_path.write_text(
-            json.dumps(settings, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
-        # ── 条目目录初始化 ──
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        now = datetime.now(timezone.utc).isoformat()
-        source = {"session_id": "onboarding", "turn": 0}
-
-        if preferences:
-            (DATA_DIR / "preferences.json").write_text(
-                json.dumps([{
-                    "content": preferences, "source": source,
-                    "status": "integrated",
-                    "created_at": now, "updated_at": now,
-                }], ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-
-        if long_term:
-            (DATA_DIR / "long_term_memory.json").write_text(
-                json.dumps([{
-                    "content": long_term, "source": source,
-                    "status": "integrated",
-                    "created_at": now, "updated_at": now,
-                }], ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-
-        (DATA_DIR / "workflows.json").write_text("[]", encoding="utf-8")
+        from core.storage import atomic_write_json
+        atomic_write_json(settings_path, settings)
 
         self.dismiss()

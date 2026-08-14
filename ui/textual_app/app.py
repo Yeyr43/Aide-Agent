@@ -126,7 +126,7 @@ class AideApp(App):
         需要重新加载，否则 provider 永远是空壳。
         """
         from core.config import Config
-        from core.llm_gateway import create_provider
+        from core.kernel import AppBootstrap
         from .widgets.status_bar import StatusBar
 
         config = Config.load()
@@ -134,19 +134,11 @@ class AideApp(App):
         set_locale(config.app.locale)
 
         try:
-            self.provider = create_provider(config.llm)
-            self._model_name = config.llm.model or config.llm.provider
+            self.provider, self._model_name = AppBootstrap.reload_provider(
+                config, kernel=self._kernel, pipeline=self._pipeline,
+            )
         except Exception as e:
             logger.warning(t("app.provider_init_failed", e=e))
-
-        # 更新 pipeline 参数（用户可能在设置中调整了 full_text_turns 等）
-        self._pipeline.full_text_turns = config.app.full_text_turns
-        self._pipeline.summary_turns = config.app.summary_turns
-        self._pipeline.relevance_threshold = config.app.relevance_threshold
-
-        # 更新内核中的 provider 引用（kernel / fc_loop / compactor / updater）
-        self._kernel.set_provider(self.provider)
-        self._kernel._fc_loop.max_turns = config.app.max_turns
 
         self._api_name = config.app.active_api
         # 更新状态栏
@@ -176,7 +168,7 @@ class AideApp(App):
         """首页输入框回车 → 自动命名 → 进入对话并发送首条消息。"""
         msg = event.first_message
         info, session_dir = await self._kernel.create_session(msg)
-        self._ingester.ensure_session(info.id)
+        self._ingester.set_session(info.id)
         self._enter_session(session_id=info.id, name=info.name, first_message=msg)
 
     @on(SessionSelected)
@@ -195,7 +187,7 @@ class AideApp(App):
 
         # 已有会话：恢复上下文
         if session_id:
-            self._ingester.ensure_session(session_id)
+            self._ingester.set_session(session_id)
             self._session.is_ensured = True
             self._restore_session(session_id)
 
@@ -281,7 +273,7 @@ class AideApp(App):
             # 确保 session 存在
             if not self._session.is_ensured:
                 info, session_dir = await self._kernel.create_session(text or t("app.image_msg_fallback"))
-                self._ingester.ensure_session(info.id)
+                self._ingester.set_session(info.id)
                 self._session.is_ensured = True
                 self._session.turn = 1
                 self._session.name = info.name
@@ -322,7 +314,7 @@ class AideApp(App):
             # 延迟创建 session（首条消息时）
             if not self._session.is_ensured:
                 info, session_dir = await self._kernel.create_session(self._session.last_user_text)
-                self._ingester.ensure_session(info.id)
+                self._ingester.set_session(info.id)
                 self._session.is_ensured = True
                 self._session.turn = 1
                 self._session.name = info.name
@@ -353,57 +345,53 @@ class AideApp(App):
             input_box.disabled = False
             input_box.focus()
 
-    # ── Worker: Profile Update ───────────────────────────────────────
+    # ── Worker: Reflect ──────────────────────────────────────────────
 
     @work(exclusive=True, thread=False)
-    async def profile_update_worker(self) -> None:
-        msg_list = self.query_one("#messages", MessageList)
-        try:
-            results = await self._kernel.update_profile()
-            updated = [k for k, v in results.items() if v]
-            if updated:
-                msg_list.add_command_result(t("app.profile_updated", names=', '.join(updated)))
-            else:
-                msg_list.add_command_result(t("app.profile_no_update"))
-        except Exception as e:
-            msg_list.add_error(t("app.profile_update_failed", e=e))
-        finally:
-            self._cmd_handler.exit_maintenance()
-
-    # ── Worker: Compress ──────────────────────────────────────────────
-
-    @work(exclusive=True, thread=False)
-    async def compress_worker(self) -> None:
+    async def reflect_worker(self) -> None:
+        """统一反思：LLM 回顾对话 → 更新记忆 + 生成总览 → 用户审查。"""
         msg_list = self.query_one("#messages", MessageList)
         if not self._session.is_ensured:
-            msg_list.add_command_result(t("app.no_data_to_compact"))
+            msg_list.add_command_result(t("app.reflect_no_changes"))
             self._cmd_handler.exit_maintenance()
             return
         try:
-            overview = await self._kernel.compact_session(self._ingester._session_dir)
-            if overview:
-                from core.context.compactor import parse_overview_md
-                sections = parse_overview_md(overview)
-                # 兼容双语 section 标题（压缩时的语言可能和当前不同）
-                topics_key_zh = "话题"
-                topics_key_en = "Topics"
-                prefs_key_zh = "用户偏好"
-                prefs_key_en = "User Preferences"
-                decisions_key_zh = "决策与结论"
-                decisions_key_en = "Decisions & Conclusions"
-                topics = (sections.get(topics_key_zh) or sections.get(topics_key_en) or [])
-                prefs = (sections.get(prefs_key_zh) or sections.get(prefs_key_en) or [])
-                decisions = (sections.get(decisions_key_zh) or sections.get(decisions_key_en) or [])
+            session_dir = self._ingester._session_dir
+            current_turn = self._session.turn
+
+            result = await self._kernel.reflect(session_dir, current_turn)
+
+            if result is None or not result.changes_detected:
+                msg_list.add_command_result(t("app.reflect_no_changes"))
+                self._cmd_handler.exit_maintenance()
+                return
+
+            # 展示变更并请求确认（简化版：直接应用）
+            await self._kernel.apply_reflection(session_dir, result, current_turn)
+
+            # 汇总展示
+            from core.context.overview import parse_overview_md
+            sections = parse_overview_md(result.overview)
+            topics_key_zh, topics_key_en = "话题", "Topics"
+            topics = (sections.get(topics_key_zh) or sections.get(topics_key_en) or [])
+
+            updated_files = [
+                fname for fname in result.proposed_files
+                if result.proposed_files.get(fname) != result.current_files.get(fname)
+            ]
+            if updated_files:
                 msg_list.add_command_result(
-                    t("app.compact_done") + "\n\n"
+                    t("app.reflect_done") + "\n"
                     + t("app.compact_topics_line", topics=', '.join(topics[:3])) + "\n"
-                    + t("app.compact_prefs_line", n=len(prefs)) + "\n"
-                    + t("app.compact_decisions_line", n=len(decisions))
+                    + "更新: " + ', '.join(f.replace('.md', '') for f in updated_files)
                 )
             else:
-                msg_list.add_command_result(t("app.compact_failed"))
+                msg_list.add_command_result(
+                    t("app.reflect_done") + "\n"
+                    + t("app.compact_topics_line", topics=', '.join(topics[:3]))
+                )
         except Exception as e:
-            msg_list.add_error(t("app.compact_error", e=e))
+            msg_list.add_error(t("app.reflect_error", e=e))
         finally:
             self._cmd_handler.exit_maintenance()
             self._update_status_bar()
@@ -451,7 +439,7 @@ class AideApp(App):
     async def on_unmount(self) -> None:
         """应用关闭时停止 MCP 资源。"""
         if hasattr(self, '_mcp_adapter'):
-            self._mcp_adapter.stop_watcher()
+            await self._mcp_adapter.stop_watcher()
             self._mcp_adapter.stop_health_check()
         if hasattr(self, '_store'):
             await self._store.close()

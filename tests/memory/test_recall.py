@@ -49,7 +49,7 @@ class TestRecall:
 
 def test_synonym_map_coverage():
     """同义词映射覆盖常用技术术语。"""
-    from core.memory.recall import SYNONYM_MAP
+    from core.context.relevance import SYNONYM_MAP
     assert len(SYNONYM_MAP) >= 20
     # 验证跨语言覆盖
     has_cn = any(ord(k[0]) > 127 for k in SYNONYM_MAP)
@@ -79,6 +79,6 @@ def test_session_time_weight():
 
 def test_get_all_synonyms():
     """同义词展开正常工作。"""
-    from core.memory.recall import _get_all_synonyms
+    from core.context.relevance import _get_all_synonyms
     result = _get_all_synonyms("代码")
     assert "编程" in result or "code" in result

@@ -7,7 +7,7 @@ P4: 新增 Anthropic provider (anthropic 协议原生适配)
 
 from core.config import LLMConfig
 
-from .provider import AbstractProvider, TextDelta, StreamEnd
+from .provider import AbstractProvider, TextDelta, ThinkingDelta, StreamEnd
 from .openai_compatible_provider import OpenAICompatibleProvider
 from .openai_provider import OpenAIProvider
 from .ollama_provider import OllamaProvider
@@ -17,6 +17,7 @@ __all__ = [
     "create_provider",
     "AbstractProvider",
     "TextDelta",
+    "ThinkingDelta",
     "StreamEnd",
     "OpenAICompatibleProvider",
     "OpenAIProvider",
@@ -50,6 +51,8 @@ def create_provider(config: LLMConfig):
     }
     if config.supports_vision is not None:
         kwargs["supports_vision"] = config.supports_vision
+    if config.thinking:
+        kwargs["thinking"] = True
 
     if config.provider == "openai":
         return OpenAIProvider(**kwargs)

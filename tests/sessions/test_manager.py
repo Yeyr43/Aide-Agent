@@ -95,7 +95,8 @@ class TestRollback:
         mgr = SessionManager(tmp_path / "sessions")
         mgr.rollback(session_dir, 2)
 
-        timeline = json.loads((session_dir / "timeline.json").read_text(encoding="utf-8"))
+        from core.storage import read_jsonl
+        timeline = read_jsonl(session_dir / "timeline.json")
         assert len(timeline) == 2
         assert [e["turn"] for e in timeline] == [1, 2]
 

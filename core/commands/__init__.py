@@ -13,9 +13,9 @@ Handler = Callable[..., Awaitable[str]]
 class CommandDefinition:
     name: str                # "/help"
     description: str         # "显示所有可用命令"
-    handler: Handler         # async (app, args) -> str
+    handler: Handler | None = None  # 处理器（kind 非 "default" 时可为 None）
     source: str = "builtin"  # "builtin" | "plugin:<id>"
-    kind: str = "default"    # "default" | "maintenance" | "confirm"
+    kind: str = "default"    # "default" | "maintenance" | "confirm" | "think"
 
 
 class CommandRegistry:
@@ -76,3 +76,29 @@ class CommandRegistry:
                 return (self._commands[cmd], remaining)
 
         return None
+
+
+# ── 便捷函数 ──────────────────────────────────────────────────────────
+
+
+def route_command(
+    text: str,
+    registry: CommandRegistry | None = None,
+) -> tuple[Handler, str] | None:
+    """解析用户输入，匹配命令（便捷函数，复用 CommandRegistry）。
+
+    Args:
+        text: 用户输入文本
+        registry: 可选的 CommandRegistry 实例。传入现有实例可匹配插件命令；
+                  为 None 时创建新实例（仅内置命令）。
+
+    Returns:
+        (handler, args) 或 None
+    """
+    if registry is None:
+        registry = CommandRegistry()
+    result = registry.route(text)
+    if result is not None:
+        cmd_def, args = result
+        return (cmd_def.handler, args)
+    return None

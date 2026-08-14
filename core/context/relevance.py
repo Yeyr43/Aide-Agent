@@ -4,7 +4,7 @@
 本模块保留为 re-export 层，维持向后兼容。
 """
 
-from ._tokenizer import (  # noqa: F401
+from .tokenizer import (  # noqa: F401
     _bigrams,
     _chinese_tokenize,
     _jaccard,
@@ -18,12 +18,13 @@ from ._tokenizer import (  # noqa: F401
     VocabularyIndex,
     _SEED_VOCABULARY,
     _SEED_DF,
+    _detect_language,
     SYNONYM_MAP,
     _get_all_synonyms,
     _expand_query,
 )
 
-from ._overview import (  # noqa: F401
+from .overview import (  # noqa: F401
     _extract_topics,
     _extract_decisions,
     _build_overview,

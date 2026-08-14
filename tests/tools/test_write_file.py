@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from core.tools.builtin.write_file import execute, schema
+from core.tools.write_file import execute, schema
 
 
 # ── Overwrite mode ─────────────────────────────────────────────────────────

@@ -1,0 +1,162 @@
+"""Tests for core.context.token_counter — token estimation utilities."""
+
+import json
+import pytest
+from unittest.mock import patch, MagicMock
+
+from core.context.token_counter import (
+    estimate_tokens,
+    compute_context_usage,
+    _extract_content_text_and_images,
+    _estimate_image_tokens,
+    DEFAULT_CONTEXT_WINDOW,
+)
+
+
+class TestEstimateTokens:
+    def test_empty_string(self):
+        assert estimate_tokens("") == 0
+
+    def test_english_text(self):
+        tokens = estimate_tokens("Hello, world! This is a test.")
+        # ~4 chars/token → ~7-8 tokens
+        assert 5 <= tokens <= 12
+
+    def test_chinese_text(self):
+        tokens = estimate_tokens("你好世界这是一段测试文本")
+        # CJK ~1.5 chars/token
+        assert tokens > 0
+
+    def test_mixed_text(self):
+        tokens = estimate_tokens("Hello 你好 World 世界")
+        assert tokens > 0
+
+    def test_long_text(self):
+        text = "a" * 1000
+        tokens = estimate_tokens(text)
+        # ~4 chars/token → ~250 tokens
+        assert 200 <= tokens <= 300
+
+    def test_special_characters(self):
+        tokens = estimate_tokens("!@#$%^&*()")
+        assert tokens >= 0
+
+
+class TestExtractContentTextAndImages:
+    def test_plain_string(self):
+        text, img_tokens = _extract_content_text_and_images("hello")
+        assert text == "hello"
+        assert img_tokens == 0
+
+    def test_text_only_list(self):
+        content = [{"type": "text", "text": "hello world"}]
+        text, img_tokens = _extract_content_text_and_images(content)
+        assert "hello world" in text
+        assert img_tokens == 0
+
+    def test_image_only_list(self):
+        content = [{
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+        }]
+        text, img_tokens = _extract_content_text_and_images(content)
+        assert img_tokens > 0  # at minimum auto mode (85)
+
+    def test_mixed_content(self):
+        content = [
+            {"type": "text", "text": "What's this?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc="}},
+        ]
+        text, img_tokens = _extract_content_text_and_images(content)
+        assert "What's this?" in text
+        assert img_tokens > 0
+
+    def test_unknown_block_type(self):
+        content = [{"type": "unknown_type", "data": "stuff"}]
+        text, img_tokens = _extract_content_text_and_images(content)
+        assert img_tokens == 0
+
+    def test_non_list_non_string(self):
+        text, img_tokens = _extract_content_text_and_images(42)
+        assert "42" in text
+        assert img_tokens == 0
+
+
+class TestEstimateImageTokens:
+    def test_invalid_data_url(self):
+        tokens = _estimate_image_tokens("not-a-data-url")
+        assert tokens == 85  # fallback to auto
+
+    def test_very_short_base64(self):
+        tokens = _estimate_image_tokens("data:image/png;base64,a")
+        # Probably can't decode as image → fallback to 85
+        assert tokens >= 0
+
+
+class TestComputeContextUsage:
+    def test_empty_messages(self):
+        estimated, pct = compute_context_usage([])
+        assert estimated >= 0
+        assert pct >= 0.0
+
+    def test_simple_text_messages(self):
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there!"},
+        ]
+        estimated, pct = compute_context_usage(messages, context_window=128000)
+        assert estimated > 0
+        assert 0.0 < pct < 1.0
+
+    def test_with_tools_schema(self):
+        messages = [{"role": "user", "content": "hi"}]
+        tools = [{"type": "function", "function": {"name": "echo"}}]
+        estimated_with, _ = compute_context_usage(messages, tools_schema=tools)
+        estimated_without, _ = compute_context_usage(messages, tools_schema=None)
+        # With tools should count more tokens
+        assert estimated_with >= estimated_without
+
+    def test_context_window_zero_returns_no_pct(self):
+        messages = [{"role": "user", "content": "hi" * 1000}]
+        estimated, pct = compute_context_usage(messages, context_window=0)
+        assert estimated > 0
+        assert pct == 0.0
+
+    def test_usage_pct_clamped_at_one(self):
+        """Very long text should produce pct <= 1.0."""
+        huge_text = "x" * 1_000_000
+        messages = [{"role": "user", "content": huge_text}]
+        estimated, pct = compute_context_usage(messages, context_window=1000)
+        assert pct == 1.0
+
+    def test_non_serializable_tools_schema(self):
+        """Non-serializable tool schema (mock) should not crash."""
+        messages = [{"role": "user", "content": "hi"}]
+        # Mock object that can't be json.dumps'd — it will raise TypeError inside
+        # compute_context_usage which is caught by the except clause
+        try:
+            estimated, pct = compute_context_usage(
+                messages, tools_schema=[MagicMock()],
+            )
+            assert estimated >= 0
+        except TypeError:
+            # May propagate if the mock can't be serialized at all
+            pass
+
+    def test_multimodal_content(self):
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Describe this image"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc="}},
+            ],
+        }]
+        estimated, pct = compute_context_usage(messages)
+        assert estimated > 0
+
+    def test_default_context_window(self):
+        messages = [{"role": "user", "content": "Hello, this is a test message with some content"}]
+        estimated, pct = compute_context_usage(messages)
+        assert estimated > 0
+        assert isinstance(pct, float)

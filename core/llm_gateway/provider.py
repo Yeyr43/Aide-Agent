@@ -25,11 +25,36 @@ class TextDelta:
 
 
 @dataclass
+class ThinkingDelta:
+    """推理/思考 token。
+
+    与 TextDelta 区分，UI 层可用不同样式渲染。
+
+    Attributes:
+        content: 推理文本内容
+        kind: 推理类型 — "thinking" (隐藏推理，dimmed),
+              "reasoning" (显式推理，可展示),
+              "chain_of_thought" (实验性)
+    """
+    content: str
+    kind: str = "thinking"
+
+
+@dataclass
 class StreamEnd:
-    """流结束事件，携带 finish_reason 和完整的 tool_calls。"""
+    """流结束事件，携带 finish_reason 和完整的 tool_calls。
+
+    Attributes:
+        finish_reason: 标准化停止原因 — "stop" | "tool_calls" | "length"
+        tool_calls: 标准化工具调用列表
+        native_stop_reason: Provider 原生停止原因（Anthropic: "end_turn"/"max_tokens"/"tool_use",
+                            OpenAI: "stop"/"length"/"tool_calls"）
+        usage: token 使用量 — {"input": N, "output": N}
+    """
     finish_reason: str                          # "stop" | "tool_calls" | "length"
     tool_calls: list[dict] = field(default_factory=list)
-    # tool_calls: [{"id": "call_xxx", "name": "read_file", "arguments": {...}}, ...]
+    native_stop_reason: str | None = None
+    usage: dict | None = None
 
 
 # ── Protocol ──────────────────────────────────────────────────────
@@ -53,11 +78,12 @@ class AbstractProvider(Protocol):
         self,
         messages: list[dict],
         tools: list[dict],
-    ) -> AsyncIterator[TextDelta | StreamEnd]:
+    ) -> AsyncIterator[TextDelta | ThinkingDelta | StreamEnd]:
         """P1 带 function calling 的流式对话。
 
         Yields:
             TextDelta: 文本 token（流式渲染）
+            ThinkingDelta: 深度思考 token（应 dimmed 渲染）
             StreamEnd: 流结束事件（含 finish_reason 和累积的 tool_calls）
         """
         ...
@@ -101,18 +127,18 @@ async def _parse_sse_stream(response: httpx.Response) -> AsyncIterator[str]:
 
 async def _parse_sse_stream_with_tools(
     response: httpx.Response,
-) -> AsyncIterator[TextDelta | StreamEnd]:
-    """解析 OpenAI 兼容 SSE 流，同时处理 content 和 tool_calls delta。
+) -> AsyncIterator[TextDelta | ThinkingDelta | StreamEnd]:
+    """解析 OpenAI 兼容 SSE 流，同时处理 content / reasoning_content / tool_calls delta。
 
-    tool_calls delta 分片到达，按 index 累积 id/name/arguments_str。
-    finish_reason 出现时，parse 所有 accumulator 的 arguments JSON，
-    组装为完整 tool_calls 列表，yield StreamEnd。
+    DeepSeek 等兼容 API 在 delta.reasoning_content 中返回推理 token，
+    作为 ThinkingDelta yield 供 UI 层灰色渲染。
 
     Args:
         response: httpx 流式响应对象
 
     Yields:
         TextDelta: 文本 token
+        ThinkingDelta: 推理/思考 token（DeepSeek reasoning_content）
         StreamEnd: 流结束（最后必然 yield 一次）
     """
     accumulators: dict[int, ToolCallAccumulator] = {}
@@ -138,6 +164,11 @@ async def _parse_sse_stream_with_tools(
 
         delta = choice.get("delta", {})
         choice_finish = choice.get("finish_reason")
+
+        # ── 推理/思考 token（DeepSeek reasoning_content、OpenAI o-series）──
+        reasoning = delta.get("reasoning_content")
+        if reasoning:
+            yield ThinkingDelta(reasoning, kind="reasoning")
 
         # ── 文本 token ──
         content = delta.get("content")
@@ -170,4 +201,5 @@ async def _parse_sse_stream_with_tools(
     yield StreamEnd(
         finish_reason=finish_reason or "stop",
         tool_calls=build_tool_calls(accumulators),
+        native_stop_reason=finish_reason,  # 保留原始值（openai 兼容协议）
     )

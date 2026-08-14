@@ -1,35 +1,25 @@
-"""工具层 — ToolDefinition + ToolRegistry + 五工具注册。
+"""工具层 — ToolRegistry + 声明式工具清单。
 
 ToolRegistry 维护 name → ToolDefinition 映射，
 提供 get_schemas() 返回 OpenAI function calling 格式的 tools 数组。
 P4 Batch 2: 集成重试机制（core.tools.retry），瞬态错误自动指数退避重试。
+P6: ToolContext 注入 — 工具可通过 ctx 访问 SearchIndex、sessions_root 等共享服务。
+P8: 声明式清单 — ToolDefinition/ToolContext 移至 definition.py，工具模块自包含声明。
 """
 
-from dataclasses import dataclass, field
-from typing import Callable, Awaitable
+from __future__ import annotations
 
-from .builtin import read_file, write_file, run_shell, search_memory, web, search_in_files
+import logging
+
+from .definition import ToolDefinition, ToolContext
 from .retry import RetryConfig, async_retry
+from . import read_file, write_file, run_shell, search_memory, web, search_in_files, search_chat
 from core.locale import t
 
+logger = logging.getLogger(__name__)
 
-@dataclass
-class ToolDefinition:
-    """单个工具的定义。
 
-    Attributes:
-        name: 工具名（LLM function calling 使用）
-        description: 工具描述（注入 LLM context，指导何时调用）
-        parameters: JSON Schema 格式的参数定义
-        execute: 异步执行函数，签名为 async (arguments: dict) -> str
-        retry: 工具级重试配置（None 使用注册中心默认值）
-    """
-    name: str
-    description: str
-    parameters: dict
-    execute: Callable[[dict], Awaitable[str]] | None = None
-    retry: RetryConfig | None = None
-
+# ── ToolRegistry ────────────────────────────────────────────────────────
 
 class ToolRegistry:
     """工具注册中心。
@@ -38,11 +28,15 @@ class ToolRegistry:
     以及带重试的工具执行。
 
     瞬态错误（网络/超时）自动指数退避重试，永久错误（权限/不存在）立即返回。
+
+    P6: 新增 tool_context 属性，execute() 时自动注入到工具函数。
     """
 
     def __init__(self, default_retry: RetryConfig | None = None) -> None:
         self._tools: dict[str, ToolDefinition] = {}
         self.default_retry = default_retry or RetryConfig()
+        self.tool_context: ToolContext = ToolContext()
+        self.hook_runner: object | None = None  # P7: HookRunner | None
 
     def register(self, tool: ToolDefinition) -> None:
         """注册一个工具。同名工具后注册的覆盖先注册的。"""
@@ -82,8 +76,9 @@ class ToolRegistry:
         ]
 
     async def execute(self, name: str, arguments: dict) -> str:
-        """执行指定工具（含重试）。
+        """执行指定工具（含重试），自动注入 ToolContext。
 
+        P7: PreToolUse/PostToolUse hooks 在工具执行前后触发。
         瞬态错误（网络/超时）自动指数退避重试，永久错误立即返回。
 
         Args:
@@ -99,9 +94,58 @@ class ToolRegistry:
         if tool.execute is None:
             return t("tool.registry.no_execute", name=name)
 
+        # P7: PreToolUse hook — exit 2 或 decision="block" 时阻止执行
+        file_path = arguments.get("file_path", arguments.get("filepath", ""))
+        pre_ok, pre_msg = await self._fire_tool_hook("PreToolUse", name, arguments, file_path)
+        if not pre_ok:
+            return t("tool.registry.hook_blocked", name=name, reason=pre_msg)
+
         retry_cfg = tool.retry or self.default_retry
+        ctx = self.tool_context
 
         async def _call() -> str:
+            # 探测工具是否接受 ctx 参数（兼容旧签名）
+            import inspect
+            try:
+                sig = inspect.signature(tool.execute)
+                if 'ctx' in sig.parameters:
+                    return await tool.execute(arguments, ctx=ctx)
+            except (ValueError, TypeError):
+                pass
             return await tool.execute(arguments)
 
-        return await async_retry(_call, config=retry_cfg, tool_name=name)
+        result = await async_retry(_call, config=retry_cfg, tool_name=name)
+
+        # P7: PostToolUse hook
+        await self._fire_tool_hook("PostToolUse", name, arguments, file_path)
+
+        return result
+
+    async def _fire_tool_hook(self, event: str, tool_name: str,
+                              arguments: dict, file_path: str = "") -> tuple[bool, str]:
+        """P7: 触发工具级 hook 事件。
+
+        Returns:
+            (should_proceed, message) — PreToolUse 被阻止时返回 (False, reason)。
+        """
+        if self.hook_runner is None:
+            return True, ""
+        try:
+            from core.plugins.hook_runner import HookContext
+            ctx = HookContext(
+                event=event,
+                tool_name=tool_name,
+                tool_args=arguments,
+                file_path=file_path,
+                session_id=self.tool_context.current_session_id or "",
+            )
+            results = await self.hook_runner.run(event, ctx)
+            from core.plugins.hook_runner import check_hook_results
+            ok, msg, _ = check_hook_results(results)
+            if not ok:
+                logger.warning(f"{event} hook 阻止了 {tool_name}: {msg}")
+                return False, msg
+            return True, ""
+        except Exception:
+            logger.debug(f"Hook {event} 异常 (tool={tool_name})", exc_info=True)
+            return True, ""

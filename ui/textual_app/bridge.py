@@ -41,6 +41,9 @@ class UIBridge:
         self._last_ai_text += token
         self._msg_list().add_ai_chunk(token)
 
+    def on_thinking_token(self, token: str) -> None:
+        self._msg_list().add_thinking_chunk(token)
+
     def on_text_done(self) -> None:
         msg_list = self._msg_list()
         if msg_list.has_pending():
@@ -66,21 +69,7 @@ class UIBridge:
         """XML fallback: 用干净文本替换已渲染的 AI 消息。"""
         self._msg_list().replace_streamed_text(clean_text)
 
-    def on_captured_entries(self, entries: list[dict]) -> None:
-        """显示截获通知。"""
-        if not entries:
-            return
-        lines = [t("ui.bridge.captured")]
-        for e in entries[:3]:
-            content = e.get("content", "")[:60]
-            entry_type = e.get("type", "")
-            tag = {"preferences": t("mem.label_preferences"), "workflows": t("mem.label_workflows"), "long_term_memory": t("mem.label_long_term_memory")}.get(entry_type, "")
-            prefix = f"[{tag}] " if tag else ""
-            lines.append(f"  • {prefix}{content}")
-        if len(entries) > 3:
-            lines.append(t("ui.bridge.and_more", n=len(entries) - 3))
-        lines.append(t("ui.bridge.integrate_hint"))
-        self._msg_list().add_command_result("\n".join(lines), title="Memory")
+    # on_captured_entries removed — P5 重构后使用 /reflect 替代实时截获
 
     # ── 文本收集 ──
 

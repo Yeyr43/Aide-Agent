@@ -11,6 +11,7 @@ import httpx
 
 from .provider import (
     TextDelta,
+    ThinkingDelta,
     StreamEnd,
     _parse_sse_stream,
     _parse_sse_stream_with_tools,
@@ -29,26 +30,26 @@ class OpenAICompatibleProvider:
     _LOG_PREFIX: str = "API"
 
     def __init__(self, model: str, base_url: str, api_key: str = "",
-                 supports_vision: bool = False) -> None:
+                 supports_vision: bool = False, thinking: bool = False) -> None:
         self.model = model
         self.endpoint = base_url.rstrip("/") + "/chat/completions"
         self.api_key = api_key
         self.supports_vision = supports_vision
+        self.thinking = thinking
 
     # ── P0: 纯文本 ──
 
     async def chat(self, messages: list[dict]) -> AsyncIterator[str]:
         """发送消息并流式返回响应 token。"""
+        body: dict = {"model": self.model, "messages": messages, "stream": True}
+        if self.thinking:
+            body["reasoning_effort"] = "medium"
         async with httpx.AsyncClient(timeout=httpx.Timeout(self._TIMEOUT)) as client:
             async with client.stream(
                 "POST",
                 self.endpoint,
                 headers=self._headers(),
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": True,
-                },
+                json=body,
             ) as response:
                 await self._check_response(response)
                 async for token in _parse_sse_stream(response):
@@ -60,11 +61,13 @@ class OpenAICompatibleProvider:
         self,
         messages: list[dict],
         tools: list[dict],
-    ) -> AsyncIterator[TextDelta | StreamEnd]:
+    ) -> AsyncIterator[TextDelta | ThinkingDelta | StreamEnd]:
         """发送消息 + tools schema，流式返回 token + tool_calls 事件。"""
         body: dict = {"model": self.model, "messages": messages, "stream": True}
         if tools:
             body["tools"] = tools
+        if self.thinking:
+            body["reasoning_effort"] = "medium"
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(self._TIMEOUT)) as client:
             async with client.stream(

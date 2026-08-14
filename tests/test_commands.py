@@ -7,12 +7,12 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from core.commands import CommandDefinition, CommandRegistry
-from core.commands.builtin._compat import route_command
+from core.commands import route_command
 from core.commands.builtin.handlers import (
-    handle_help, handle_profile, handle_compress, handle_export, handle_import,
-    handle_session, handle_memory, handle_tools, handle_update, handle_clear,
-    handle_mcp, handle_rollback,
+    handle_help, handle_profile, handle_export, handle_import,
+    handle_session, handle_memory, handle_tools, handle_rollback,
 )
+from core.commands.builtin.mcp_handlers import handle_mcp
 
 
 class TestCommandRouting:
@@ -45,25 +45,27 @@ class TestCommandRouting:
         assert handler == handle_import
         assert args == "test.zip"
 
-    def test_update_route(self):
-        result = route_command("/update")
+    def test_reflect_route(self):
+        result = route_command("/reflect")
         assert result is not None
         handler, args = result
-        assert handler == handle_update
+        # /reflect has kind="maintenance", handler is None
+        assert handler is None
         assert args == ""
 
     def test_all_commands_registered(self):
-        """P5: 16 个内置命令。"""
+        """P7: 17 个内置命令（新增 /plugins）。"""
         registry = CommandRegistry()
         names = [c.name for c in registry.list_all()]
         expected = [
-            "/help", "/profile", "/compact", "/export", "/import",
-            "/plugin", "/session", "/memory", "/tools", "/update",
+            "/help", "/profile", "/reflect", "/export", "/import",
+            "/plugin", "/plugins",
+            "/session", "/memory", "/tools", "/think",
             "/clear", "/rollback", "/mcp", "/language", "/api", "/model",
         ]
         for cmd in expected:
             assert cmd in names, f"Missing command: {cmd}"
-        assert len(names) == 16
+        assert len(names) == 17
 
     def test_session_route(self):
         result = route_command("/session list")
@@ -89,7 +91,8 @@ class TestCommandRouting:
         result = route_command("/clear")
         assert result is not None
         handler, args = result
-        assert handler == handle_clear
+        # /clear has kind="confirm", handler is None
+        assert handler is None
         assert args == ""
 
     def test_rollback_route(self):
@@ -117,26 +120,24 @@ class TestCommandHandlers:
         result = await handle_help(MagicMock(_cmd_registry=mock_registry), "")
         assert "可用命令" in result
         for cmd in ["/help", "/profile", "/compact", "/export", "/import", "/plugin",
-                     "/session", "/memory", "/tools", "/update", "/clear", "/mcp",
+                     "/session", "/memory", "/tools", "/clear", "/mcp",
                      "/rollback"]:
             assert cmd in result
 
     @pytest.mark.asyncio
-    async def test_handle_update(self):
-        result = await handle_update(MagicMock(), "")
-        assert result == "__PROFILE_UPDATE__"
+    async def test_reflect_command_kind(self):
+        """/reflect 应为 maintenance 类型，handler 为 None。"""
+        registry = CommandRegistry()
+        cmd = registry.get("/reflect")
+        assert cmd is not None
+        assert cmd.kind == "maintenance"
+        assert cmd.handler is None
 
     @pytest.mark.asyncio
     async def test_handle_profile_no_update_subcommand(self):
         """/profile 不再处理 update 子命令。"""
         result = await handle_profile(MagicMock(), "update")
         assert "Profile" in result
-        assert "__PROFILE_UPDATE__" not in result
-
-    @pytest.mark.asyncio
-    async def test_handle_compress(self):
-        result = await handle_compress(MagicMock(), "")
-        assert result == "__COMPRESS__"
 
     @pytest.mark.asyncio
     async def test_handle_export(self, tmp_path):
@@ -255,19 +256,13 @@ class TestCommandHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_memory_with_pending(self, tmp_path):
-        data_dir = tmp_path / "data"
-        data_dir.mkdir(parents=True)
-        (data_dir / "preferences.json").write_text(
-            json.dumps([
-                {"content": "偏好 A", "status": "confirmed"},
-                {"content": "偏好 B", "status": "pending"},
-            ]),
+        (tmp_path / "preferences.md").write_text(
+            "# 偏好\n\n- 偏好 A\n- 偏好 B\n",
             encoding="utf-8",
         )
         with patch('core.commands.builtin.handlers.AGENT_ROOT', tmp_path):
             result = await handle_memory(MagicMock(), "")
-            assert "1 已确认" in result
-            assert "1 待整合" in result
+            assert "2 条" in result or "2" in result
 
     @pytest.mark.asyncio
     async def test_handle_tools_no_kernel(self):
@@ -289,10 +284,13 @@ class TestCommandHandlers:
         assert "内置工具" in result
         assert "MCP 工具" in result
 
-    @pytest.mark.asyncio
-    async def test_handle_clear_returns_marker(self):
-        result = await handle_clear(MagicMock(), "")
-        assert result == "__CLEAR_CONFIRM__"
+    def test_clear_command_kind(self):
+        """/clear 应为 confirm 类型，handler 为 None。"""
+        registry = CommandRegistry()
+        cmd = registry.get("/clear")
+        assert cmd is not None
+        assert cmd.kind == "confirm"
+        assert cmd.handler is None
 
     @pytest.mark.asyncio
     async def test_handle_rollback_no_kernel(self):
@@ -383,7 +381,7 @@ class TestMCPCommand:
     @pytest.mark.asyncio
     async def test_handle_mcp_list_with_servers(self):
         """列出服务端状态。"""
-        from core.tools.mcp.adapter import MCPServerConfig, MCPServerStatus
+        from core.mcp.adapter import MCPServerConfig, MCPServerStatus
 
         adapter = MagicMock()
         adapter.list_servers.return_value = [

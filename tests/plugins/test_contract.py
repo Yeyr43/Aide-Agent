@@ -70,7 +70,7 @@ class TestPluginAPI:
                                handler=lambda _: None)  # noqa
         api.register_command(cmd)
         assert cmd.source == "plugin:my-plugin"
-        assert cmd.name == "//test"  # auto-normalized to // prefix
+        assert cmd.name == "//my-plugin:test"  # P7: namespace-prefixed
 
     def test_startup_shutdown_hooks(self):
         api = PluginAPI("test")

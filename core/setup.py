@@ -14,7 +14,6 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from datetime import datetime, timezone
 
 from core.locale import t, build_soul, set_locale
 
@@ -39,13 +38,12 @@ def aide_dir() -> Path:
 def _ensure_dirs(aide: Path) -> None:
     """创建所有子目录。"""
     dirs = [
-        aide / "agent" / "data",
+        aide / "agent",
         aide / "config",
         aide / "sessions",
         aide / "plugins",
         aide / "backups",
         aide / "logs",
-        aide / "archives",
         aide / "mcp",
     ]
     for d in dirs:
@@ -129,7 +127,6 @@ def ensure_aide_root() -> Path:
     _seed_mcp_config(aide)
 
     agent_dir = aide / "agent"
-    data_dir = agent_dir / "data"
     config_dir = aide / "config"
 
     # ── Soul 和 prompt 文件 ──
@@ -137,39 +134,6 @@ def ensure_aide_root() -> Path:
     _ensure_file(agent_dir / "preferences.md", t("tmpl.preferences"))
     _ensure_file(agent_dir / "workflows.md", t("tmpl.workflows"))
     _ensure_file(agent_dir / "long_term_memory.md", t("tmpl.long_term_memory"))
-
-    # ── 条目目录 ──
-    _ensure_json(data_dir / "preferences.json", [])
-    _ensure_json(data_dir / "workflows.json", [])
-    _ensure_json(data_dir / "long_term_memory.json", [])
-    _ensure_json(data_dir / "topic_frequency.json", {})
-
-    # ── 默认配置文件 ──
-    defaults_path = config_dir / "defaults.json"
-    if not defaults_path.exists():
-        default_config = {
-            "llm": {
-                "provider": "",
-                "model": "",
-                "base_url": "",
-                "api_key": "",
-                "temperature": 0.7,
-                "max_tokens": 4096,
-                "supports_vision": None,
-            },
-            "app": {
-                "locale": "zh",
-                "max_turns": 5,
-                "full_text_turns": 3,
-                "summary_turns": 15,
-                "relevance_threshold": 0.15,
-                "context_window": 128000,
-            },
-        }
-        defaults_path.write_text(
-            json.dumps(default_config, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
 
     # ── API 配置目录 ──
     (config_dir / "api").mkdir(parents=True, exist_ok=True)
@@ -197,33 +161,13 @@ def ensure_aide_root() -> Path:
         except Exception:
             logger.debug("API config migration failed, skipping")
 
-    # ── settings.json 不存在时创建（确保 locale 等新字段可用）──
-    if not settings_path.exists():
+    # P5: 清理空的旧 agent/data/ 目录（JSON 条目格式已废弃）
+    old_data_dir = agent_dir / "data"
+    if old_data_dir.exists() and not list(old_data_dir.iterdir()):
         try:
-            settings_path.write_text(
-                json.dumps({
-                    "llm": {
-                        "provider": "",
-                        "model": "",
-                        "base_url": "",
-                        "api_key": "",
-                        "temperature": 0.7,
-                        "max_tokens": 4096,
-                        "supports_vision": None,
-                    },
-                    "app": {
-                        "locale": "zh",
-                        "max_turns": 5,
-                        "full_text_turns": 3,
-                        "summary_turns": 15,
-                        "relevance_threshold": 0.15,
-                        "context_window": 128000,
-                    },
-                }, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            old_data_dir.rmdir()
         except OSError:
-            logger.debug("Failed to create default settings.json, skipping")
+            pass
 
     return aide
 
@@ -231,7 +175,7 @@ def ensure_aide_root() -> Path:
 def is_cold_start(aide: Path | None = None) -> bool:
     """判断是否需要冷启动引导。
 
-    条件：agent/data/ 下三个条目 JSON 文件全为空数组。
+    P5: 检查 soul.md + settings.json（不再依赖旧 JSON 条目文件）。
 
     Returns:
         True 表示需要冷启动引导
@@ -239,23 +183,24 @@ def is_cold_start(aide: Path | None = None) -> bool:
     if aide is None:
         aide = aide_dir()
 
-    data_dir = aide / "agent" / "data"
-    entry_files = ["preferences.json", "workflows.json", "long_term_memory.json"]
+    # soul.md 不存在 → 冷启动
+    soul_path = aide / "agent" / "soul.md"
+    if not soul_path.exists():
+        return True
 
-    for fname in entry_files:
-        path = data_dir / fname
-        if not path.exists():
+    # settings.json 中无 provider → 冷启动
+    settings_path = aide / "config" / "settings.json"
+    if not settings_path.exists():
+        return True
+    try:
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        llm = settings.get("llm", {})
+        if not llm.get("provider") or not llm.get("model"):
             return True
+    except (json.JSONDecodeError, OSError):
+        return True
 
-        try:
-            content = path.read_text(encoding="utf-8")
-            data = json.loads(content)
-            if len(data) > 0:
-                return False
-        except (json.JSONDecodeError, OSError):
-            return True
-
-    return True
+    return False
 
 
 def has_existing_config() -> bool:

@@ -29,7 +29,7 @@ class ErrorClass(Enum):
     """错误类别。"""
     TRANSIENT = auto()   # 瞬态错误：可重试
     PERMANENT = auto()   # 永久错误：不应重试
-    UNKNOWN = auto()     # 未知：保守重试 1 次
+    UNKNOWN = auto()     # 未知：保守重试（跟随 max_retries 配置）
 
 
 # 瞬态错误关键词（匹配错误消息）
@@ -163,8 +163,11 @@ async def async_retry(
         执行结果字符串。若所有重试用尽仍失败，返回错误描述。
     """
     cfg = config or DEFAULT_RETRY
+    # 防御性校验：确保无负值
+    max_retries = max(0, cfg.max_retries)
+    backoff_factor = max(0.0, cfg.backoff_factor)
     last_error = ""
-    total_attempts = cfg.max_retries + 1
+    total_attempts = max_retries + 1
 
     for attempt in range(total_attempts):
         try:
@@ -182,18 +185,18 @@ async def async_retry(
                 return t("tool.retry.error", msg=last_error)
 
             # 最后一次尝试
-            if attempt >= cfg.max_retries:
+            if attempt >= max_retries:
                 logger.warning(
-                    f"[retry] {tool_name} 已重试 {cfg.max_retries} 次，全部失败: {last_error[:80]}"
+                    f"[retry] {tool_name} 已重试 {max_retries} 次，全部失败: {last_error[:80]}"
                 )
-                return t("tool.retry.exhausted", msg=last_error, n=cfg.max_retries)
+                return t("tool.retry.exhausted", msg=last_error, n=max_retries)
 
-            # 计算退避延迟
-            delay = min(cfg.base_delay * (cfg.backoff_factor ** attempt), cfg.max_delay)
+            # 计算退避延迟（指数退避，clamped 防负值）
+            delay = min(cfg.base_delay * (backoff_factor ** attempt), cfg.max_delay)
             logger.info(
                 f"[retry] {tool_name} {error_class.name} 错误，"
-                f"{delay:.1f}s 后重试 ({attempt + 1}/{cfg.max_retries}): {last_error[:60]}"
+                f"{delay:.1f}s 后重试 ({attempt + 1}/{max_retries}): {last_error[:60]}"
             )
             await asyncio.sleep(delay)
 
-    return t("tool.retry.exhausted", msg=last_error, n=cfg.max_retries)
+    return t("tool.retry.exhausted", msg=last_error, n=max_retries)

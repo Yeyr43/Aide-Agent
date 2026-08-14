@@ -39,6 +39,7 @@ def _api_result_to_config(result: dict) -> dict:
         "api_key": result["api_key"],
         "base_url": result["base_url"],
         "supports_vision": result["supports_vision"],
+        "thinking": result.get("thinking", False),
     }
 
 

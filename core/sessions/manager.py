@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.storage import atomic_write_json
+
 
 @dataclass
 class SessionInfo:
@@ -43,8 +45,7 @@ class SessionManager:
 
         name = self.derive_title(first_msg)
         meta = {"name": name, "created_at": datetime.now(timezone.utc).isoformat()}
-        (session_dir / "meta.json").write_text(
-            json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        atomic_write_json(session_dir / "meta.json", meta)
 
         return SessionInfo(id=session_id, name=name, created_at=meta["created_at"])
 
@@ -131,24 +132,21 @@ class SessionManager:
         )
 
         # 3. 还原 overview.md + 截断 overview.json 检查点
-        from core.context.compactor import restore_overview_from_checkpoint
+        from core.context.overview import restore_overview_from_checkpoint
         restore_overview_from_checkpoint(session_dir, target_turn)
 
         return target_turn
 
     @staticmethod
     def _truncate_json_array(path: Path, max_turn: int, key: str = "turn") -> None:
-        """截断 JSON 数组文件，保留 key <= max_turn 的条目。"""
+        """截断 JSONL/JSON 文件，保留 key <= max_turn 的条目。"""
         if not path.exists():
             return
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                truncated = [e for e in data if e.get(key, 0) <= max_turn]
-                path.write_text(
-                    json.dumps(truncated, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
+            from core.storage import read_jsonl, overwrite_jsonl
+            data = read_jsonl(path)
+            truncated = [e for e in data if e.get(key, 0) <= max_turn]
+            overwrite_jsonl(path, truncated)
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -184,7 +182,8 @@ class SessionManager:
             timeline = session_dir / "timeline.json"
             if timeline.exists():
                 try:
-                    data = json.loads(timeline.read_text(encoding="utf-8"))
+                    from core.storage import read_jsonl
+                    data = read_jsonl(timeline)
                     if data:
                         ts = data[-1].get("timestamp", "")
                         if ts:

@@ -94,99 +94,109 @@ class TestContextIngester:
         (d / "messages").mkdir()
         return d
 
-    async def test_ensure_session_creates_dir(self, store, tmp_path):
-        """首次 ensure_session 应创建 session 目录。"""
-        with patch('core.context.ingester.SESSIONS_ROOT',
-                   tmp_path / "sessions"):
-            ingester = ContextIngester(store)
-            session_dir = ingester.ensure_session("20260701_120000")
-            assert session_dir.exists()
-            assert (session_dir / "messages").exists()
-            assert ingester.session_id == "20260701_120000"
+    @pytest.fixture
+    def sessions_root(self, tmp_path):
+        root = tmp_path / "sessions"
+        root.mkdir()
+        return root
 
-    async def test_ensure_session_idempotent(self, store, tmp_path):
-        """重复 ensure_session 返回同一目录。"""
-        with patch('core.context.ingester.SESSIONS_ROOT',
-                   tmp_path / "sessions"):
-            ingester = ContextIngester(store)
-            d1 = ingester.ensure_session("sess1")
-            d2 = ingester.ensure_session("sess2")  # 不应变更
-            assert d1 == d2
-            assert ingester.session_id == "sess1"
+    async def test_set_session_sets_dir(self, store, sessions_root):
+        """set_session 绑定已存在的 session 目录。"""
+        # Session 目录由 SessionManager 预先创建
+        session_dir = sessions_root / "20260701_120000"
+        session_dir.mkdir(parents=True)
 
-    async def test_ensure_session_auto_generates_id(self, store, tmp_path):
-        """未提供 session_id 时自动生成。"""
-        with patch('core.context.ingester.SESSIONS_ROOT',
-                   tmp_path / "sessions"):
-            ingester = ContextIngester(store)
-            session_dir = ingester.ensure_session()
-            assert ingester.session_id is not None
-            assert len(ingester.session_id) == 15  # YYYYMMDD_HHMMSS
+        ingester = ContextIngester(store, sessions_root=sessions_root)
+        result = ingester.set_session("20260701_120000")
+        assert result == session_dir
+        assert (result / "messages").exists()  # messages/ 子目录自动创建
+        assert ingester.session_id == "20260701_120000"
 
-    async def test_ingest_writes_files(self, store, tmp_path):
+    async def test_set_session_idempotent(self, store, sessions_root):
+        """重复 set_session 同一 ID 不重复创建。"""
+        session_dir = sessions_root / "sess1"
+        session_dir.mkdir(parents=True)
+
+        ingester = ContextIngester(store, sessions_root=sessions_root)
+        d1 = ingester.set_session("sess1")
+        d2 = ingester.set_session("sess1")
+        assert d1 == d2
+        assert ingester.session_id == "sess1"
+
+    async def test_set_session(self, store, sessions_root):
+        """set_session 绑定会话。"""
+        session_dir = sessions_root / "test"
+        session_dir.mkdir(parents=True)
+
+        ingester = ContextIngester(store, sessions_root=sessions_root)
+        d = ingester.set_session("test")
+        assert d == session_dir
+
+    async def test_ingest_writes_files(self, store, sessions_root):
         """ingest 应写入 timeline、messages。"""
-        with patch('core.context.ingester.SESSIONS_ROOT',
-                   tmp_path / "sessions"):
-            ingester = ContextIngester(store)
-            ingester.ensure_session("test")
-            session_dir = ingester._session_dir
+        session_dir = sessions_root / "test"
+        session_dir.mkdir(parents=True)
 
-            await ingester.ingest(
-                turn=1,
-                user_msg="你好",
-                assistant_msg="你好！有什么可以帮你的？",
-                turn_messages=[{"role": "user", "content": "你好"}],
-            )
+        ingester = ContextIngester(store, sessions_root=sessions_root)
+        ingester.set_session("test")
 
-            # timeline.json
-            timeline = json.loads(
-                (session_dir / "timeline.json").read_text(encoding="utf-8"))
-            assert len(timeline) == 1
-            assert timeline[0]["turn"] == 1
-            assert "你好" in timeline[0]["summary"]
+        await ingester.ingest(
+            turn=1,
+            user_msg="你好",
+            assistant_msg="你好！有什么可以帮你的？",
+            turn_messages=[{"role": "user", "content": "你好"}],
+        )
 
-            # messages/turn_001.json
-            msg = json.loads(
-                (session_dir / "messages" / "turn_001.json").read_text(encoding="utf-8"))
-            assert msg["turn"] == 1
-            assert msg["user"] == "你好"
+        # timeline.json
+        from core.storage import read_jsonl
+        timeline = read_jsonl(session_dir / "timeline.json")
+        assert len(timeline) == 1
+        assert timeline[0]["turn"] == 1
+        assert "你好" in timeline[0]["summary"]
 
-    async def test_ingest_without_session_raises(self, store, tmp_path):
-        """未 ensure_session 就 ingest 应抛错。"""
-        with patch('core.context.ingester.SESSIONS_ROOT',
-                   tmp_path / "sessions"):
-            ingester = ContextIngester(store)
-            with pytest.raises(RuntimeError, match="session 未创建"):
-                await ingester.ingest(1, "hi", "hello")
+        # messages/turn_001.json
+        msg = json.loads(
+            (session_dir / "messages" / "turn_001.json").read_text(encoding="utf-8"))
+        assert msg["turn"] == 1
+        assert msg["user"] == "你好"
+        # P5: tool_calls 不再在顶层
+
+    async def test_ingest_without_session_raises(self, store, sessions_root):
+        """未 set_session 就 ingest 应抛错。"""
+        ingester = ContextIngester(store, sessions_root=sessions_root)
+        with pytest.raises(RuntimeError, match="session 未创建"):
+            await ingester.ingest(1, "hi", "hello")
 
 
 class TestContextAssembler:
     """测试 ContextAssembler。"""
 
-    def test_read_cached(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_read_cached(self, tmp_path):
         """应缓存 Soul 文件内容。"""
         soul = tmp_path / "soul.md"
         soul.write_text("test soul", encoding="utf-8")
 
         assembler = ContextAssembler(agent_root=tmp_path)
-        content = assembler._read_cached(soul)
+        content = await assembler._read_cached(soul)
         assert content == "test soul"
         # 修改文件
         soul.write_text("modified", encoding="utf-8")
         # 缓存不应更新
-        content2 = assembler._read_cached(soul)
+        content2 = await assembler._read_cached(soul)
         assert content2 == "test soul"
 
-    def test_flush_cache(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_flush_cache(self, tmp_path):
         """flush_cache 后应重新读取。"""
         soul = tmp_path / "soul.md"
         soul.write_text("v1", encoding="utf-8")
 
         assembler = ContextAssembler(agent_root=tmp_path)
-        assert assembler._read_cached(soul) == "v1"
+        assert await assembler._read_cached(soul) == "v1"
         soul.write_text("v2", encoding="utf-8")
         assembler.flush_cache()
-        assert assembler._read_cached(soul) == "v2"
+        assert await assembler._read_cached(soul) == "v2"
 
     async def test_assemble_includes_soul(self, tmp_path):
         """Soul 内容应注入到 system message。"""

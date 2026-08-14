@@ -50,11 +50,124 @@ def atomic_write_json(path: Path, data: dict | list) -> None:
 
     try:
         os.replace(tmp_path, str(path))
-    except Exception:
+    except OSError:
         try:
             os.unlink(tmp_path)
         except OSError:
             logger.debug("Failed to unlink temp file %s, skipping cleanup", tmp_path)
+        raise
+
+
+# ── JSONL 追加工具 ─────────────────────────────────────────────────────
+
+
+def read_jsonl(path: Path) -> list[dict]:
+    """读取 JSONL 文件（每行一个 JSON 对象）为 dict 列表。
+
+    兼容旧 JSON 数组格式：如果文件是 `[{...}, ...]` 格式，自动解析为列表。
+    文件不存在时返回空列表。
+    """
+    if not path.exists():
+        return []
+    raw = path.read_text(encoding="utf-8")
+    stripped = raw.strip()
+    if not stripped:
+        return []
+    # 兼容旧 JSON 数组格式
+    if stripped.startswith("["):
+        try:
+            import json
+            data = json.loads(stripped)
+            return data if isinstance(data, list) else []
+        except (json.JSONDecodeError, ValueError):
+            return []
+    # JSONL 格式：每行一个 JSON 对象
+    entries: list[dict] = []
+    for line in stripped.split("\n"):
+        line = line.strip()
+        if line:
+            try:
+                import json
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return entries
+
+
+def append_jsonl(path: Path, entry: dict) -> None:
+    """原子追加一行 JSON 对象到 JSONL 文件。
+
+    通过临时文件 + os.replace 实现原子追加。
+    """
+    import json
+    new_line = json.dumps(entry, ensure_ascii=False) + "\n"
+
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+
+    # 读现有内容 + 追加 → 原子写回
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=str(parent),
+        delete=False, prefix=".tmp_", suffix=".jsonl",
+    ) as tmp:
+        tmp.write(existing)
+        tmp.write(new_line)
+        tmp.flush()
+        tmp_path = tmp.name
+
+    try:
+        os.replace(tmp_path, str(path))
+    except OSError:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def overwrite_jsonl(path: Path, entries: list[dict]) -> None:
+    """覆盖写入 JSONL 文件（原子）。"""
+    import json
+    content = "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n" if entries else ""
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=str(parent),
+        delete=False, prefix=".tmp_", suffix=".jsonl",
+    ) as tmp:
+        tmp.write(content)
+        tmp.flush()
+        tmp_path = tmp.name
+    try:
+        os.replace(tmp_path, str(path))
+    except OSError:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    """通过临时文件 + os.replace 实现原子文本写入。"""
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=str(parent),
+        delete=False, prefix=".tmp_", suffix=".tmp",
+    ) as tmp:
+        tmp.write(content)
+        tmp.flush()
+        tmp_path = tmp.name
+    try:
+        os.replace(tmp_path, str(path))
+    except OSError:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
         raise
 
 
@@ -133,7 +246,7 @@ class JsonStore:
             path, json_str, done = item
             try:
                 await self._atomic_write(path, json_str)
-            except Exception:
+            except OSError:
                 logger.exception("JsonStore 原子写入失败: %s", path)
             finally:
                 done.set()

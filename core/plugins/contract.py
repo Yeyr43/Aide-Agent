@@ -80,23 +80,19 @@ class PluginManifest:
 
     @staticmethod
     def _parse_skill_frontmatter(skill_md: Path) -> dict | None:
-        """解析 SKILL.md 的 YAML frontmatter（仅提取 name/description）。"""
-        text = skill_md.read_text(encoding="utf-8")
-        # 匹配 YAML frontmatter: --- ... ---
-        m = re.match(r'^---\s*\n(.*?)\n---', text, re.DOTALL)
-        if not m:
+        """解析 SKILL.md 的 YAML frontmatter（仅提取 name/description）。
+
+        委托给 core.memory.entries._parse_simple_frontmatter，统一解析逻辑。
+        """
+        from core.memory.entries import _parse_simple_frontmatter
+        try:
+            text = skill_md.read_text(encoding="utf-8")
+        except OSError:
             return None
-        frontmatter = m.group(1)
-        result: dict = {}
-        for line in frontmatter.split("\n"):
-            line = line.strip()
-            if ":" in line:
-                key, _, val = line.partition(":")
-                key = key.strip()
-                val = val.strip().strip('"').strip("'")
-                if key in ("name", "description", "version", "id"):
-                    result[key] = val
-        return result if "name" in result else None
+        meta, _ = _parse_simple_frontmatter(text)
+        if "name" not in meta:
+            return None
+        return {k: meta[k] for k in ("name", "description", "version", "id") if k in meta}
 
 
 @runtime_checkable
@@ -118,7 +114,10 @@ class PluginSlot:
 
 
 class PluginAPI:
-    """插件运行时 API — 在 register(api) 中暴露给插件。"""
+    """插件运行时 API — 在 register(api) 中暴露给插件。
+
+    P7: 新增 register_hook / requires / require_api_key / on_status_change。
+    """
 
     def __init__(self, plugin_id: str) -> None:
         self._plugin_id = plugin_id
@@ -129,19 +128,48 @@ class PluginAPI:
         self._provided_slots: list[str] = []
         self._startup_hooks: list[Callable] = []
         self._shutdown_hooks: list[Callable] = []
+        self._hooks: list[dict] = []           # P7: 插件注册的 hook 定义
+        self._requirements: dict = {}          # P7: api_keys / system_packages
+        self._status_callbacks: list[Callable] = []  # P7: 状态变更回调
 
     def register_tool(self, tool: ToolDefinition) -> None:
         self._tools.append(tool)
 
     def register_command(self, cmd: CommandDefinition) -> None:
         cmd.source = f"plugin:{self._plugin_id}"
-        # 插件命令统一用 // 前缀，与内置命令 / 区分
+        # 命名空间隔离：插件命令统一用 //plugin-name:cmd 格式
         if not cmd.name.startswith("//"):
-            cmd.name = "//" + cmd.name.lstrip("/")
+            ns_name = f"//{self._plugin_id}:{cmd.name.lstrip('/')}"
+            cmd.name = ns_name
         self._commands.append(cmd)
 
     def register_context_provider(self, provider: ContextProvider) -> None:
         self._context_providers.append(provider)
+
+    def register_hook(self, event: str, matcher: str = "*",
+                      command: str = "", timeout: int = 60) -> None:
+        """P7: 注册一个生命周期 hook。"""
+        self._hooks.append({
+            "event": event,
+            "matcher": matcher,
+            "type": "command",
+            "command": command,
+            "timeout": timeout,
+        })
+
+    def requires(self, *, api_keys: list[str] | None = None,
+                 system_packages: list[str] | None = None,
+                 python_packages: list[str] | None = None) -> None:
+        """P7: 声明插件依赖。"""
+        self._requirements = {
+            "api_keys": api_keys or [],
+            "system_packages": system_packages or [],
+            "python_packages": python_packages or [],
+        }
+
+    def on_status_change(self, callback: Callable[[str, str], None]) -> None:
+        """P7: 注册状态变更回调。callback(old_status, new_status)。"""
+        self._status_callbacks.append(callback)
 
     def fill_slot(self, slot_name: str, implementation: object) -> None:
         self._filled_slots.append(slot_name)

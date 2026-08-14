@@ -60,27 +60,34 @@ def build_soul(name: str) -> str:
 """
 
 
-def build_tools_prompt() -> str:
-    """构建 Tools Prompt（当前语言）。"""
+def build_tools_prompt(tool_descriptions: list[str] | None = None) -> str:
+    """构建 Tools Prompt（当前语言）。
+
+    Args:
+        tool_descriptions: 已注册工具的描述列表（来自 ToolRegistry）。
+                           为 None 时回退到硬编码的 locale key（向后兼容）。
+    """
+    # ── 工具列表：优先使用 ToolRegistry 动态描述 ──
+    if tool_descriptions:
+        tool_lines = "\n".join(f"- {desc}" for desc in tool_descriptions)
+    else:
+        tool_lines = "\n".join([
+            t("tools.read_file"),
+            t("tools.write_file"),
+            t("tools.run_shell"),
+            t("tools.search_in_files"),
+            t("tools.search_memory"),
+            t("tools.web"),
+            t("tools.search_chat"),
+        ])
+
     return f"""{t("tools.heading")}
 
 {t("tools.intro")}
 
 {t("tools.list_title")}
 
-{t("tools.read_file")}
-
-{t("tools.write_file")}
-
-{t("tools.run_shell")}
-
-{t("tools.search_in_files")}
-
-{t("tools.search_memory")}
-
-{t("tools.web")}
-
-{t("tools.search_chat")}
+{tool_lines}
 
 {t("tools.strategy_title")}
 
@@ -89,6 +96,7 @@ def build_tools_prompt() -> str:
 {t("tools.strategy_3")}
 {t("tools.strategy_4")}
 {t("tools.strategy_5")}
+{t("tools.strategy_6")}
 
 {t("tools.error_title")}
 

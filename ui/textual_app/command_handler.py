@@ -10,10 +10,11 @@ from typing import TYPE_CHECKING
 from core.commands.builtin.handlers import _rebuild_conversation_from_disk
 from core.locale import t
 
+from .widgets.input_box import InputBox
+
 if TYPE_CHECKING:
     from .app import AideApp
     from .widgets.message_list import MessageList
-    from .widgets.input_box import InputBox
 
 
 class CommandHandler:
@@ -62,6 +63,10 @@ class CommandHandler:
         """执行命令并显示结果。根据 CommandDefinition.kind 选择执行模式。"""
         msg_list.add_user_message(text)
 
+        if cmd_def.kind == "think":
+            self._start_think(msg_list)
+            return
+
         if cmd_def.kind == "maintenance":
             self._start_maintenance(input_box, cmd_def)
             return
@@ -90,16 +95,38 @@ class CommandHandler:
     # ── 维护模式 ───────────────────────────────────────────────────
 
     def _start_maintenance(self, input_box: InputBox, cmd_def) -> None:
-        """进入维护模式（/compact 或 /profile update）。"""
+        """进入维护模式（/reflect）。"""
         label = cmd_def.name.lstrip("/")
         input_box.disabled = True
         input_box.placeholder = f"*{label}...*"
         input_box.add_class("maintenance")
         self._app._session.is_maintenance = True
-        if cmd_def.name == "/compact":
-            self._app.compress_worker()
-        else:
-            self._app.profile_update_worker()
+        self._app.reflect_worker()
+
+    def _start_think(self, msg_list: MessageList) -> None:
+        """进入思考模式 — 注入提示并触发 LLM 响应。"""
+        from core.locale import t
+        think_prompt = t("cmd.think.prompt")
+        msg_list.add_command_result(think_prompt)
+
+        # 确保 session 存在，然后添加 think prompt 到对话并触发 chat_worker
+        import asyncio
+        app = self._app
+
+        async def _do_think() -> None:
+            if not app._session.is_ensured:
+                info, session_dir = await app._kernel.create_session(think_prompt)
+                app._ingester.set_session(info.id)
+                app._session.is_ensured = True
+                app._session.turn = 1
+                app._session.name = info.name
+                from textual.widgets import Static
+                app.query_one("#session-label", Static).update(f" {info.name}")
+            app._session.conversation.append({"role": "user", "content": think_prompt})
+            app._session.last_user_text = think_prompt
+            app.chat_worker()
+
+        asyncio.create_task(_do_think())
 
     def exit_maintenance(self) -> None:
         """退出维护模式，恢复输入框。"""

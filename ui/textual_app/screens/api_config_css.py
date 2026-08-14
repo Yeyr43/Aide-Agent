@@ -49,6 +49,18 @@ ApiConfigScreen {
     color: #c8c8c0;
 }
 
+#api-thinking-toggle {
+    border: none;
+    background: transparent;
+    color: #c896e3;
+    min-width: 16;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+#api-thinking-toggle:hover {
+    color: #c8c8c0;
+}
+
 #api-error {
     color: #e06060;
     margin-bottom: 1;

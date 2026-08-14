@@ -33,19 +33,15 @@ except ImportError:
     print('PyObjC Quartz: MISSING (uv sync --extra macos)')
 "
 
-# 4. ONNX/Embedding
+# 4. 同义词扩展
 echo ""
-echo "--- Embedding 引擎 ---"
+echo "--- 同义词扩展 ---"
 python3 -c "
-try:
-    from core.context.embeddings import get_embedding_engine
-    engine = get_embedding_engine()
-    if engine:
-        print('Embedding engine: OK')
-    else:
-        print('Embedding engine: DISABLED (model not downloaded)')
-except Exception as e:
-    print(f'Embedding engine: ERROR ({e})')
+from core.context.relevance import SYNONYM_MAP, _expand_query
+terms = _expand_query('代码错误')
+assert '代码' in terms or 'code' in terms
+assert '错误' in terms or 'bug' in terms or 'error' in terms
+print(f'同义词扩展: OK ({len(SYNONYM_MAP)} 组)')
 "
 
 # 5. 运行关键测试

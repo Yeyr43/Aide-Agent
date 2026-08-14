@@ -13,5 +13,5 @@ class OpenAIProvider(OpenAICompatibleProvider):
     _LOG_PREFIX: str = "OpenAI API"
 
     def __init__(self, model: str, base_url: str, api_key: str = "",
-                 supports_vision: bool = False) -> None:
-        super().__init__(model, base_url, api_key, supports_vision)
+                 supports_vision: bool = False, thinking: bool = False) -> None:
+        super().__init__(model, base_url, api_key, supports_vision, thinking)

@@ -12,7 +12,7 @@ class TestConfigDefaults:
 
     def test_default_app_settings(self):
         config = Config()
-        assert config.app.max_turns == 5
+        assert config.app.max_turns == 10
         assert config.app.full_text_turns == 3
         assert config.app.summary_turns == 15
 

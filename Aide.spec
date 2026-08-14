@@ -22,6 +22,11 @@ datas = [
     (str(PROJECT_ROOT / "mcp" / "servers.json"), "mcp"),
     # 应用图标
     (str(PROJECT_ROOT / "Aide.ico"), "."),
+    # 国际化 JSON（动态加载，PyInstaller 不会自动收集）
+    (str(PROJECT_ROOT / "core" / "locale_data" / "prompts.json"), "core/locale_data"),
+    (str(PROJECT_ROOT / "core" / "locale_data" / "commands.json"), "core/locale_data"),
+    (str(PROJECT_ROOT / "core" / "locale_data" / "ui.json"), "core/locale_data"),
+    (str(PROJECT_ROOT / "core" / "locale_data" / "runtime.json"), "core/locale_data"),
 ]
 
 # ONNX 模型（构建前由 scripts/build.py 下载到 models/）
