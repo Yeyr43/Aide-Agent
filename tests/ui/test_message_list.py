@@ -102,3 +102,20 @@ async def test_one_turn_tree_across_tool_flow():
         # 整个回合应只有一棵树，正文跨段累计
         assert len(app.query(".turn-tree")) == 1
         assert ml._turn_ai_text == "让我看看答案是 42"
+
+
+@pytest.mark.asyncio
+async def test_tree_connectors_first_middle_last():
+    """树连接符：首节点 ┌，中间节点 ├，末节点 └。"""
+    app = MessageListTestApp()
+    async with app.run_test():
+        ml = app.ml
+        ml.add_thinking_chunk("思考")                 # 首节点 → ┌
+        ml.add_tool_start("read_file", {"path": "x"}) # 中间 → ├
+        ml.add_tool_done("read_file", "r")
+        ml.add_ai_chunk("回答")                       # 末节点 → └
+        nodes = [w for w in app.query(".tree-node")]
+        assert len(nodes) == 3
+        assert nodes[0]._connector == "┌"
+        assert nodes[1]._connector == "├"
+        assert nodes[2]._connector == "└"

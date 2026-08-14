@@ -77,10 +77,17 @@ class TreeNode(Static):
         super().__init__(content="", **kwargs)
         self._plain = plain_text
         self._last_click = 0.0
+        self._connector = "│"  # 树连接符，由 TurnTree 设为 ┌ / ├ / └
+
+    def set_connector(self, char: str) -> None:
+        """设置树连接符（┌ 首节点 / ├ 中间 / └ 末节点），并重渲染。"""
+        if self._connector != char:
+            self._connector = char
+            self._refresh()
 
     def _label_line(self, label: str, bullet_style: str | None = None) -> Text:
         t = Text()
-        t.append("│ ", style="#555555")   # 引导列：贯穿整个消息树
+        t.append(f"{self._connector} ", style="#555555")   # 引导列：树连接符
         t.append("● ", style=bullet_style or self._bullet_style)  # 子弹列
         t.append(label, style="")  # 文本列，一律正常色
         return t
@@ -261,14 +268,14 @@ class BodyNode(TreeNode):
         if not self._buffer:
             return self._label_line("")
         if not self._finished:
-            return Text.from_markup(escape("│ ● " + self._buffer))
+            return Text.from_markup(escape(f"{self._connector} ● " + self._buffer))
         safe_body = self._buffer.replace("<", "&lt;").replace(">", "&gt;")
         try:
             md = RichMarkdown(safe_body, code_theme=self._code_theme)
         except Exception:
             md = Text(self._buffer)
-        # 正文：│ ● 首行 + 正文缩进到文本列（RichMarkdown 无法逐行加引导前缀）
-        return Group(Text("│ ● "), Padding(md, (0, 0, 0, 4)))
+        # 正文：连接符 ● 首行 + 正文缩进到文本列（RichMarkdown 无法逐行加引导前缀）
+        return Group(Text(f"{self._connector} ● "), Padding(md, (0, 0, 0, 4)))
 
 
 class ErrorNode(TreeNode):
@@ -342,12 +349,20 @@ class TurnTree(Vertical):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._last_kind: str | None = None
+        self._turn_nodes: list[TreeNode] = []  # 不用 _nodes：会遮蔽 Textual 内部属性
 
     def add_node(self, node: TreeNode, kind: str) -> None:
         if should_separate(self._last_kind, kind):
             guide = Static("│")
             guide.add_class("tree-guide")
             self.mount(guide)
+        if not self._turn_nodes:
+            node.set_connector("┌")   # 首节点永远 ┌（新节点加入不降级）
+        else:
+            if len(self._turn_nodes) > 1:
+                self._turn_nodes[-1].set_connector("├")  # 前一个最末 → 中间
+            node.set_connector("└")   # 新节点暂为最末
+        self._turn_nodes.append(node)
         node.add_class("tree-node")
         self.mount(node)
         self._last_kind = kind
