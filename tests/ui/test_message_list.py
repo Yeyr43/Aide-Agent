@@ -106,16 +106,16 @@ async def test_one_turn_tree_across_tool_flow():
 
 @pytest.mark.asyncio
 async def test_tree_connectors_first_middle_last():
-    """树连接符：首节点 ┌，中间节点 ├，末节点 └。"""
+    """树连接符：首节点 └，新节点加入自动降级为 ├，末节点 └。"""
     app = MessageListTestApp()
     async with app.run_test():
         ml = app.ml
-        ml.add_thinking_chunk("思考")                 # 首节点 → ┌
-        ml.add_tool_start("read_file", {"path": "x"}) # 中间 → ├
+        ml.add_thinking_chunk("思考")                 # 首节点 → └
+        ml.add_tool_start("read_file", {"path": "x"}) # 前一个降级 → ├，新节点 → └
         ml.add_tool_done("read_file", "r")
-        ml.add_ai_chunk("回答")                       # 末节点 → └
+        ml.add_ai_chunk("回答")                       # 末节点 → └，前一个降级 ├
         nodes = [w for w in app.query(".tree-node")]
         assert len(nodes) == 3
-        assert nodes[0]._connector == "┌"
+        assert nodes[0]._connector == "├"
         assert nodes[1]._connector == "├"
         assert nodes[2]._connector == "└"

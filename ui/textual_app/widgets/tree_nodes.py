@@ -77,10 +77,10 @@ class TreeNode(Static):
         super().__init__(content="", **kwargs)
         self._plain = plain_text
         self._last_click = 0.0
-        self._connector = "│"  # 树连接符，由 TurnTree 设为 ┌ / ├ / └
+        self._connector = "│"  # 树连接符，由 TurnTree 设为 ├ / └
 
     def set_connector(self, char: str) -> None:
-        """设置树连接符（┌ 首节点 / ├ 中间 / └ 末节点），并重渲染。"""
+        """设置树连接符（├ 中间 / └ 末节点），并重渲染。"""
         if self._connector != char:
             self._connector = char
             self._refresh()
@@ -356,12 +356,9 @@ class TurnTree(Vertical):
             guide = Static("│")
             guide.add_class("tree-guide")
             self.mount(guide)
-        if not self._turn_nodes:
-            node.set_connector("┌")   # 首节点永远 ┌（新节点加入不降级）
-        else:
-            if len(self._turn_nodes) > 1:
-                self._turn_nodes[-1].set_connector("├")  # 前一个最末 → 中间
-            node.set_connector("└")   # 新节点暂为最末
+        if self._turn_nodes:
+            self._turn_nodes[-1].set_connector("├")  # 前一个最末 → 中间
+        node.set_connector("└")   # 新节点暂为最末（首节点也是 └，新节点加入后自动降级为 ├）
         self._turn_nodes.append(node)
         node.add_class("tree-node")
         self.mount(node)
