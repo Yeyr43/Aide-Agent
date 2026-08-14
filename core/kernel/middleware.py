@@ -48,6 +48,7 @@ class ChatContext:
     # 中间产物（各阶段逐步填充）
     system_messages: list[dict] = field(default_factory=list)
     assistant_text: str = ""
+    thinking: str = ""  # 本轮 LLM 思考内容（持久化恢复用，不进 LLM 上下文）
     new_conversation: list[dict] = field(default_factory=list)
     turn_messages: list[dict] = field(default_factory=list)
     token_usage: TokenUsage | None = None

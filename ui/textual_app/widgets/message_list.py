@@ -6,6 +6,7 @@
 交互：左键双击折叠/展开（可折叠节点）；右键点击复制。
 """
 
+import json
 import logging
 import time
 
@@ -264,31 +265,95 @@ class MessageList(VerticalScroll):
         for child in list(self.children):
             child.remove()
 
-    def restore_conversation(self, messages: list[dict]) -> None:
-        for msg in messages:
-            role = msg.get("role", "")
-            raw_content = msg.get("content", "")
-            text, images = _parse_multimodal_content(raw_content)
-            if role == "user" and (text or images):
-                file_paths = msg.get("_image_paths", []) or images
-                self.add_user_message(text or "", file_paths=file_paths)
-            elif role == "assistant" and text:
-                self._add_restored_body(text)
+    def restore_conversation(self, turns: list[dict]) -> None:
+        """按轮重建回合树 — 恢复 think / 工具 / 正文的完整细节。
 
-    def _add_restored_body(self, text: str) -> None:
-        """恢复的历史 assistant 消息 = 只有正文节点的回合树。"""
-        self._close_turn()
-        tree = self._ensure_turn()
-        node = BodyNode(code_theme=self._code_theme)
-        node.set_finished_text(text)
-        tree.add_node(node, "body")
-        self._close_turn()
+        每轮记录来自 core.sessions.restorer.restore_turns：
+            {"turn": N, "thinking": str, "messages": [raw msgs]}
+
+        重建规则（镜像实时流程）：
+          - 用户消息 → 气泡
+          - thinking → 思考节点（折叠态）
+          - assistant 带 tool_calls → 工具节点（按 tool_call_id 配对结果）
+          - tool → 填充工具结果（错误结果标红）
+          - assistant 带正文 → 正文节点（已完成态）
+        """
+        self.clear()
+        for turn in turns:
+            msgs = turn.get("messages") or []
+            thinking = (turn.get("thinking") or "").strip()
+
+            # 1) 用户消息 → 气泡（关闭上一轮树，开启新一轮）
+            for msg in msgs:
+                if msg.get("role") == "user":
+                    text, images = _parse_multimodal_content(msg.get("content", ""))
+                    if text or images:
+                        file_paths = msg.get("_image_paths") or images
+                        self.add_user_message(text or "", file_paths=file_paths)
+                    break
+
+            # 2) 思考节点（若落盘了）
+            tree = self._ensure_turn()
+            if thinking:
+                node = ThinkNode()
+                tree.add_node(node, "think")
+                node.append_chunk(thinking)
+                node.finish()
+
+            # 3) 工具 / 正文节点
+            pending_tools: list[ToolNode] = []
+            for msg in msgs:
+                role = msg.get("role", "")
+                if role == "assistant" and msg.get("tool_calls"):
+                    for tc in msg["tool_calls"]:
+                        fn = tc.get("function") or {}
+                        name = fn.get("name", "tool")
+                        args = _parse_tool_args(fn.get("arguments"))
+                        node = ToolNode(name, args, code_theme=self._code_theme)
+                        tree.add_node(node, "tool")
+                        pending_tools.append(node)
+                elif role == "tool" and pending_tools:
+                    node = pending_tools.pop(0)
+                    content = str(msg.get("content", ""))
+                    if _is_tool_error(content):
+                        node.set_error(content)
+                    else:
+                        node.set_result(content)
+                elif role == "assistant" and msg.get("content"):
+                    text, _ = _parse_multimodal_content(msg["content"])
+                    if text:
+                        body = BodyNode(code_theme=self._code_theme)
+                        body.set_finished_text(text)
+                        tree.add_node(body, "body")
+
+            # 每轮结束关闭状态（下一轮 / 用户新消息时重建树）
+            self._close_turn()
 
     def _scroll_end(self) -> None:
         self.scroll_end(animate=False)
 
 
 # ── 多模态 content 解析 ─────────────────────────────────────────────────
+
+def _parse_tool_args(raw_args) -> dict:
+    """解析工具调用参数（JSON 字符串或已解析 dict），失败返回空 dict。"""
+    if isinstance(raw_args, dict):
+        return raw_args
+    if isinstance(raw_args, str):
+        try:
+            return json.loads(raw_args)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+_TOOL_ERROR_PREFIXES = ("错误：", "错误:", "工具执行异常：", "⚠️ 高风险操作已被阻止")
+
+
+def _is_tool_error(content: str) -> bool:
+    """识别工具结果中的错误内容（fc_loop 错误喂回时的前缀）。"""
+    return content.startswith(_TOOL_ERROR_PREFIXES)
+
 
 def _parse_multimodal_content(content) -> tuple[str, list[str]]:
     """解析多模态 content，提取文本和图片 data URL。

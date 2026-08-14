@@ -109,6 +109,7 @@ class ContextIngester:
         assistant_msg: str,
         tool_calls: list[dict] | None = None,
         turn_messages: list[dict] | None = None,
+        thinking: str = "",
     ) -> None:
         """写入一轮对话的所有数据。
 
@@ -118,6 +119,7 @@ class ContextIngester:
             assistant_msg: AI 回复原文（含思考过程，如有）
             tool_calls: 工具调用详情（含结果）
             turn_messages: 本轮增量消息（只存当轮，不存完整历史）
+            thinking: 本轮 LLM 思考内容（用于退出重进后恢复显示）
         """
         if self._session_dir is None:
             raise RuntimeError("session 未创建，请先调用 set_session()")
@@ -132,6 +134,7 @@ class ContextIngester:
             "timestamp": timestamp,
             "user": user_msg,
             "assistant": assistant_msg,
+            "thinking": thinking or "",
             "messages": turn_messages or [],
         }
         turn_path = self._session_dir / "messages" / f"turn_{turn:03d}.json"

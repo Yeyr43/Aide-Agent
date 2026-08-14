@@ -17,7 +17,7 @@ from core.tools import ToolRegistry, ToolDefinition
 from core.context.pipeline import ContextPipeline
 from core.context.ingester import ContextIngester
 from core.storage import JsonStore
-from core.llm_gateway import TextDelta, StreamEnd
+from core.llm_gateway import TextDelta, ThinkingDelta, StreamEnd
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -46,6 +46,20 @@ def _mock_provider_with_response(text: str):
     provider = AsyncMock()
 
     async def _mock_chat(messages, tools):
+        yield _text_delta(text)
+        yield _stream_end()
+
+    provider.chat_with_tools = _mock_chat
+    provider.supports_vision = False
+    return provider
+
+
+def _mock_provider_with_thinking(thinking: str, text: str):
+    """Mock provider: yields thinking deltas first, then the final text reply."""
+    provider = AsyncMock()
+
+    async def _mock_chat(messages, tools):
+        yield ThinkingDelta(content=thinking)
         yield _text_delta(text)
         yield _stream_end()
 
@@ -316,3 +330,56 @@ class TestChatIntegration:
         tl = read_jsonl(timeline)
         assert len(tl) == 1
         assert tl[0]["turn"] == 1
+
+    @pytest.mark.asyncio
+    async def test_thinking_persisted_to_turn_file(self, store, tmp_path):
+        """思考内容应落盘到 turn 文件，供退出重进后恢复显示。"""
+        agent_root = _make_agent_dir(tmp_path)
+        sessions_root = tmp_path / "sessions"
+        sessions_root.mkdir()
+        config = Config(aide_root=tmp_path / ".aide")
+
+        provider = _mock_provider_with_thinking(
+            thinking="用户想要一个简洁的脚本，先看现有代码结构。",
+            text="我来帮你写。",
+        )
+        tool_registry = ToolRegistry()
+        pipeline = ContextPipeline(agent_root=agent_root)
+        ingester = ContextIngester(store, sessions_root=sessions_root)
+
+        ctx = KernelContext(
+            config=config,
+            provider=provider,
+            tooling=ToolingContext(
+                tool_registry=tool_registry,
+                command_registry=MagicMock(),
+                plugin_host=MagicMock(),
+                slot_registry=MagicMock(),
+            ),
+            memory=MemoryContext(reflector=MagicMock()),
+            session=SessionContext(
+                context_pipeline=pipeline,
+                ingester=ingester,
+                session_manager=MagicMock(),
+            ),
+        )
+        kernel = AgentKernel(ctx)
+
+        session_dir = tmp_path / "session"
+        session_dir.mkdir()
+        (session_dir / "messages").mkdir()
+
+        await kernel.chat(
+            user_msg="写个脚本",
+            session_dir=session_dir,
+            turn=1,
+            conversation=[],
+            ui=MagicMock(),
+        )
+
+        data = json.loads(
+            (session_dir / "messages" / "turn_001.json").read_text(encoding="utf-8"))
+        assert "用户想要一个简洁的脚本" in data["thinking"]
+        # 思考不进对话消息（不进 LLM 上下文）
+        assert not any(m.get("content", "").startswith("用户想要一个简洁的脚本")
+                       for m in data["messages"])

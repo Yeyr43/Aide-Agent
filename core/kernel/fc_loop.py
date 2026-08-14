@@ -108,6 +108,7 @@ class FunctionCallingLoop:
         self.hook_runner = hook_runner  # P7: PermissionRequest hook
         # 同轮工具结果缓存（仅缓存无副作用工具）
         self._result_cache: dict[tuple[str, str], str] = {}
+        self._thinking_buffer = ""  # 本轮累计思考内容（持久化恢复用）
 
     async def run(
         self,
@@ -125,6 +126,7 @@ class FunctionCallingLoop:
         """
         self._web_call_count = 0
         self._result_cache.clear()
+        self._thinking_buffer = ""  # 新一轮开始时重置
         tools_schema = self.registry.get_schemas()
         final: StreamEnd | None = None
         turn = 0
@@ -196,6 +198,11 @@ class FunctionCallingLoop:
                 ui.on_max_turns()
 
         return messages
+
+    @property
+    def thinking(self) -> str:
+        """本轮 FC 循环累计的思考内容（持久化到 turn 文件供恢复显示）。"""
+        return self._thinking_buffer
 
     # ── 工具执行（并行 + 超时 + 截断） ──────────────────────────
 
@@ -310,6 +317,7 @@ class FunctionCallingLoop:
                 _sanitize_messages(messages, self.supports_vision), tools_schema,
             ):
                 if isinstance(event, ThinkingDelta):
+                    self._thinking_buffer += event.content
                     ui.on_thinking_token(event.content)
                 elif isinstance(event, TextDelta):
                     response_text += event.content

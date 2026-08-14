@@ -17,6 +17,7 @@ from core.locale import t
 from core.platform import user_download_dir
 from core.setup import aide_dir
 from core.commands.context import CommandContext
+from core.sessions.restorer import _msg_to_entry
 
 AIDE_ROOT = aide_dir()
 AGENT_ROOT = AIDE_ROOT / "agent"
@@ -337,16 +338,12 @@ def _rebuild_conversation_from_disk(app: CommandContext, session_dir: Path, targ
 
         try:
             data = json.loads(tf.read_text(encoding="utf-8"))
-            conv = data.get("conversation", [])
-            if conv:
-                for msg in conv:
-                    role = msg.get("role", "")
-                    content = msg.get("content", "")
-                    if role in ("user", "assistant") and content:
-                        entry = {"role": role, "content": content}
-                        # 保留 _image_paths 以支持文件附件显示
-                        if "_image_paths" in msg:
-                            entry["_image_paths"] = msg["_image_paths"]
+            msgs = data.get("messages") or data.get("conversation") or []
+            if msgs:
+                # 保留 tool_calls / tool_call_id —— tool 消息必须有前置 assistant 配对
+                for msg in msgs:
+                    entry = _msg_to_entry(msg)
+                    if entry is not None:
                         session.conversation.append(entry)
             else:
                 # 回退：旧格式（仅 user/assistant 字符串）

@@ -22,7 +22,7 @@ from core.kernel import AppBootstrap
 from core.llm_gateway.content_builder import build_user_content
 from core.llm_gateway.image_utils import save_images_to_session
 from core.kernel.protocols import TokenUsage
-from core.sessions.restorer import restore_session
+from core.sessions.restorer import restore_session, restore_turns
 
 from .widgets.input_box import InputBox
 from .widgets.message_list import MessageList
@@ -93,6 +93,7 @@ class AideApp(App):
 
         # ── 对话状态 ──
         self._session = SessionContext()
+        self._restored_turns: list[dict] = []  # 已有会话恢复用的按轮记录
         self._last_usage: TokenUsage | None = None  # 来自 ChatResult 的 token 用量
 
         # ── 状态栏 + 冷启动引导 ──
@@ -198,9 +199,9 @@ class AideApp(App):
         msg_list = self.query_one("#messages", MessageList)
         msg_list.clear()
 
-        # 已有会话：恢复 UI 消息
+        # 已有会话：恢复 UI 消息（按轮重建树，保留 think/工具/正文细节）
         if session_id:
-            msg_list.restore_conversation(self._session.conversation)
+            msg_list.restore_conversation(self._restored_turns)
 
         # 更新状态栏
         self._update_status_bar()
@@ -232,10 +233,15 @@ class AideApp(App):
         self.chat_worker()
 
     def _restore_session(self, session_id: str) -> None:
-        """恢复已有会话的对话状态。"""
+        """恢复已有会话的对话状态。
+
+        conversation 供 LLM 上下文使用；_restored_turns 按轮保留
+        think/工具/正文细节，供 UI 重建回合树。
+        """
         conv, turn = restore_session(self._config.sessions_root, session_id)
         self._session.conversation = conv
         self._session.turn = turn
+        self._restored_turns = restore_turns(self._config.sessions_root, session_id)
 
     # ── 用户输入 ──────────────────────────────────────────────────────
 

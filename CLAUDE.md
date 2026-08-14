@@ -16,7 +16,7 @@ Aide Agent — 本地个人智能管家。核心不是"能做多少事"而是"�
 # 运行应用
 uv run python shell/main.py
 
-# 运行全部测试（1045 个）
+# 运行全部测试（1084 个）
 uv run pytest tests/ -q
 
 # 运行单个测试文件
@@ -266,6 +266,14 @@ sessions/{YYYYMMDD_HHMMSS}/
 ├── _search_index.json  # 全局搜索索引（JSONL 格式，bigram Jaccard 匹配）
 └── messages/           # 完整原文存档（turn_NNN.json）
 ```
+
+`turn_NNN.json`：`{turn, timestamp, user, assistant, thinking, messages}`。
+`messages` 是当轮增量消息（含带 `tool_calls` 的 assistant 与 `tool` 结果），
+`thinking` 是本轮 LLM 思考内容（退出重进后恢复 think 节点用，不进 LLM 上下文）。
+
+恢复链路：
+- `restore_session()` → 扁平 conversation（LLM 上下文）。**assistant 空 content 但带 `tool_calls` 必须保留**——否则其后 `tool` 消息失配，DeepSeek 会拒调。
+- `restore_turns()` → 按轮结构化记录 `[{turn, thinking, messages}]`，供 UI 重建完整树（think/工具/正文）。
 
 ## 智能标题
 

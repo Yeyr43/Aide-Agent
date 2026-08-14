@@ -119,3 +119,79 @@ async def test_tree_connectors_first_middle_last():
         assert nodes[0]._connector == "├"
         assert nodes[1]._connector == "├"
         assert nodes[2]._connector == "└"
+
+
+@pytest.mark.asyncio
+async def test_restore_rebuilds_tree_details():
+    """restore_conversation 按轮重建 think/工具/正文完整树（不丢细节）。"""
+    app = MessageListTestApp()
+    turns = [
+        {
+            "turn": 1,
+            "thinking": "先搜索",
+            "messages": [
+                {"role": "user", "content": "查 TODO"},
+                {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "search_in_files",
+                                  "arguments": '{"query": "TODO"}'}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "a.py: TODO"},
+                {"role": "assistant", "content": "找到了。"},
+            ],
+        },
+        {
+            "turn": 2,
+            "thinking": "直接回",
+            "messages": [
+                {"role": "user", "content": "好的"},
+                {"role": "assistant", "content": "不客气。"},
+            ],
+        },
+    ]
+    async with app.run_test():
+        ml = app.ml
+        ml.restore_conversation(turns)
+        nodes = [w for w in app.query(".tree-node")]
+        # turn1: think + tool + body; turn2: think + body
+        assert [type(w).__name__ for w in nodes] == [
+            "ThinkNode", "ToolNode", "BodyNode", "ThinkNode", "BodyNode",
+        ]
+        assert len(app.query(".turn-tree")) == 2
+        # 工具结果已回填
+        tool = nodes[1]
+        assert tool._plain == "a.py: TODO"
+        # 思考内容已恢复（折叠态，可展开）
+        think = nodes[0]
+        assert think._thinking == "先搜索"
+        # 正文已完成
+        body = nodes[2]
+        assert body._buffer == "找到了。"
+        assert body._finished is True
+
+
+@pytest.mark.asyncio
+async def test_restore_marks_tool_error_red():
+    """恢复时工具错误结果应标记为错误态（红 ●）。"""
+    app = MessageListTestApp()
+    turns = [
+        {
+            "turn": 1,
+            "thinking": "",
+            "messages": [
+                {"role": "user", "content": "跑一下"},
+                {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "run_shell",
+                                  "arguments": '{"command": "rm -rf"}'}}]},
+                {"role": "tool", "tool_call_id": "c1",
+                 "content": "⚠️ 高风险操作已被阻止"},
+            ],
+        },
+    ]
+    async with app.run_test():
+        ml = app.ml
+        ml.restore_conversation(turns)
+        tool = [w for w in app.query(".tree-node")
+                if type(w).__name__ == "ToolNode"][0]
+        assert tool._is_error is True
+        assert "高风险操作已被阻止" in tool._plain

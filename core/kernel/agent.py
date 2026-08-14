@@ -114,12 +114,13 @@ class AgentKernel:
         # ── 2. FC 循环（含 before/after hook）──
         ctx = await self._runner.before_fc_loop(ctx)
 
-        assistant_text, new_conversation, turn_messages = (
+        assistant_text, new_conversation, turn_messages, thinking = (
             await self._run_and_merge(ctx.conversation, full_messages, ctx.ui)
         )
         ctx.assistant_text = assistant_text
         ctx.new_conversation = new_conversation
         ctx.turn_messages = turn_messages
+        ctx.thinking = thinking
 
         ctx = await self._runner.after_fc_loop(ctx)
 
@@ -132,6 +133,7 @@ class AgentKernel:
             turn=ctx.turn,
             user_msg=ctx.user_msg,
             assistant_msg=ctx.assistant_text,
+            thinking=ctx.thinking,
             turn_messages=ctx.turn_messages,
         )
 
@@ -223,14 +225,15 @@ class AgentKernel:
         conversation: list[dict],
         full_messages: list[dict],
         ui: ExecutorUI,
-    ) -> tuple[str, list[dict], list[dict]]:
+    ) -> tuple[str, list[dict], list[dict], str]:
         """执行 FC 循环 → 合并对话历史 → 提取 AI 回复。
 
         Returns:
-            (assistant_text, new_conversation, turn_messages)
+            (assistant_text, new_conversation, turn_messages, thinking)
         """
         assistant_text = ""
         turn_messages: list[dict] = []
+        thinking = ""
 
         try:
             updated = await self._fc_loop.run(full_messages, ui=ui)
@@ -253,8 +256,10 @@ class AgentKernel:
                 new_conversation.append({"role": "assistant", "content": assistant_text})
                 conv_before_user = len(conversation) - 1
                 turn_messages = new_conversation[conv_before_user:]
+            # 异常前已流出的思考内容也应保留（部分是细节）
+            thinking = self._fc_loop.thinking
 
-        return assistant_text, new_conversation, turn_messages
+        return assistant_text, new_conversation, turn_messages, thinking
 
     @staticmethod
     def _merge_updated(

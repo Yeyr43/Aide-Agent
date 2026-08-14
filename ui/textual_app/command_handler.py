@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from core.commands.builtin.handlers import _rebuild_conversation_from_disk
 from core.locale import t
+from core.sessions.restorer import restore_turns
 
 from .widgets.input_box import InputBox
 
@@ -157,7 +158,11 @@ class CommandHandler:
         _rebuild_conversation_from_disk(self._app, session_dir, target_turn)
 
         msg_list.clear()
-        msg_list.restore_conversation(self._app._session.conversation)
+        # 回滚后按轮重建 UI 树（保留 think/工具/正文细节）
+        sessions_root = self._app._config.sessions_root
+        msg_list.restore_conversation(
+            restore_turns(sessions_root, session_dir.name, max_turn=target_turn)
+        )
 
         deleted = current_turn - target_turn
         msg_list.add_command_result(
