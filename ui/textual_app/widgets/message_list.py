@@ -1,90 +1,66 @@
-"""消息流组件 — 等宽边框 Panel，Markdown + Pygments。
+"""消息流组件 — 树形回合展示。
 
-消息等宽居中，AI 回复不显示名字。
-流式阶段 Text.from_markup（快），完成阶段 RichMarkdown（Pygments 高亮）。
-双击消息框复制内容到剪贴板。
+每个 assistant 回合 = 一棵 TurnTree（tree_nodes.py）。
+用户消息保留气泡框（MessageWidget），与树之间空一行。
+流式：think 展开 → 结束折叠；工具精简单行；正文流式 Markdown。
+交互：左键双击折叠/展开（可折叠节点）；右键点击复制。
 """
 
 import logging
 import time
-from rich.markdown import Markdown as RichMarkdown
-from rich.markup import escape
 
-logger = logging.getLogger(__name__)
 from rich.panel import Panel
+from rich.markup import escape
 from rich.text import Text
 from textual.containers import VerticalScroll
-from textual.widgets import Static
 from textual.events import Click
+from textual.widgets import Static
+
+from .tree_nodes import (
+    ThinkNode, ToolNode, BodyNode, ErrorNode, SystemNode, TurnTree,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class MessageWidget(Static):
-    """可双击复制的消息组件。
-
-    每个消息独立跟踪自己的双击状态，双击后复制内容到剪贴板。
-    有图片/文件路径时，双击打开文件，双击其他区域复制文本。
-    """
+    """用户消息组件：保留气泡框。双击打开附件文件，右键复制。"""
 
     def __init__(self, content: str = "", renderable=None,
                  image_paths: list[str] | None = None,
                  file_paths: list[str] | None = None, **kwargs) -> None:
         super().__init__(renderable if renderable is not None else "", **kwargs)
-        self._plain_content = content  # 纯文本原文，供复制使用
-        self._image_paths = image_paths or []  # 关联的图片文件路径
-        self._file_paths = file_paths or []    # 所有附件文件路径（含非图片）
-        self._last_click_time: float = 0.0
+        self._plain_content = content
+        self._image_paths = image_paths or []
+        self._file_paths = file_paths or []
+        self._last_click_time = 0.0
         self.DOUBLE_CLICK_MS = 400
 
     def on_click(self, event: Click) -> None:
-        """双击检测 → 有文件路径则打开文件，否则复制文本。"""
+        if event.button == 3:  # 右键 → 复制
+            self._copy_to_clipboard()
+            return
+        if event.button != 1:
+            return
         now = time.monotonic()
         elapsed = (now - self._last_click_time) * 1000
         self._last_click_time = now
-
         if 0 < elapsed < self.DOUBLE_CLICK_MS:
             all_files = self._image_paths + [
                 f for f in self._file_paths if f not in self._image_paths
             ]
             if all_files:
                 self._open_files(all_files)
-            else:
-                self._copy_to_clipboard()
 
     def _open_files(self, paths: list[str]) -> None:
-        """用系统默认程序打开文件（图片用 _open_images 兼容）。"""
         from core.llm_gateway.image_utils import open_with_os
         for p in paths:
             open_with_os(p)
 
     def _copy_to_clipboard(self) -> None:
-        """复制消息内容到系统剪贴板。"""
-        text = self._plain_content
-        if not text:
-            # 尝试从 renderable 提取
-            try:
-                r = self.renderable
-                if isinstance(r, Panel):
-                    inner = r.renderable
-                    if isinstance(inner, Text):
-                        text = inner.plain
-                    elif isinstance(inner, RichMarkdown):
-                        text = inner.markup
-                    elif isinstance(inner, str):
-                        text = inner
-                    else:
-                        text = str(inner)
-                elif isinstance(r, Text):
-                    text = r.plain
-                elif isinstance(r, str):
-                    text = r
-            except Exception:
-                logger.debug("Failed to extract text from renderable for clipboard copy, skipping")
-                return
-
-        text = (text or "").strip()
+        text = (self._plain_content or "").strip()
         if not text:
             return
-
         try:
             import pyperclip
             pyperclip.copy(text)
@@ -93,33 +69,51 @@ class MessageWidget(Static):
 
 
 class MessageList(VerticalScroll):
-    """聊天消息列表。
-
-    每条消息是 MessageWidget（等宽 Panel、双击复制）。
-    AI 流式复用同一个 Static，update 而非新建。
-    流式阶段 Text.from_markup → 完成阶段 RichMarkdown。
-    """
+    """聊天消息列表 — 回合树流式管理器。"""
 
     def __init__(self, code_theme: str = "monokai", **kwargs) -> None:
         super().__init__(**kwargs)
-        self._ai_stream: Static | None = None
-        self._ai_buffer: str = ""
-        self._thinking_buffer: str = ""
         self._code_theme = code_theme
+        self._current_turn: TurnTree | None = None
+        self._think_node: ThinkNode | None = None
+        self._body_node: BodyNode | None = None
+        self._tool_fifo: dict[str, list[ToolNode]] = {}
+        self._tool_start_times: dict[int, float] = {}
+        self._turn_ai_text = ""
 
-    # ── 用户消息（右对齐，有边框） ──────────────────────────────────
+    # ── 回合树管理 ──────────────────────────────────────────────
+
+    def _ensure_turn(self) -> TurnTree:
+        if self._current_turn is None:
+            tree = TurnTree()
+            tree.add_class("turn-tree")
+            self.mount(tree)
+            self._current_turn = tree
+        return self._current_turn
+
+    def _close_open_text(self) -> None:
+        """折叠当前 think + 收尾当前正文（若存在）。"""
+        if self._think_node is not None:
+            self._think_node.finish()
+            self._think_node = None
+        if self._body_node is not None:
+            self._body_node.finish()
+            self._body_node = None
+
+    def _close_turn(self) -> None:
+        """关闭当前回合树（下一条用户消息 / 回合结束）。"""
+        self._close_open_text()
+        self._current_turn = None
+        self._turn_ai_text = ""
+
+    # ── 用户消息 ────────────────────────────────────────────────
 
     def add_user_message(self, text: str, file_paths: list[str] | None = None) -> None:
-        """添加用户消息（含可选附件文件）。
+        self._close_turn()
 
-        Args:
-            text: 消息文本（可能包含完整文件路径，由 InputBox 发送）
-            file_paths: 可选的附件文件路径列表（图片/普通文件）
-        """
         display_lines: list[str] = []
-        image_paths: list[str] = []  # 图片文件可双击打开
-        all_file_paths: list[str] = []  # 所有文件（含非图片），供双击打开
-
+        image_paths: list[str] = []
+        all_file_paths: list[str] = []
         display_text = text or ""
 
         if file_paths:
@@ -131,7 +125,6 @@ class MessageList(VerticalScroll):
                 if is_image_path(p):
                     image_paths.append(p)
                 all_file_paths.append(p)
-            # 从显示文本中剥离完整路径（已渲染为 [文件名] chip，避免重复）
             for p in file_paths:
                 display_text = display_text.replace(p, "")
             display_text = display_text.strip()
@@ -152,171 +145,138 @@ class MessageList(VerticalScroll):
         self.mount(msg)
         self._scroll_end()
 
-    # ── AI 流式消息（无名字，无标题） ────────────────────────────────
-
-    def add_ai_chunk(self, chunk: str) -> None:
-        self._ensure_stream()
-        self._ai_buffer += chunk
-        self._render_combined()
-        self._scroll_end()
-
-    # ── 深度思考（灰色字体，同一面板内） ──────────────────────────────
+    # ── 思考 ────────────────────────────────────────────────────
 
     def add_thinking_chunk(self, chunk: str) -> None:
-        """添加深度思考 token（同一面板内灰色渲染）。"""
-        self._ensure_stream()
-        self._thinking_buffer += chunk
-        self._render_combined()
+        if self._think_node is None:
+            tree = self._ensure_turn()
+            self._think_node = ThinkNode()
+            tree.add_node(self._think_node, "think")
+        self._think_node.append_chunk(chunk)
         self._scroll_end()
 
-    def _ensure_stream(self) -> None:
-        if self._ai_stream is None:
-            self._ai_stream = Static("")
-            self._ai_stream.add_class("ai-message")
-            self.mount(self._ai_stream)
+    # ── 工具 ────────────────────────────────────────────────────
 
-    def _render_combined(self) -> None:
-        """将思考内容（灰色）和正文（正常）渲染在同一 Panel 中。"""
-        content = Text()
-        if self._thinking_buffer:
-            # 思考内容用灰色斜体（Text.append 不加 escape，appended text 是 literal）
-            content.append(self._thinking_buffer, style="italic #888888")
-        if self._thinking_buffer and self._ai_buffer:
-            content.append("\n", style="")
-        if self._ai_buffer:
-            # 用 Text.from_markup(escape(...)) 保留原始转义逻辑，防止 [tag] 被当 Rich markup
-            content.append_text(Text.from_markup(escape(self._ai_buffer)))
-        if self._ai_stream:
-            self._ai_stream.update(
-                Panel(content, border_style="#555555"),
-            )
+    def add_tool_start(self, tool_name: str, arguments: dict) -> None:
+        self._close_open_text()  # 工具开始 → 折叠当前 think / 收尾正文
+        tree = self._ensure_turn()
+        node = ToolNode(tool_name, arguments)
+        tree.add_node(node, "tool")
+        self._tool_fifo.setdefault(tool_name, []).append(node)
+        self._tool_start_times[id(node)] = time.monotonic()
+        self._scroll_end()
 
-    def replace_streamed_text(self, clean_text: str) -> None:
-        """XML fallback: 用干净文本替换当前正在渲染的 AI 消息。"""
-        self._ai_buffer = clean_text
-        if self._ai_stream is not None:
-            content = Text.from_markup(escape(clean_text))
-            self._ai_stream.update(
-                Panel(content, border_style="#555555"),
-            )
+    def _pop_tool_node(self, tool_name: str) -> ToolNode | None:
+        q = self._tool_fifo.get(tool_name)
+        if not q:
+            return None
+        node = q.pop(0)
+        if not q:
+            del self._tool_fifo[tool_name]
+        return node
+
+    def _elapsed(self, node_id: int) -> float | None:
+        start = self._tool_start_times.pop(node_id, None)
+        if start is None:
+            return None
+        return time.monotonic() - start
+
+    def add_tool_done(self, tool_name: str, result: str) -> None:
+        node = self._pop_tool_node(tool_name)
+        if node is None:
+            return
+        node.set_result(result)
+        node.set_duration(self._elapsed(id(node)))
+        self._scroll_end()
+
+    def add_tool_error(self, tool_name: str, error: str) -> None:
+        node = self._pop_tool_node(tool_name)
+        if node is None:
+            # 无配对节点（如 LLM 错误 / 被拦截工具）→ 独立错误节点
+            tree = self._ensure_turn()
+            node = ErrorNode(f"{tool_name}: {error}")
+            tree.add_node(node, "error")
+            return
+        node.set_error(error)
+        node.set_duration(self._elapsed(id(node)))
+        self._scroll_end()
+
+    # ── 正文 ────────────────────────────────────────────────────
+
+    def add_ai_chunk(self, chunk: str) -> None:
+        if self._think_node is not None:  # 正文开始 → 思考折叠
+            self._think_node.finish()
+            self._think_node = None
+        tree = self._ensure_turn()
+        if self._body_node is None:
+            self._body_node = BodyNode(code_theme=self._code_theme)
+            tree.add_node(self._body_node, "body")
+        self._body_node.append_chunk(chunk)
+        self._turn_ai_text += chunk
+        self._scroll_end()
 
     def finish_ai_message(self) -> str:
-        full = self._ai_buffer
+        text = self._turn_ai_text
+        self._close_turn()
+        return text
 
-        # 转义所有 < 和 >，防止 RichMarkdown 把它们当 HTML 标签隐藏。
-        if "<" in full or ">" in full:
-            full = full.replace("<", "&lt;").replace(">", "&gt;")
-            self._ai_buffer = full
+    def replace_streamed_text(self, clean_text: str) -> None:
+        """XML fallback：用干净文本替换当前流式正文。"""
+        self._turn_ai_text = clean_text
+        if self._body_node is not None:
+            self._body_node.replace_content(clean_text)
 
-        has_content = bool(full) or bool(self._thinking_buffer)
-        if self._ai_stream is not None and has_content:
-            # 构建组合 renderable：思考（灰色）+ 正文（Markdown）
-            parts: list = []
-            if self._thinking_buffer:
-                safe_think = self._thinking_buffer.replace("<", "&lt;").replace(">", "&gt;")
-                parts.append(Text(safe_think, style="italic #888888"))
-            if self._thinking_buffer and full:
-                parts.append(Text(""))  # spacer
-            if full:
-                try:
-                    parts.append(RichMarkdown(full, code_theme=self._code_theme))
-                except Exception:
-                    parts.append(Text(full))
-
-            from rich.console import Group
-            renderable = Group(*parts) if len(parts) > 1 else parts[0]
-
-            self._ai_stream.remove()
-            ai_msg = MessageWidget(
-                full,
-                renderable=Panel(renderable, border_style="#555555"),
-            )
-            ai_msg.add_class("ai-message")
-            self.mount(ai_msg)
-
-        self._ai_stream = None
-        self._ai_buffer = ""
-        self._thinking_buffer = ""
-        return full
-
-    # ── 错误 ────────────────────────────────────────────────────────
+    # ── 错误 / 系统 / 命令 ──────────────────────────────────────
 
     def add_error(self, text: str) -> None:
-        content = Text.from_markup(escape(text))
-        msg = MessageWidget(
-            text,
-            renderable=Panel(content, border_style="#cc3333", title="Error"),
-        )
-        msg.add_class("error-message")
-        self.mount(msg)
+        tree = self._ensure_turn()
+        tree.add_node(ErrorNode(text), "error")
         self._scroll_end()
-
-    # ── 系统通知 ────────────────────────────────────────────────────
 
     def add_system_notice(self, text: str) -> None:
-        content = Text.from_markup(escape(text))
-        msg = MessageWidget(
-            text,
-            renderable=Panel(content, border_style="#e09030", title="System"),
-        )
-        msg.add_class("system-message")
-        self.mount(msg)
+        tree = self._ensure_turn()
+        tree.add_node(SystemNode(text), "system")
         self._scroll_end()
-
-    # ── 命令结果 ────────────────────────────────────────────────────
 
     def add_command_result(self, text: str, title: str = "Command") -> None:
-        # 转义 HTML 标签，防止 RichMarkdown 吞掉 <T> 等代码内容
-        safe = text.replace("<", "&lt;").replace(">", "&gt;")
-        try:
-            content = RichMarkdown(safe, code_theme=self._code_theme)
-        except Exception:
-            content = Text.from_markup(escape(text))
-        msg = MessageWidget(
-            text,
-            renderable=Panel(content, border_style="#e09030", title=title),
-        )
-        msg.add_class("cmd-message")
-        self.mount(msg)
+        tree = self._ensure_turn()
+        tree.add_node(SystemNode(text), "system")
         self._scroll_end()
 
-    # ── 状态 ────────────────────────────────────────────────────────
+    # ── 状态 ────────────────────────────────────────────────────
 
     def has_pending(self) -> bool:
-        return self._ai_stream is not None and (bool(self._ai_buffer) or bool(self._thinking_buffer))
+        return self._think_node is not None or self._body_node is not None
 
     def clear(self) -> None:
-        """清空所有消息。"""
-        self._ai_stream = None
-        self._ai_buffer = ""
-        self._thinking_buffer = ""
+        self._current_turn = None
+        self._think_node = None
+        self._body_node = None
+        self._tool_fifo.clear()
+        self._tool_start_times.clear()
+        self._turn_ai_text = ""
         for child in list(self.children):
             child.remove()
 
     def restore_conversation(self, messages: list[dict]) -> None:
-        """从 conversation 列表恢复显示所有消息（含多模态 content）。"""
         for msg in messages:
             role = msg.get("role", "")
             raw_content = msg.get("content", "")
             text, images = _parse_multimodal_content(raw_content)
-
             if role == "user" and (text or images):
-                # 优先使用 _image_paths（文件路径），回退到 content 中的 data URL
                 file_paths = msg.get("_image_paths", []) or images
                 self.add_user_message(text or "", file_paths=file_paths)
             elif role == "assistant" and text:
-                # 转义 HTML 标签，防止 <T> 等代码内容被 RichMarkdown 吞掉
-                safe = text.replace("<", "&lt;").replace(">", "&gt;")
-                try:
-                    md = RichMarkdown(safe, code_theme=self._code_theme)
-                except Exception:
-                    md = Text.from_markup(escape(text))
-                widget = MessageWidget(
-                    text,
-                    renderable=Panel(md, border_style="#555555"),
-                )
-                widget.add_class("ai-message")
-                self.mount(widget)
+                self._add_restored_body(text)
+
+    def _add_restored_body(self, text: str) -> None:
+        """恢复的历史 assistant 消息 = 只有正文节点的回合树。"""
+        self._close_turn()
+        tree = self._ensure_turn()
+        node = BodyNode(code_theme=self._code_theme)
+        node.set_finished_text(text)
+        tree.add_node(node, "body")
+        self._close_turn()
 
     def _scroll_end(self) -> None:
         self.scroll_end(animate=False)
