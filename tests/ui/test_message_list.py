@@ -80,3 +80,25 @@ async def test_user_message_closes_turn():
         trees = app.query(".turn-tree")
         assert len(trees) == 1  # 用户消息不建树，只关闭上一个回合树
         assert ml._current_turn is None
+
+
+@pytest.mark.asyncio
+async def test_one_turn_tree_across_tool_flow():
+    """一次用户回合（think→工具→最终回答）应是一棵连续的树。"""
+    app = MessageListTestApp()
+    async with app.run_test():
+        ml = app.ml
+        # 第一次 LLM 调用：think + 部分正文 → on_text_done
+        ml.add_thinking_chunk("思考中")
+        ml.add_ai_chunk("让我看看")
+        ml.finish_ai_message()
+        # 工具执行
+        ml.add_tool_start("read_file", {"path": "x"})
+        ml.add_tool_done("read_file", "内容")
+        # 第二次 LLM 调用：think + 最终回答 → on_text_done
+        ml.add_thinking_chunk("继续")
+        ml.add_ai_chunk("答案是 42")
+        ml.finish_ai_message()
+        # 整个回合应只有一棵树，正文跨段累计
+        assert len(app.query(".turn-tree")) == 1
+        assert ml._turn_ai_text == "让我看看答案是 42"

@@ -101,9 +101,11 @@ class MessageList(VerticalScroll):
             self._body_node = None
 
     def _close_turn(self) -> None:
-        """关闭当前回合树（下一条用户消息 / 回合结束）。"""
+        """关闭当前回合树（下一条用户消息 / 清空）。"""
         self._close_open_text()
         self._current_turn = None
+        self._tool_fifo.clear()
+        self._tool_start_times.clear()
         self._turn_ai_text = ""
 
     # ── 用户消息 ────────────────────────────────────────────────
@@ -196,6 +198,7 @@ class MessageList(VerticalScroll):
             tree = self._ensure_turn()
             node = ErrorNode(f"{tool_name}: {error}")
             tree.add_node(node, "error")
+            self._scroll_end()
             return
         node.set_error(error)
         node.set_duration(self._elapsed(id(node)))
@@ -216,9 +219,13 @@ class MessageList(VerticalScroll):
         self._scroll_end()
 
     def finish_ai_message(self) -> str:
-        text = self._turn_ai_text
-        self._close_turn()
-        return text
+        """收尾当前流式文本（think 折叠、正文冻结为 Markdown），不关闭回合树。
+
+        回合树在用户下一条消息时由 add_user_message 关闭——保证一次用户回合
+        （含多次 FC 迭代的 think/工具/正文）显示为一棵连续的树。
+        """
+        self._close_open_text()
+        return self._turn_ai_text
 
     def replace_streamed_text(self, clean_text: str) -> None:
         """XML fallback：用干净文本替换当前流式正文。"""

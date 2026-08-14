@@ -28,6 +28,7 @@ Screen {
 .tree-guide {
     color: #555555;
     height: 1;
+    margin: 0 0 0 8;           /* 与树内容左缩进对齐（● 在 col≈10，│ 跟在其下） */
 }
 
 .tree-node {
