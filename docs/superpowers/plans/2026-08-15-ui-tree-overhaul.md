@@ -631,6 +631,7 @@ async def test_user_message_closes_turn():
         trees = app.query(".turn-tree")
         assert len(trees) == 1  # 用户消息不建树，只关闭上一个回合树
         assert ml._current_turn is None
+```
 
 - [ ] **Step 2: 运行测试验证失败**
 
