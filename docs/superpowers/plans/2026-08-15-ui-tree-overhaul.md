@@ -128,7 +128,8 @@ class TestNodeRenderables:
         node = ToolNode("read_file", {"path": "x"})
         node.set_error("boom")
         r = node._build_renderable()
-        assert "cc3333" in r.style  # 错误态 ● 用红色
+        assert isinstance(r, Text)
+        assert any("cc3333" in str(s.style) for s in r.spans)  # 错误态 ● 用红色
 
     def test_body_finished_is_markdown(self):
         node = BodyNode()
@@ -510,15 +511,7 @@ class TurnTree(Vertical):
 - [ ] **Step 4: 运行测试验证通过**
 
 Run: `uv run pytest tests/ui/test_tree_nodes.py -v`
-Expected: PASS（若 `r.style` 断言失败——Text 的 style 需经 `r.get_style(0)` 或 `r.span` 检查，改用下面代码）:
-```python
-def test_tool_error_bullet_red(self):
-    node = ToolNode("read_file", {"path": "x"})
-    node.set_error("boom")
-    r = node._build_renderable()
-    assert isinstance(r, Text)
-    assert "cc3333" in str(r.plain) or "cc3333" in repr(r)
-```
+Expected: PASS
 
 - [ ] **Step 5: Commit**
 
@@ -636,10 +629,8 @@ async def test_user_message_closes_turn():
         ml.add_ai_chunk("AI 回复")
         ml.add_user_message("新的用户消息")
         trees = app.query(".turn-tree")
-        assert len(trees) == 2  # AI 回合树 + 用户消息新树（用户消息也建树？不——用户消息不建树）
-```
-
-（注：最后这个测试的断言需要与实现对齐——用户消息用 `MessageWidget`（非 TurnTree），`add_user_message` 只负责关闭当前回合树。若用户消息不建树，则断言应为 `len(trees) == 1` 且 `ml._current_turn is None`。以实际实现为准调整。）
+        assert len(trees) == 1  # 用户消息不建树，只关闭上一个回合树
+        assert ml._current_turn is None
 
 - [ ] **Step 2: 运行测试验证失败**
 
@@ -662,6 +653,7 @@ Expected: FAIL（MessageList 尚无新方法 / 行为未变）
 import logging
 import time
 
+from rich.panel import Panel
 from rich.markup import escape
 from rich.text import Text
 from textual.containers import VerticalScroll
@@ -788,7 +780,8 @@ class MessageList(VerticalScroll):
         content = Text.from_markup(escape(display))
         msg = MessageWidget(
             display_text or ("\n".join(display_lines)),
-            renderable=content,  # 用户消息不再用 Panel 边框
+            renderable=Panel(content, border_style="#555555",
+                             title="You", title_align="right"),
             image_paths=image_paths if image_paths else None,
             file_paths=all_file_paths if all_file_paths else None,
         )
@@ -910,7 +903,6 @@ class MessageList(VerticalScroll):
             child.remove()
 
     def restore_conversation(self, messages: list[dict]) -> None:
-        from .message_list import _parse_multimodal_content  # 本文件内函数
         for msg in messages:
             role = msg.get("role", "")
             raw_content = msg.get("content", "")
@@ -934,7 +926,7 @@ class MessageList(VerticalScroll):
         self.scroll_end(animate=False)
 ```
 
-注意：`restore_conversation` 里 `_parse_multimodal_content` 在文件同作用域，直接调用即可，去掉 `from .message_list import`（文件内递归导入自身无意义）。`add_user_message` 的用户消息不再用 Panel（改为纯文本内容，由 CSS 提供视觉），若需保留 `Panel` 边框样式可改为 `Panel(content, border_style="#555555", title="You", title_align="right")`——以视觉效果为准二选一。
+注意：`_parse_multimodal_content` 在文件同作用域，直接调用即可。用户消息按设计"保留对话框"，使用 `Panel` 边框（`title="You"`，右对齐）。
 
 - [ ] **Step 4: 运行测试验证通过**
 
