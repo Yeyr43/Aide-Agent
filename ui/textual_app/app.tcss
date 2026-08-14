@@ -16,18 +16,24 @@ Screen {
 }
 
 .user-message {
-    margin: 1 0 0 8;
+    margin: 1 0 2 8;          /* 保留缩进 + 底部留空一行（与树隔开） */
     background: #0c0c0c;
+    color: #c8c8c0;
 }
 
-.ai-message {
-    margin: 1 8 0 0;
-    background: #0c0c0c;
+.turn-tree {
+    margin: 0 0 1 0;
 }
 
-.error-message { margin: 1 4; }
-.system-message { margin: 1 4; }
-.cmd-message { margin: 1 4; }
+.tree-guide {
+    color: #555555;
+    height: 1;
+}
+
+.tree-node {
+    margin: 0 0 0 8;           /* 树内容左缩进 8，对齐用户框缩进 */
+    color: #c8c8c0;
+}
 
 #bottom-area {
     dock: bottom;
@@ -36,7 +42,7 @@ Screen {
 }
 
 #input {
-    margin: 0 2 1 2;
+    margin: 0 0 1 0;          /* 占满整行（去掉左右 margin） */
     border: solid #555555;
     background: #121212;
     color: #c8c8c0;
@@ -52,7 +58,7 @@ CommandPalette {
     display: none;
     height: auto;
     max-height: 7;
-    margin: 0 2 0 2;
+    margin: 0 0 0 0;           /* 与输入框对齐，整行 */
     border: solid #555555;
     background: #121212;
     padding: 0 1;
