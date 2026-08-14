@@ -64,21 +64,22 @@ class TestUIBridgeToolEvents:
         bridge = UIBridge(app)
         return bridge, mock_msg_list
 
-    def test_tool_start_and_done_are_noops(self, bridge_with_mock_msg_list):
-        """P3 design: tool start/done are intentionally no-ops."""
+    def test_tool_start_forwards_to_msg_list(self, bridge_with_mock_msg_list):
         bridge, msg_list = bridge_with_mock_msg_list
         bridge.on_tool_start("read_file", {"path": "/tmp/x"})
-        bridge.on_tool_done("read_file", "content here")
-        # msg_list should NOT have been called
-        msg_list.add_error.assert_not_called()
+        msg_list.add_tool_start.assert_called_once_with(
+            "read_file", {"path": "/tmp/x"}
+        )
 
-    def test_tool_error_shows_error(self, bridge_with_mock_msg_list):
+    def test_tool_done_forwards_to_msg_list(self, bridge_with_mock_msg_list):
+        bridge, msg_list = bridge_with_mock_msg_list
+        bridge.on_tool_done("read_file", "content")
+        msg_list.add_tool_done.assert_called_once_with("read_file", "content")
+
+    def test_tool_error_forwards_to_msg_list(self, bridge_with_mock_msg_list):
         bridge, msg_list = bridge_with_mock_msg_list
         bridge.on_tool_error("read_file", "Permission denied")
-        msg_list.add_error.assert_called_once()
-        call_arg = msg_list.add_error.call_args[0][0]
-        assert "read_file" in call_arg
-        assert "Permission denied" in call_arg
+        msg_list.add_tool_error.assert_called_once_with("read_file", "Permission denied")
 
     def test_max_turns_notice(self, bridge_with_mock_msg_list):
         bridge, msg_list = bridge_with_mock_msg_list

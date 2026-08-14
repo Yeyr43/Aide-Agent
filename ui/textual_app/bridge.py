@@ -50,15 +50,13 @@ class UIBridge:
             self._last_ai_text = msg_list.finish_ai_message()
 
     def on_tool_start(self, tool_name: str, arguments: dict) -> None:
-        pass  # 不显示工具调用
+        self._msg_list().add_tool_start(tool_name, arguments)
 
     def on_tool_done(self, tool_name: str, result: str) -> None:
-        pass
+        self._msg_list().add_tool_done(tool_name, result)
 
     def on_tool_error(self, tool_name: str, error: str) -> None:
-        self._msg_list().add_error(
-            t("ui.bridge.tool_error", name=tool_name, error=error)
-        )
+        self._msg_list().add_tool_error(tool_name, error)
 
     def on_max_turns(self) -> None:
         self._msg_list().add_system_notice(
