@@ -49,8 +49,8 @@ def _format_args(arguments: dict) -> str:
     return s[:60] + ("..." if len(s) > 60 else "")
 
 
-def _guide_indented(text: str, indent: str = "   ", style: str = "") -> Text:
-    """多行内容渲染：每行加 │ 引导前缀，缩进到文本列。"""
+def _guide_indented(text: str, indent: str = "  ", style: str = "") -> Text:
+    """多行内容渲染：每行加 │ 引导前缀，缩进到文本列（标签首列 +4）。"""
     t = Text()
     lines = text.split("\n")
     for i, line in enumerate(lines):
@@ -268,14 +268,24 @@ class BodyNode(TreeNode):
         if not self._buffer:
             return self._label_line("")
         if not self._finished:
-            return Text.from_markup(escape(f"{self._connector} ● " + self._buffer))
-        safe_body = self._buffer.replace("<", "&lt;").replace(">", "&gt;")
+            # 流式：首行接在节点行（│ ● 正文）；后续行缩进到文本列，与完成态一致不跳行
+            t = Text(f"{self._connector} ● ")
+            for i, line in enumerate(self._buffer.split("\n")):
+                if i:
+                    t.append("\n    ")  # 正文不加树线，仅缩进到文本列
+                t.append(line, style="")
+            return t
+        # 完成态：首行与节点同水平行；其余行以 Markdown 缩进到文本列
+        first, sep, rest = self._buffer.partition("\n")
+        node_line = Text.from_markup(escape(f"{self._connector} ● " + first))
+        if not sep:
+            return node_line
+        safe_rest = rest.replace("<", "&lt;").replace(">", "&gt;")
         try:
-            md = RichMarkdown(safe_body, code_theme=self._code_theme)
+            md = RichMarkdown(safe_rest, code_theme=self._code_theme)
         except Exception:
-            md = Text(self._buffer)
-        # 正文：连接符 ● 首行 + 正文缩进到文本列（RichMarkdown 无法逐行加引导前缀）
-        return Group(Text(f"{self._connector} ● "), Padding(md, (0, 0, 0, 4)))
+            md = Text(rest)
+        return Group(node_line, Padding(md, (0, 0, 0, 4)))
 
 
 class ErrorNode(TreeNode):
