@@ -100,13 +100,13 @@ core/
 │   └── content_builder.py  # 多模态 content 构建
 ├── context/             # 上下文管线 — 优先级队列模型
 │   ├── pipeline.py      # ContextPipeline — 收集 → 评分 → token 预算填充（async I/O）
-│   ├── ingester.py      # ContextIngester — 写入 messages/ + timeline.json + search index
+│   ├── ingester.py      # ContextIngester — 写入 messages/ + timeline.json（索引唯一源）
 │   ├── tokenizer.py     # 分词器 — TF-IDF / Jaccard / 时间衰减 / 同义词扩展 / _detect_language
-│   ├── overview.py      # 会话总览 + parse_overview_md + restore_overview_from_checkpoint
+│   ├── overview.py      # 会话总览 + read_current_overview + restore_overview_from_checkpoint
 │   ├── relevance.py     # tokenizer + overview 的公开 API 重导出层
 │   └── token_counter.py # 上下文 token 估算 + compute_context_usage
 ├── search/              # 全局会话搜索
-│   └── index.py         # SearchIndex — bigram Jaccard 关键词匹配（INDEX 格式）
+│   └── index.py         # SearchIndex — 纯内存索引，启动从 timeline rebuild（timeline 唯一源）
 ├── memory/              # 记忆管线 — ReflectEngine + 反馈闭环
 │   ├── reflector.py     # ReflectEngine — /reflect 入口，LLM 生成结构化记忆（含 frontmatter）
 │   ├── version.py       # VersionManager — 备份/版本日志/回滚（从 reflector 提取）
@@ -128,7 +128,7 @@ core/
 │   ├── security.py      # PluginPreflightCheck — ClawScan 级安全预检 (5 项检查)
 │   ├── watcher.py       # PluginWatcher — watchfiles 优先 + polling fallback + 500ms 防抖
 │   └── templates/       # hello-plugin 模板
-├── sessions/            # 会话管理 — manager.py（CRUD + 回滚 + 智能标题）
+├── sessions/            # 会话管理 — manager.py（CRUD + 回滚 + 智能标题）+ restorer.py（从磁盘恢复）
 ├── tools/               # 8 个内置工具 + 声明式清单 + ToolContext DI
 │   ├── definition.py    # ToolDefinition + ToolContext（叶子模块，避免循环导入）
 │   ├── __init__.py      # ToolRegistry（含 ToolContext 注入 + 重试）
@@ -145,10 +145,13 @@ core/
 ui/
 ├── textual_app/
 │   ├── app.py           # AideApp — 主应用
-│   ├── bridge.py        # UIBridge — Kernel ↔ Textual 桥接
+│   ├── bridge.py        # UIBridge — Kernel ↔ Textual 桥接（ExecutorUI 实现）
 │   ├── command_handler.py  # 命令执行 + 确认流处理器
+│   ├── session_context.py  # SessionContext — 当前会话运行时状态（dataclass）
+│   ├── app.tcss         # 布局样式（暗色主题）
+│   ├── platform.py      # UI 侧平台工具
 │   ├── screens/         # home / onboarding / api_config
-│   └── widgets/         # message_list / input_box / command_palette / status_bar
+│   └── widgets/         # message_list（回合树管理器）/ tree_nodes（树节点组件）/ input_box / command_palette / status_bar
 
 shell/
 ├── main.py              # 应用入口 + 烟雾测试
@@ -253,26 +256,43 @@ FC Loop 利用 `native_stop_reason == "max_tokens"` 实现智能续写：模型�
 
 ## UI 布局
 
-纯暗主题（`#0c0c0c`），全宽对话区无右侧栏。Esc 切换首页↔对话页。不显示工具调用过程（`on_tool_start/done` 为 `pass`），仅 `on_tool_error` 显示错误。
+纯暗主题（`#0c0c0c`），全宽对话区无右侧栏。Esc 切换首页↔对话页。
+
+**回合树展示**：每个 assistant 回合 = 一棵 `TurnTree`（`ui/textual_app/widgets/tree_nodes.py`），节点用 `●` 标记、颜色随类型变化：
+think（灰，流式展开→结束折叠）/ tool（精简单行，双击展开结果）/ body（正文，流式 Text→完成 Markdown）/ error（红）/ system（琥珀）。
+
+- 树连接符统一"栈顶"规则：新节点一律 `└`，加入后自动降级为 `├`，无首节点特例；相邻节点类型不同时插入一行 `│` 引导线
+- 正文首行与节点同行（`│ ● 正文…`），后续行缩进到文本列（col 4）
+- 节点交互：左键双击折叠/展开（可折叠节点），右键复制内容
+- 列布局：`│`(col 0) → `●`(col 2) → 文本(col 4)；CSS 用 `.tree-node` / `.tree-guide` margin `0 0 0 9` 对齐
+- 用户消息保留气泡框（`MessageWidget`），与树之间空一行
 
 ## 会话存储结构
 
 ```
 sessions/{YYYYMMDD_HHMMSS}/
 ├── meta.json           # 会话名称 + last_active_at + last_reflected_turn + reflected_at
-├── timeline.json       # JSONL 轮次级索引（每行一个 JSON 对象）
-├── overview.md         # /reflect 生成的 LLM 会话总览（注入上下文）
-├── overview.json       # 反思检查点日志（去重，回滚时还原 overview.md）
-├── _search_index.json  # 全局搜索索引（JSONL 格式，bigram Jaccard 匹配）
+├── timeline.json       # JSONL 轮次级索引（每行 {turn, timestamp, summary}）— 全局索引唯一源
+├── overview.json       # 会话总览检查点 [{to_turn, compressed_at, overview_md}] — 当前生效版 = 最后一条
 └── messages/           # 完整原文存档（turn_NNN.json）
 ```
 
-`turn_NNN.json`：`{turn, timestamp, user, assistant, thinking, messages}`。
+`turn_NNN.json`：`{turn, timestamp, thinking, messages}`。
 `messages` 是当轮增量消息（含带 `tool_calls` 的 assistant 与 `tool` 结果），
 `thinking` 是本轮 LLM 思考内容（退出重进后恢复 think 节点用，不进 LLM 上下文）。
+顶层不再冗余 `user`/`assistant`（旧格式读侧兼容）。
+
+**索引/总览派生关系**（避免冗余写入与不一致）：
+- `timeline.json` = 唯一索引源。`SearchIndex`（全局搜索）是纯内存缓存，
+  启动时 `await rebuild()` 从所有 timeline 重建，运行时 add/remove 只改内存。
+- `overview.json` = 会话总览唯一文件。读取统一走 `read_current_overview()`，
+  旧 `overview.md` 仅作迁移兼容回退。回滚截断检查点即还原。
 
 恢复链路：
-- `restore_session()` → 扁平 conversation（LLM 上下文）。**assistant 空 content 但带 `tool_calls` 必须保留**——否则其后 `tool` 消息失配，DeepSeek 会拒调。
+- `restore_session_full()` → 一次读盘返回 `(conversation, turn_count, turns)`。
+  app 层 `_restore_session` 用它，避免同一批 turn 文件读两遍。
+- `restore_session()` → 扁平 conversation（LLM 上下文），保持原签名包装复用。
+  **assistant 空 content 但带 `tool_calls` 必须保留**——否则其后 `tool` 消息失配，DeepSeek 会拒调。
 - `restore_turns()` → 按轮结构化记录 `[{turn, thinking, messages}]`，供 UI 重建完整树（think/工具/正文）。
 
 ## 智能标题
@@ -397,7 +417,7 @@ Python 插件可注册：工具、命令、生命周期钩子（`register_hook()
 | **P7** | 插件系统 v2：三格式兼容 / 9 事件 Hook 系统 / 安全预检 / 状态管理 / 热重载 / 死代码清理 |
 | **P8** | 子 agent delegate 工具 / 声明式工具清单（definition.py）/ 编排判据（strategy_6 + subagent_system 完整性） |
 
-1045 测试全部通过。
+1084 测试全部通过。
 
 ## Prompt 体系
 
