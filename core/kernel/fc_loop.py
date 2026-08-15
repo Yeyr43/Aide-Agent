@@ -211,81 +211,179 @@ class FunctionCallingLoop:
         tool_calls: list[dict],
         ui: ExecutorUI,
     ) -> list[dict]:
-        """并行执行所有工具调用。
+        """执行工具调用 — 只读并发、写工具串行、失败 abort 兄弟。
 
-        每个工具独立超时、独立截断。同轮内工具并发执行。
-        所有错误作为普通结果返回 — 不阻断对话，LLM 自行降级。
-        返回顺序与 tool_calls 顺序一致。
+        每个工具独立超时、独立截断。返回顺序与 tool_calls 顺序一致。
+
+        分组（free-code isConcurrencySafe 分片的简化版）：
+        - 串行组：有副作用工具（write_file/run_shell）+ MCP 工具，依次执行，避免写竞态
+        - 并发组：其余（只读类 + 插件工具），并行执行；任一失败 → 取消其余兄弟
+          （卡住/已无意义的工具不继续等，被取消者标记"已取消"喂回 LLM）
+
+        所有错误（含取消）作为普通结果返回 — 不阻断对话，LLM 自行降级。
 
         网络工具（web）有每轮 3 次总调用上限，
         超出后直接返回错误而不发起实际请求。
         """
-        async def _run_one(tc: dict) -> dict:
-            func = tc.get("function", {})
-            tool_name = func.get("name", "unknown")
-            tool_id = tc.get("id", "")
-            arguments = self._parse_args(func.get("arguments", "{}"))
+        serial_idx = [i for i, tc in enumerate(tool_calls)
+                      if self._is_serial_tool(self._tool_name(tc))]
+        concurrent_idx = [i for i in range(len(tool_calls)) if i not in serial_idx]
 
-            # ── 网络工具限流检查 ──
-            if tool_name in self._web_tool_names:
-                self._web_call_count += 1
-                if self._web_call_count > MAX_WEB_CALLS:
-                    result = f"错误：网络调用已达上限（{MAX_WEB_CALLS} 次），请基于已有信息回复。"
-                    ui.on_tool_error(tool_name, result)
-                    return {"content": result, "tool_id": tool_id}
+        results: dict[int, dict] = {}
 
-            # ── 高危工具检查（BLOCKED 状态 + PermissionRequest hook）──
-            if blocked_reason := await self._should_block(tool_name, arguments):
-                ui.on_tool_error(tool_name, f"[警告] {blocked_reason}")
-                result = (
-                    f"⚠️ 高风险操作已被阻止: {blocked_reason}\n"
-                    f"请选择替代方案或向用户说明风险后请求确认。"
-                )
-                return {"content": result, "tool_id": tool_id}
+        # 并发组：wait 循环，任一失败取消兄弟
+        if concurrent_idx:
+            group = [tool_calls[i] for i in concurrent_idx]
+            group_results = await self._run_concurrent_group(group, ui)
+            results.update(zip(concurrent_idx, group_results))
 
-            # MCP 工具使用更长的超时（匹配 MCP CALL_TIMEOUT=120s）
-            # delegate 子 agent 跑多轮 LLM，需要更长的超时
-            tool_timeout = (
-                MCP_TOOL_TIMEOUT if tool_name.startswith("mcp_")
-                else DELEGATE_TOOL_TIMEOUT if tool_name == "delegate"
-                else TOOL_TIMEOUT
+        # 串行组：依次执行（前一个完成后再跑下一个）
+        for i in serial_idx:
+            _, result = await self._run_one(tool_calls[i], ui)
+            results[i] = result
+
+        # 按原 tool_calls 顺序重组
+        return [results[i] for i in range(len(tool_calls))]
+
+    @staticmethod
+    def _tool_name(tc: dict) -> str:
+        return tc.get("function", {}).get("name", "unknown")
+
+    @classmethod
+    def _is_serial_tool(cls, tool_name: str) -> bool:
+        """串行执行判定：有副作用工具（写文件/跑命令）与 MCP 工具。
+
+        并发组 = 其余（只读类 + 插件工具）。写工具同轮并发会竞态
+        （多个 write_file 写同一文件 / 有顺序依赖的 run_shell），故串行。
+        """
+        return tool_name in cls._uncacheable_tools or tool_name.startswith("mcp_")
+
+    async def _run_concurrent_group(
+        self,
+        group: list[dict],
+        ui: ExecutorUI,
+    ) -> list[dict]:
+        """并行执行组内工具；任一失败 → 取消其余兄弟。
+
+        Returns:
+            结果列表，顺序与 group 一致。
+        """
+        if not group:
+            return []
+        tasks = {
+            asyncio.create_task(self._run_one(tc, ui)): idx
+            for idx, tc in enumerate(group)
+        }
+        pending = set(tasks)
+        results: dict[int, dict] = {}
+
+        while pending:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED,
             )
+            # 先收集本轮所有已完成的结果（含与失败同时完成的兄弟，避免漏收）
+            failed = False
+            for t in done:
+                idx = tasks[t]
+                ok, result = t.result()
+                results[idx] = result
+                failed = failed or not ok
+            if failed:
+                # 失败：取消其余仍在跑的兄弟（其结果已无意义）
+                for p in pending:
+                    p.cancel()
+                for p in pending:
+                    idx2 = tasks[p]
+                    name2 = self._tool_name(group[idx2])
+                    ui.on_tool_error(name2, "同轮某工具失败，已取消")
+                    results[idx2] = {
+                        "content": "工具已取消（同轮某工具失败）",
+                        "tool_id": group[idx2].get("id", ""),
+                    }
+                    try:
+                        await p  # 清理被取消的 task，避免 pending-destroyed 警告
+                    except asyncio.CancelledError:
+                        pass
+                pending = set()
+                break
 
-            # ── 同轮缓存：相同工具+参数直接返回缓存（仅无副作用工具）──
-            cacheable = tool_name not in self._uncacheable_tools
-            cache_key = ""
+        return [results[i] for i in range(len(group))]
+
+    async def _run_one(
+        self,
+        tc: dict,
+        ui: ExecutorUI,
+    ) -> tuple[bool, dict]:
+        """执行单个工具调用。返回 (ok, result_dict)。
+
+        ok=False 表示失败/超时/高危阻止/网络限流 —— 触发并发组兄弟取消。
+        所有结果（含错误）仍作为 tool 消息喂回 LLM 自行降级。
+        """
+        func = tc.get("function", {})
+        tool_name = func.get("name", "unknown")
+        tool_id = tc.get("id", "")
+        arguments = self._parse_args(func.get("arguments", "{}"))
+
+        # ── 网络工具限流检查 ──
+        if tool_name in self._web_tool_names:
+            self._web_call_count += 1
+            if self._web_call_count > MAX_WEB_CALLS:
+                result = f"错误：网络调用已达上限（{MAX_WEB_CALLS} 次），请基于已有信息回复。"
+                ui.on_tool_error(tool_name, result)
+                return False, {"content": result, "tool_id": tool_id}
+
+        # ── 高危工具检查（BLOCKED 状态 + PermissionRequest hook）──
+        if blocked_reason := await self._should_block(tool_name, arguments):
+            ui.on_tool_error(tool_name, f"[警告] {blocked_reason}")
+            result = (
+                f"⚠️ 高风险操作已被阻止: {blocked_reason}\n"
+                f"请选择替代方案或向用户说明风险后请求确认。"
+            )
+            return False, {"content": result, "tool_id": tool_id}
+
+        # MCP 工具使用更长的超时（匹配 MCP CALL_TIMEOUT=120s）
+        # delegate 子 agent 跑多轮 LLM，需要更长的超时
+        tool_timeout = (
+            MCP_TOOL_TIMEOUT if tool_name.startswith("mcp_")
+            else DELEGATE_TOOL_TIMEOUT if tool_name == "delegate"
+            else TOOL_TIMEOUT
+        )
+
+        # ── 同轮缓存：相同工具+参数直接返回缓存（仅无副作用工具）──
+        cacheable = tool_name not in self._uncacheable_tools
+        cache_key = ""
+        if cacheable:
+            cache_key = (tool_name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
+            if cache_key in self._result_cache:
+                ui.on_tool_start(tool_name, arguments)
+                ui.on_tool_done(tool_name, self._result_cache[cache_key])
+                return True, {"content": self._result_cache[cache_key], "tool_id": tool_id}
+
+        ui.on_tool_start(tool_name, arguments)
+
+        try:
+            result = await asyncio.wait_for(
+                self.registry.execute(tool_name, arguments),
+                timeout=tool_timeout,
+            )
+        except asyncio.TimeoutError:
+            result = f"错误：工具 {tool_name} 执行超时（{tool_timeout}s）"
+            ui.on_tool_error(tool_name, result)
+            return False, {"content": result, "tool_id": tool_id}
+        except Exception as e:
+            logger.exception(f"工具 {tool_name} 执行异常")
+            result = f"工具执行异常：{e}"
+            ui.on_tool_error(tool_name, result)
+            return False, {"content": result, "tool_id": tool_id}
+        else:
+            # 截断过长结果
+            result = self._truncate_result(result)
+            # 缓存无副作用工具的结果（同轮重复调用直接返回）
             if cacheable:
-                cache_key = (tool_name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
-                if cache_key in self._result_cache:
-                    ui.on_tool_start(tool_name, arguments)
-                    ui.on_tool_done(tool_name, self._result_cache[cache_key])
-                    return {"content": self._result_cache[cache_key], "tool_id": tool_id}
+                self._result_cache[cache_key] = result
+            ui.on_tool_done(tool_name, result)
 
-            ui.on_tool_start(tool_name, arguments)
-
-            try:
-                result = await asyncio.wait_for(
-                    self.registry.execute(tool_name, arguments),
-                    timeout=tool_timeout,
-                )
-            except asyncio.TimeoutError:
-                result = f"错误：工具 {tool_name} 执行超时（{tool_timeout}s）"
-                ui.on_tool_error(tool_name, result)
-            except Exception as e:
-                logger.exception(f"工具 {tool_name} 执行异常")
-                result = f"工具执行异常：{e}"
-                ui.on_tool_error(tool_name, result)
-            else:
-                # 截断过长结果
-                result = self._truncate_result(result)
-                # 缓存无副作用工具的结果（同轮重复调用直接返回）
-                if cacheable:
-                    self._result_cache[cache_key] = result
-                ui.on_tool_done(tool_name, result)
-
-            return {"content": result, "tool_id": tool_id}
-
-        return await asyncio.gather(*[_run_one(tc) for tc in tool_calls])
+        return True, {"content": result, "tool_id": tool_id}
 
     # ── 结果截断 ──────────────────────────────────────────────────
 

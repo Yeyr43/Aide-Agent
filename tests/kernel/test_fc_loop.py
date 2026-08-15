@@ -131,6 +131,138 @@ class TestParallelExecution:
         assert "_block" not in results[0]
 
 
+class TestToolGrouping:
+    """工具并发分级：只读并行、写串行、失败 abort 兄弟。"""
+
+    @pytest.mark.asyncio
+    async def test_read_tools_run_in_parallel(self):
+        """并发组（read_file）两个工具并行执行 — 第二个在第一个完成前启动。"""
+        registry = ToolRegistry()
+        from core.tools import ToolDefinition
+
+        events: list[tuple[str, str]] = []
+
+        async def read(args):
+            events.append(("start", args["id"]))
+            await asyncio.sleep(0.05)
+            events.append(("end", args["id"]))
+            return f"read:{args['id']}"
+
+        registry.register(ToolDefinition(
+            name="read_file", description="Read",
+            parameters={"type": "object", "properties": {}}, execute=read,
+        ))
+        ui = MagicMock()
+        loop = FunctionCallingLoop(None, registry)
+
+        tool_calls = [
+            {"id": "c1", "function": {"name": "read_file", "arguments": '{"id":"A"}'}},
+            {"id": "c2", "function": {"name": "read_file", "arguments": '{"id":"B"}'}},
+        ]
+        results = await loop._execute_tools(tool_calls, ui)
+        # 并发：B 在 A 结束前已启动
+        assert events.index(("start", "B")) < events.index(("end", "A"))
+        assert results[0]["content"] == "read:A"
+        assert results[1]["content"] == "read:B"
+
+    @pytest.mark.asyncio
+    async def test_write_tools_run_serially(self):
+        """串行组（write_file）两个工具依次执行 — 第二个在第一个完成后才启动。"""
+        registry = ToolRegistry()
+        from core.tools import ToolDefinition
+
+        events: list[tuple[str, str]] = []
+
+        async def write(args):
+            events.append(("start", args["id"]))
+            await asyncio.sleep(0.03)
+            events.append(("end", args["id"]))
+            return f"write:{args['id']}"
+
+        registry.register(ToolDefinition(
+            name="write_file", description="Write",
+            parameters={"type": "object", "properties": {}}, execute=write,
+        ))
+        ui = MagicMock()
+        loop = FunctionCallingLoop(None, registry)
+
+        tool_calls = [
+            {"id": "c1", "function": {"name": "write_file", "arguments": '{"id":"A"}'}},
+            {"id": "c2", "function": {"name": "write_file", "arguments": '{"id":"B"}'}},
+        ]
+        results = await loop._execute_tools(tool_calls, ui)
+        # 串行：B 在 A 结束后才启动
+        assert events.index(("start", "B")) > events.index(("end", "A"))
+        assert results[0]["content"] == "write:A"
+        assert results[1]["content"] == "write:B"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_failure_cancels_siblings(self):
+        """并发组中一个工具失败（高危阻止）→ 取消其余仍在跑的兄弟。"""
+        registry = ToolRegistry()
+        from core.tools import ToolDefinition
+
+        async def read(args):
+            await asyncio.sleep(0.5)  # 长阻塞，若不被取消将占满超时
+            return "never"
+
+        registry.register(ToolDefinition(
+            name="read_file", description="Read",
+            parameters={"type": "object", "properties": {}}, execute=read,
+        ))
+        ui = MagicMock()
+        loop = FunctionCallingLoop(None, registry)
+
+        # A 被高危检查阻止（立即失败 ok=False），B 仍在阻塞
+        async def fake_block(name, arguments):
+            return "高危测试" if arguments.get("id") == "A" else None
+        loop._should_block = fake_block
+
+        tool_calls = [
+            {"id": "c1", "function": {"name": "read_file", "arguments": '{"id":"A"}'}},
+            {"id": "c2", "function": {"name": "read_file", "arguments": '{"id":"B"}'}},
+        ]
+        results = await loop._execute_tools(tool_calls, ui)
+        assert "高风险操作已被阻止" in results[0]["content"]
+        assert "已取消" in results[1]["content"]
+        assert ui.on_tool_error.call_count >= 1  # 取消时补 on_tool_error
+
+    @pytest.mark.asyncio
+    async def test_mixed_serial_and_concurrent_preserves_order(self):
+        """混合轮次（write + read + read）：写串行、读并行，结果按原顺序。"""
+        registry = ToolRegistry()
+        from core.tools import ToolDefinition
+
+        async def read(args):
+            await asyncio.sleep(0.01)
+            return f"read:{args['id']}"
+
+        async def write(args):
+            await asyncio.sleep(0.01)
+            return f"write:{args['id']}"
+
+        registry.register(ToolDefinition(
+            name="read_file", description="Read",
+            parameters={"type": "object", "properties": {}}, execute=read,
+        ))
+        registry.register(ToolDefinition(
+            name="write_file", description="Write",
+            parameters={"type": "object", "properties": {}}, execute=write,
+        ))
+        ui = MagicMock()
+        loop = FunctionCallingLoop(None, registry)
+
+        tool_calls = [
+            {"id": "w", "function": {"name": "write_file", "arguments": '{"id":"W"}'}},
+            {"id": "r1", "function": {"name": "read_file", "arguments": '{"id":"A"}'}},
+            {"id": "r2", "function": {"name": "read_file", "arguments": '{"id":"B"}'}},
+        ]
+        results = await loop._execute_tools(tool_calls, ui)
+        assert results[0]["content"] == "write:W"
+        assert results[1]["content"] == "read:A"
+        assert results[2]["content"] == "read:B"
+
+
 class TestExecutionTimeout:
     """测试工具执行超时。"""
 
