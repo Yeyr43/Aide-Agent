@@ -81,6 +81,7 @@ class MessageList(VerticalScroll):
         self._tool_fifo: dict[str, list[ToolNode]] = {}
         self._tool_start_times: dict[int, float] = {}
         self._turn_ai_text = ""
+        self._pinned = True  # 滚动吸附：在底部时跟随输出，用户上翻解除
 
     # ── 回合树管理 ──────────────────────────────────────────────
 
@@ -145,6 +146,7 @@ class MessageList(VerticalScroll):
         )
         msg.add_class("user-message")
         self.mount(msg)
+        self._pinned = True  # 输入新消息 → 强制回到底部并吸附（即使此前上翻过）
         self._scroll_end()
 
     # ── 思考 ────────────────────────────────────────────────────
@@ -329,8 +331,23 @@ class MessageList(VerticalScroll):
             # 每轮结束关闭状态（下一轮 / 用户新消息时重建树）
             self._close_turn()
 
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """吸附状态判定：滚动离开底部 → 解除吸附；回到/滚到底部附近 → 重新吸附。
+
+        覆盖 Textual 的 reactive watcher（super() 保留滚动条位置更新）。
+        用户在底部附近（半行内）即恢复吸附，避免输出中途被"甩"回底部。
+        """
+        super().watch_scroll_y(old_value, new_value)
+        self._pinned = new_value >= self.max_scroll_y - 0.5
+
     def _scroll_end(self) -> None:
-        self.scroll_end(animate=False)
+        """跟随输出滚动到底 — 仅在吸附状态执行。
+
+        用户上翻（解除吸附）后不强制滚底，否则流式渲染时每次
+        _scroll_end 都把视图拽回底部（"鬼畜"）。
+        """
+        if self._pinned:
+            self.scroll_end(animate=False)
 
 
 # ── 多模态 content 解析 ─────────────────────────────────────────────────

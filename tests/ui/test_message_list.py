@@ -244,3 +244,53 @@ async def test_long_body_makes_message_list_scrollable():
         ml.scroll_to(y=ml.max_scroll_y)
         await pilot.pause()
         assert ml.scroll_y > 0
+
+
+@pytest.mark.asyncio
+async def test_scroll_pin_follows_bottom_unless_user_scrolls_up():
+    """滚动吸附：底部跟随输出，上翻解除，输入强制回底。
+
+    回归"输出时上翻鬼畜"：流式渲染时 _scroll_end 无条件滚底把视图拽回底部。
+    修复后仅吸附状态（在底部）跟随，用户上翻解除吸附。
+    """
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        paras = "\n\n".join(f"第{i}段：这是一个段落，包含一些说明文字和内容。"
+                            for i in range(40))
+        ml.add_user_message("问题")
+        ml.add_ai_chunk(paras)
+        ml.finish_ai_message()
+        await pilot.pause(0.2)  # 等布局刷新 max_scroll_y（全量跑时序更慢）
+
+        # 可滚动（长内容超出视口）
+        assert ml.max_scroll_y > 0
+        # 默认吸附在底部
+        assert ml._pinned is True
+        assert ml.scroll_y >= ml.max_scroll_y - 0.5
+
+        # 用户上翻 → 解除吸附
+        ml.scroll_home(animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned is False
+        assert ml.scroll_y < 1
+
+        # 上翻后新内容不滚回底部（不再鬼畜）
+        ml.add_ai_chunk("\n\n上翻期间新增的输出不应抢滚动位置。")
+        await pilot.pause(0.1)
+        assert ml._pinned is False
+        assert ml.scroll_y < ml.max_scroll_y
+
+        # 滚回底部 → 重新吸附
+        ml.scroll_end(animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned is True
+
+        # 输入新消息 → 强制回底并吸附（即使此前上翻）
+        ml.scroll_home(animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned is False
+        ml.add_user_message("新问题")
+        await pilot.pause(0.1)
+        assert ml._pinned is True
+        assert ml.scroll_y >= ml.max_scroll_y - 0.5
