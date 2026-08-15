@@ -16,7 +16,7 @@ Aide Agent — 本地个人智能管家。核心不是"能做多少事"而是"�
 # 运行应用
 uv run python shell/main.py
 
-# 运行全部测试（1084 个）
+# 运行全部测试（1151 个）
 uv run pytest tests/ -q
 
 # 运行单个测试文件
@@ -104,16 +104,17 @@ core/
 │   ├── tokenizer.py     # 分词器 — TF-IDF / Jaccard / 时间衰减 / 同义词扩展 / _detect_language
 │   ├── overview.py      # 会话总览 + read_current_overview + restore_overview_from_checkpoint
 │   ├── relevance.py     # tokenizer + overview 的公开 API 重导出层
-│   └── token_counter.py # 上下文 token 估算 + compute_context_usage
+│   └── token_counter.py # 上下文 token 估算 + compute_context_usage + trim_conversation_to_window（爆满兜底）
 ├── search/              # 全局会话搜索
 │   └── index.py         # SearchIndex — 纯内存索引，启动从 timeline rebuild（timeline 唯一源）
-├── memory/              # 记忆管线 — ReflectEngine + 反馈闭环
+├── memory/              # 记忆管线 — ReflectEngine + 反馈闭环 + 自动提取
 │   ├── reflector.py     # ReflectEngine — /reflect 入口，LLM 生成结构化记忆（含 frontmatter）
+│   ├── auto.py          # AutoMemoryExtractor — /mem-auto 开关，每轮静默提取新条目（默认关）
 │   ├── version.py       # VersionManager — 备份/版本日志/回滚（从 reflector 提取）
-│   ├── entries.py       # MemoryEntry dataclass + parse_memory_file() — 结构化记忆解析
+│   ├── entries.py       # MemoryEntry dataclass + parse_memory_file() + format_memory_entry() — 结构化记忆解析/回写
 │   ├── recall.py        # 记忆召回 — 搜索 agent/*.md + 会话目录
 │   └── feedback.py      # FeedbackStore（stable id 匹配）+ FeedbackVerifier（L1语言/L2长度）
-├── commands/            # 命令系统 — 17 个内置命令
+├── commands/            # 命令系统 — 18 个内置命令
 │   ├── __init__.py      # CommandRegistry + CommandDefinition + route_command()
 │   └── builtin/         # handlers.py / settings_handlers.py / mcp_handlers.py / plugin_commands.py
 ├── plugins/             # 插件系统 v2 — Claude Code / OpenClaw / Aide 三格式兼容
@@ -306,6 +307,10 @@ sessions/{YYYYMMDD_HHMMSS}/
 1. **收集**：Soul + Tools Prompt（pinned）+ 技能注入 + 记忆条目（结构化解析）+ overview + timeline + **相关早期轮次完整回填**（`type="history"`，最近 10 轮，评分/预算再筛）
 2. **评分**（内容相关性为主序）：`relevance = content_corr × type_weight`（memory 1.0 / overview 0.8 / skill 0.7 / history 0.7 / timeline 0.5）决定**是否注入**；`score = relevance × recency × feedback` 决定注入顺序。overview/timeline 有基础注入分（`FRAGMENT_BASE_RELEVANCE`，会话背景不严格过滤）。记忆衰减按条目 `created`（frontmatter）而非文件 mtime，`long_term_memory.md` 不衰减。feedback 权重用 stable id 匹配
 3. **打包**：pinned 置顶，按 score 降序（同分短片段优先）填满 token 预算（~40% context_window），低于相关性阈值的跳过
+   - **memory 单来源上限**：`MEMORY_BUDGET_RATIO = 0.4`——相关记忆过多时不挤占工具/技能上下文（free-code 有界注入）
+   - **新鲜度标注**：带 `created`（frontmatter）的记忆条目注入时前置 `（记忆日期：YYYY-MM-DD）`，让模型判断新旧；`content` 保持原始值（不破坏 FeedbackVerifier 的 content-hash 匹配），前缀在打包时拼
+
+**上下文爆满兜底**（`token_counter.trim_conversation_to_window`）：估算 system+conv(+schema) 超 `context_window × 0.9` 时，从头部**逐轮丢弃最老轮次**；只剩 1 轮仍超 → 截断 assistant 正文（user 保留）。纯机械降级、不调 LLM（摘要归 /reflect 管），避免 400 prompt-too-long。在 `agent._assemble_context` 组装后调用，预算充足时幂等不动。
 
 词汇索引（`_build_vocabulary`）从 agent/*.md **+ 会话 timeline 摘要**构建（缓解冷启动分词退化）。所有文件 I/O 通过 `asyncio.to_thread()` 执行，不阻塞事件循环。
 
@@ -326,6 +331,16 @@ FeedbackStore 优先用 `entry_id`（来自 frontmatter）做 key，fallback 到
 单条管线：对话自然积累（不截获）→ 用户手动 `/reflect` → LLM 更新结构化记忆 + 会话总览 → 用户审查 diff → 确认写入。
 
 系统绝不自动调用 LLM 更新 prompt。三个维度不扩展：偏好 / 工作流 / 长记忆。
+
+### 自动记忆提取（`AutoMemoryExtractor`，默认关）
+
+"绝不自动调 LLM"的**显式豁免开关**：`/mem-auto on|off|status`（settings.json `app.auto_memory`，默认 False）。开启后每轮 `chat()` 末尾 **fire-and-forget** 后台提取：
+
+- **写入范围只限三个可变 prompt**（preferences/workflows/long_term_memory），不写 overview（摘要归 /reflect 管）、不建新维度
+- **直接追加**：LLM 只输出新增条目（`## section` + `- 内容`），解析后生成 `MemoryEntry`（id 递增不冲突、created=今天、source=`{session_id}/turn_N`），`format_memory_entry` 格式化后原子追加；写入前 `_backup_prompt` 备份，模块级 `asyncio.Lock` 保护读-改-写
+- **去重**：注入现有记忆清单，跳过已有 content；**/reflect 互斥**：`meta.json last_reflected_turn >= turn` 跳过
+- **静默失败**：LLM 异常/开关 off/无回复 都返回 False 不阻塞；成功写后更新 `last_auto_memory_turn` marker
+- 挂载点：bootstrap Phase 3 构造 → KernelContext `MemoryContext.auto_memory` → `agent.chat()` 末尾 `asyncio.create_task(...)`；`set_provider()` 同步 provider
 
 ## Kernel/UI 分离
 
@@ -402,6 +417,14 @@ Python 插件可注册：工具、命令、生命周期钩子（`register_hook()
 - **ErrorClass**：TRANSIENT（重试）/ PERMANENT（立即返回）/ UNKNOWN（保守重试 1 次）
 - ToolRegistry.execute() 内置重试 + ToolContext 自动注入
 
+### 工具并发分级（`fc_loop._execute_tools`）
+
+同轮工具调用分两组执行（free-code `isConcurrencySafe` 分片的简化版）：
+- **串行组**：有副作用工具（`_uncacheable_tools` = write_file/run_shell）+ MCP 工具——依次执行，消除同轮多写竞态
+- **并发组**：其余（只读类 + 插件工具）——并行；**任一失败 → 取消其余兄弟**（超时/异常/高危阻止/网络限流算失败，`_run_one` 返回 `(ok, result)`），被取消者标记"已取消"喂回 LLM
+- 结果按原 tool_calls 顺序重组（`zip(final.tool_calls, tool_results)` 依赖顺序）
+- 注意：`ToolRegistry.execute` 经 `async_retry` 把工具异常**吞成错误字符串**返回（不向上抛），所以"失败"指超时/高危阻止等 `_run_one` 层判定，非 execute 抛异常
+
 ## CI/CD
 
 [`.github/workflows/build.yml`](.github/workflows/build.yml) — tag `v*` 触发三平台构建：
@@ -416,8 +439,9 @@ Python 插件可注册：工具、命令、生命周期钩子（`register_hook()
 | **P6** | 架构优化：ToolContext DI / Chat 中间件 / 记忆结构化 / Provider 增强 / Bootstrap 拆分 |
 | **P7** | 插件系统 v2：三格式兼容 / 9 事件 Hook 系统 / 安全预检 / 状态管理 / 热重载 / 死代码清理 |
 | **P8** | 子 agent delegate 工具 / 声明式工具清单（definition.py）/ 编排判据（strategy_6 + subagent_system 完整性） |
+| **P8+ 优化批次** | 工具并发分级（只读并行/写串行/abort 兄弟）、记忆注入边界+新鲜度、自动记忆提取（/mem-auto）、上下文爆满兜底（trim_conversation_to_window） |
 
-1084 测试全部通过。
+1151 测试全部通过。
 
 ## Prompt 体系
 
