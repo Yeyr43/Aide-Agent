@@ -26,9 +26,10 @@ if TYPE_CHECKING:
 
 @dataclass
 class MemoryContext:
-    """记忆管线：统一反思引擎 + 反馈验证器。"""
+    """记忆管线：统一反思引擎 + 反馈验证器 + 自动提取器。"""
     reflector: ReflectEngine
     feedback_verifier: object | None = None  # FeedbackVerifier | None
+    auto_memory: object | None = None        # AutoMemoryExtractor | None
 
 
 @dataclass

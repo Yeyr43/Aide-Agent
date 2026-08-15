@@ -11,6 +11,7 @@ from core.commands import route_command
 from core.commands.builtin.handlers import (
     handle_help, handle_profile, handle_export, handle_import,
     handle_session, handle_memory, handle_tools, handle_rollback,
+    handle_mem_auto,
 )
 from core.commands.builtin.mcp_handlers import handle_mcp
 
@@ -53,19 +54,68 @@ class TestCommandRouting:
         assert handler is None
         assert args == ""
 
+    def test_mem_auto_route(self):
+        result = route_command("/mem-auto on")
+        assert result is not None
+        handler, args = result
+        assert handler == handle_mem_auto
+        assert args == "on"
+
+
+class TestMemAuto:
+    """/mem-auto 命令 — 开关持久化到 settings.json。"""
+
+    async def _handle(self, tmp_path, monkeypatch, args):
+        from core.commands.builtin.handlers import handle_mem_auto
+        from core.config import Config
+        sp = tmp_path / "settings.json"
+        monkeypatch.setattr(Config, "settings_path", lambda: sp)
+        result = await handle_mem_auto(MagicMock(), args)
+        return result, sp
+
+    @pytest.mark.asyncio
+    async def test_on_persists(self, tmp_path, monkeypatch):
+        result, sp = await self._handle(tmp_path, monkeypatch, "on")
+        settings = json.loads(sp.read_text(encoding="utf-8"))
+        assert settings["app"]["auto_memory"] is True
+        assert "已开启" in result
+
+    @pytest.mark.asyncio
+    async def test_off_persists(self, tmp_path, monkeypatch):
+        result, sp = await self._handle(tmp_path, monkeypatch, "off")
+        settings = json.loads(sp.read_text(encoding="utf-8"))
+        assert settings["app"]["auto_memory"] is False
+        assert "已关闭" in result
+
+    @pytest.mark.asyncio
+    async def test_status_default_off(self, tmp_path, monkeypatch):
+        result, _ = await self._handle(tmp_path, monkeypatch, "status")
+        assert "已关闭" in result
+
+    @pytest.mark.asyncio
+    async def test_status_reflects_enabled(self, tmp_path, monkeypatch):
+        await self._handle(tmp_path, monkeypatch, "on")
+        result, _ = await self._handle(tmp_path, monkeypatch, "")
+        assert "已开启" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_arg(self, tmp_path, monkeypatch):
+        result, _ = await self._handle(tmp_path, monkeypatch, "bogus")
+        assert "用法" in result
+
     def test_all_commands_registered(self):
-        """P7: 17 个内置命令（新增 /plugins）。"""
+        """P7: 18 个内置命令（新增 /mem-auto）。"""
         registry = CommandRegistry()
         names = [c.name for c in registry.list_all()]
         expected = [
             "/help", "/profile", "/reflect", "/export", "/import",
             "/plugin", "/plugins",
-            "/session", "/memory", "/tools", "/think",
+            "/session", "/memory", "/mem-auto", "/tools", "/think",
             "/clear", "/rollback", "/mcp", "/language", "/api", "/model",
         ]
         for cmd in expected:
             assert cmd in names, f"Missing command: {cmd}"
-        assert len(names) == 17
+        assert len(names) == 18
 
     def test_session_route(self):
         result = route_command("/session list")

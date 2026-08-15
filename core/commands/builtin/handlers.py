@@ -201,6 +201,32 @@ async def handle_session(app: CommandContext, args: str) -> str:
         return t("cmd.session.unknown_sub")
 
 
+async def handle_mem_auto(app: CommandContext, args: str) -> str:
+    """自动记忆提取开关 — /mem-auto on|off|status。
+
+    写入 settings.json 的 app.auto_memory（默认关）。开关即时生效：
+    AutoMemoryExtractor 每次提取时实时读 settings。
+    """
+    from core.config import Config
+    sub = args.strip().lower()
+    settings = Config.load_settings()
+    app_cfg = settings.setdefault("app", {})
+
+    if sub == "on":
+        app_cfg["auto_memory"] = True
+        Config.save_settings(settings)
+        return t("cmd.mem_auto.on")
+    if sub == "off":
+        app_cfg["auto_memory"] = False
+        Config.save_settings(settings)
+        return t("cmd.mem_auto.off")
+    if sub in ("", "status"):
+        if app_cfg.get("auto_memory", False):
+            return t("cmd.mem_auto.status_on")
+        return t("cmd.mem_auto.status_off")
+    return t("cmd.mem_auto.invalid")
+
+
 async def handle_memory(app: CommandContext, args: str) -> str:
     """查看记忆条目（P5 .md 格式）。"""
     from core.memory import MEMORY_FILES
@@ -412,6 +438,10 @@ def register_builtin_commands(registry: Any) -> None:
     registry.register(CommandDefinition(
         name="/memory", description=t("cmd.memory.desc"),
         handler=handle_memory,
+    ))
+    registry.register(CommandDefinition(
+        name="/mem-auto", description=t("cmd.mem_auto.desc"),
+        handler=handle_mem_auto,
     ))
     registry.register(CommandDefinition(
         name="/tools", description=t("cmd.tools.desc"),

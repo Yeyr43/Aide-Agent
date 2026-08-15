@@ -155,7 +155,7 @@ class AppBootstrap:
             phase3["pipeline"], phase3["ingester"],
             phase3["session_mgr"], phase3["reflector"],
             plugin_host, phase3["feedback_verifier"],
-            hook_runner,
+            phase3["auto_memory"], hook_runner,
         )
 
         logger.info(
@@ -251,6 +251,14 @@ class AppBootstrap:
         )
         reflector._on_cache_flush = lambda: pipeline.flush_cache()
 
+        # 自动记忆提取器（provider 由 kernel.set_provider() 设置，开关默认关）
+        from core.memory.auto import AutoMemoryExtractor
+        auto_memory = AutoMemoryExtractor(
+            provider=None,
+            agent_root=config.aide_root / "agent",
+            on_cache_flush=lambda: pipeline.flush_cache(),
+        )
+
         session_mgr = SessionManager(config.sessions_root, search_index=search_index)
 
         return {
@@ -261,6 +269,7 @@ class AppBootstrap:
             "feedback_store": feedback_store,
             "feedback_verifier": feedback_verifier,
             "reflector": reflector,
+            "auto_memory": auto_memory,
             "session_mgr": session_mgr,
         }
 
@@ -304,12 +313,15 @@ class AppBootstrap:
         reflector: ReflectEngine,
         plugin_host: PluginHost,
         feedback_verifier: FeedbackVerifier,
+        auto_memory: object | None = None,
         hook_runner: object | None = None,
     ) -> AgentKernel:
         """装配 AgentKernel 及其所有依赖。"""
-        # 更新 reflector provider（Phase 3 时 provider 尚不可用）
+        # 更新 reflector/auto_memory provider（Phase 3 时 provider 尚不可用）
         if provider is not None:
             reflector._provider = provider
+            if auto_memory is not None:
+                auto_memory._provider = provider
 
         ctx = KernelContext(
             config=config,
@@ -323,6 +335,7 @@ class AppBootstrap:
             memory=MemoryContext(
                 reflector=reflector,
                 feedback_verifier=feedback_verifier,
+                auto_memory=auto_memory,
             ),
             session=SessionContext(
                 context_pipeline=pipeline,

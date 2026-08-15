@@ -403,6 +403,46 @@
     "zh": "你是 Aide 的记忆反思引擎。你的任务是回顾最近的对话，同时更新三份记忆文件和会话总览。",
     "en": "You are Aide's memory reflection engine. Your task is to review recent conversations and simultaneously update three memory files and the session overview."
   },
+  "mem.auto_system": {
+    "zh": "你是 Aide 的自动记忆提炼器。从最近一轮对话中提炼值得长期记住的偏好/工作流/长记忆，直接输出新增条目，不重写已有内容。\n\n规则：\n- 只输出 3 个 section：## Preferences / ## Workflows / ## Long-Term Memory\n- 每 section 下用 \"- 内容\" 列出新增条目，无新增则省略该 section\n- 每条不超过 40 字，宁缺毋滥，不确定的丢弃\n- 与输入中已有记忆重复的不输出\n- 不要输出其它任何内容",
+    "en": "You are Aide's automatic memory distiller. Extract preferences/workflows/long-term memories worth remembering from the latest conversation turn, and output only NEW entries without rewriting existing content.\n\nRules:\n- Output only 3 sections: ## Preferences / ## Workflows / ## Long-Term Memory\n- List new entries as \"- content\" under each section; omit sections with nothing new\n- Max 40 words per entry; when in doubt, discard\n- Do not repeat entries already present in the input\n- Do not output anything else"
+  },
+  "mem.auto_user_intro": {
+    "zh": "## 本轮对话",
+    "en": "## This turn"
+  },
+  "mem.auto_existing": {
+    "zh": "## 现有记忆（去重参考）",
+    "en": "## Existing memory (dedup reference)"
+  },
+  "mem.auto_instruction": {
+    "zh": "请只输出新增条目（格式：## section + \"- 内容\"），不要复述已有内容。",
+    "en": "Output only new entries (format: ## section + \"- content\"). Do not repeat existing content."
+  },
+  "cmd.mem_auto.desc": {
+    "zh": "自动记忆提取开关 — on/off 启用或关闭每轮静默提取新偏好/工作流/长记忆",
+    "en": "Auto memory extraction — on/off toggles silent per-turn extraction of new preferences/workflows/long-term memories"
+  },
+  "cmd.mem_auto.on": {
+    "zh": "自动记忆提取已开启：每轮对话结束后静默追加新偏好/工作流/长记忆到记忆文件。\n关闭用 /mem-auto off。",
+    "en": "Auto memory extraction enabled: after each turn, new preferences/workflows/long-term memories are silently appended to memory files.\nDisable with /mem-auto off."
+  },
+  "cmd.mem_auto.off": {
+    "zh": "自动记忆提取已关闭。",
+    "en": "Auto memory extraction disabled."
+  },
+  "cmd.mem_auto.status_on": {
+    "zh": "自动记忆提取：已开启",
+    "en": "Auto memory extraction: enabled"
+  },
+  "cmd.mem_auto.status_off": {
+    "zh": "自动记忆提取：已关闭",
+    "en": "Auto memory extraction: disabled"
+  },
+  "cmd.mem_auto.invalid": {
+    "zh": "用法: /mem-auto on|off|status",
+    "en": "Usage: /mem-auto on|off|status"
+  },
   "app.reflect_no_changes": {
     "zh": "反思完成：对话中没有发现新的值得记忆的内容。",
     "en": "Reflection complete: no new noteworthy content found in the conversation."

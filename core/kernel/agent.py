@@ -6,6 +6,7 @@ P4 Batch 2: KernelContext 聚合 14 个依赖为单一注入参数。
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -42,6 +43,7 @@ class AgentKernel:
         self._sessions = ctx.session.session_manager
         self._reflector = ctx.memory.reflector
         self._feedback = ctx.memory.feedback_verifier
+        self._auto_memory = ctx.memory.auto_memory
         self._plugins = ctx.tooling.plugin_host
         self._slots = ctx.tooling.slot_registry
         self._fc_loop = FunctionCallingLoop(
@@ -62,6 +64,8 @@ class AgentKernel:
         self.provider = new_provider
         self._fc_loop.provider = new_provider
         self._reflector._provider = new_provider
+        if self._auto_memory is not None:
+            self._auto_memory._provider = new_provider
         # 同步子 agent delegate 工具的 provider 引用
         if self.tool_registry.tool_context:
             self.tool_registry.tool_context.provider = new_provider
@@ -166,6 +170,13 @@ class AgentKernel:
         # P7: Notification hook（通用系统通知）
         await self._fire_hook("Notification", user_prompt=user_msg,
                               session_id=session_id, turn=turn)
+
+        # 自动记忆提取（fire-and-forget：不阻塞响应，内部异常全静默）
+        if self._auto_memory is not None:
+            asyncio.create_task(self._auto_memory.maybe_extract(
+                ctx.session_dir, ctx.turn, ctx.user_msg,
+                ctx.assistant_text, ctx.turn_messages,
+            ))
 
         return ChatResult(
             conversation=ctx.new_conversation,

@@ -35,6 +35,7 @@ class AppConfig:
     summary_turns: int = 15      # 额外 M 轮注入摘要索引（跨轮记忆）
     relevance_threshold: float = 0.15
     context_window: int = 128000  # token 窗口大小，0 表示不限制（状态栏仅显示 token 数）
+    auto_memory: bool = False     # 自动记忆提取：每轮对话后静默追加新偏好/工作流/长记忆（默认关）
 
 
 DEFAULT_LLM = {
@@ -55,6 +56,7 @@ DEFAULT_APP = {
     "summary_turns": 15,
     "relevance_threshold": 0.15,
     "context_window": 128000,
+    "auto_memory": False,
 }
 
 
