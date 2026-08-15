@@ -102,6 +102,43 @@ def restore_turns(
     return turns
 
 
+def _list_turn_files(sessions_root: Path, session_id: str) -> list[Path]:
+    """按文件名排序列出会话的 turn 文件（可能含损坏/空文件）。"""
+    session_dir = sessions_root / session_id
+    messages_dir = session_dir / "messages" if session_dir.exists() else None
+    if messages_dir and messages_dir.exists():
+        return sorted(messages_dir.glob("turn_*.json"))
+    return []
+
+
+def restore_session_full(
+    sessions_root: Path,
+    session_id: str,
+) -> tuple[list[dict], int, list[dict]]:
+    """一次读盘恢复：conversation + turn_count + 按轮结构化记录。
+
+    需要两者（LLM 上下文 + UI 重建树）的调用方用它，避免把同一批
+    turn 文件 glob + read + json.loads 两遍。
+
+    Returns:
+        (conversation, turn_count, turns)
+          - conversation: 扁平消息列表（LLM 上下文）
+          - turn_count: 磁盘上 turn 文件数（含损坏轮，与旧 restore_session 一致）
+          - turns: restore_turns 的结构化记录（含 thinking，供 UI 重建树）
+    """
+    turn_files = _list_turn_files(sessions_root, session_id)
+    turns = restore_turns(sessions_root, session_id)
+
+    conversation: list[dict] = []
+    for turn in turns:
+        for msg in turn["messages"]:
+            entry = _msg_to_entry(msg)
+            if entry is not None:
+                conversation.append(entry)
+
+    return conversation, len(turn_files), turns
+
+
 def restore_session(sessions_root: Path, session_id: str) -> tuple[list[dict], int]:
     """从磁盘恢复会话对话历史。
 
@@ -112,15 +149,5 @@ def restore_session(sessions_root: Path, session_id: str) -> tuple[list[dict], i
     Returns:
         (conversation, turn_count) — conversation 为空列表且 turn 为 0 表示恢复失败
     """
-    session_dir = sessions_root / session_id
-    messages_dir = session_dir / "messages" if session_dir.exists() else None
-    turn_files = sorted(messages_dir.glob("turn_*.json")) if messages_dir and messages_dir.exists() else []
-
-    conversation: list[dict] = []
-    for turn in restore_turns(sessions_root, session_id):
-        for msg in turn["messages"]:
-            entry = _msg_to_entry(msg)
-            if entry is not None:
-                conversation.append(entry)
-
-    return conversation, len(turn_files)
+    conversation, turn_count, _ = restore_session_full(sessions_root, session_id)
+    return conversation, turn_count

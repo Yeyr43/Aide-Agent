@@ -22,7 +22,7 @@ from core.kernel import AppBootstrap
 from core.llm_gateway.content_builder import build_user_content
 from core.llm_gateway.image_utils import save_images_to_session
 from core.kernel.protocols import TokenUsage
-from core.sessions.restorer import restore_session, restore_turns
+from core.sessions.restorer import restore_session_full
 
 from .widgets.input_box import InputBox
 from .widgets.message_list import MessageList
@@ -237,11 +237,14 @@ class AideApp(App):
 
         conversation 供 LLM 上下文使用；_restored_turns 按轮保留
         think/工具/正文细节，供 UI 重建回合树。
+
+        restore_session_full 一次读盘同时返回两者，避免同一批 turn
+        文件被读两遍。
         """
-        conv, turn = restore_session(self._config.sessions_root, session_id)
+        conv, turn, turns = restore_session_full(self._config.sessions_root, session_id)
         self._session.conversation = conv
         self._session.turn = turn
-        self._restored_turns = restore_turns(self._config.sessions_root, session_id)
+        self._restored_turns = turns
 
     # ── 用户输入 ──────────────────────────────────────────────────────
 

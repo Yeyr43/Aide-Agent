@@ -6,7 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.sessions.restorer import (
-    restore_session, restore_turns, _msg_to_entry, _extract_messages,
+    restore_session, restore_turns, restore_session_full,
+    _msg_to_entry, _extract_messages,
 )
 
 
@@ -386,3 +387,43 @@ class TestRestoreSession:
         roles = [m["role"] for m in conv]
         assert "system" not in roles
         assert len(conv) == 2
+
+    def test_full_returns_turns(self, tmp_path):
+        """restore_session_full 一次读盘返回 (conversation, turn_count, turns)。
+
+        app 层需要 conversation + 按轮结构化记录时用它，避免把同一批
+        turn 文件 glob + read + json.loads 两遍。
+        """
+        session_dir = tmp_path / "s_full"
+        msgs_dir = session_dir / "messages"
+        msgs_dir.mkdir(parents=True)
+        (msgs_dir / "turn_001.json").write_text(json.dumps({
+            "turn": 1,
+            "thinking": "先搜索",
+            "messages": [
+                {"role": "user", "content": "查 TODO"},
+                {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "search_in_files",
+                                  "arguments": '{"query": "TODO"}'}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "a.py: TODO"},
+                {"role": "assistant", "content": "找到了。"},
+            ],
+        }))
+
+        conv, turn_count, turns = restore_session_full(tmp_path, "s_full")
+        # conversation 与旧 restore_session 完全一致（兼容）
+        old_conv, old_turns = restore_session(tmp_path, "s_full")
+        assert conv == old_conv
+        assert turn_count == old_turns == 1
+        # turns 是结构化记录（含 thinking，供 UI 重建树）
+        assert len(turns) == 1
+        assert turns[0]["turn"] == 1
+        assert turns[0]["thinking"] == "先搜索"
+        assert turns[0]["messages"][1]["tool_calls"][0]["id"] == "c1"
+
+    def test_full_missing_dir(self, tmp_path):
+        conv, turn_count, turns = restore_session_full(tmp_path, "nope")
+        assert conv == []
+        assert turn_count == 0
+        assert turns == []
