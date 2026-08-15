@@ -157,6 +157,41 @@ class TestNodeRenderables:
         assert "命令完成" in r.plain
 
 
+class TestBulletColors:
+    """● 按节点类型着色（工具绿 / 系统黄 / 正文白）；连接符统一灰。"""
+
+    def test_tool_bullet_green(self):
+        node = ToolNode("read_file", {"path": "x"})
+        node.set_result("ok")
+        r = node._build_renderable()
+        assert any("5cb85c" in str(s.style) for s in r.spans)
+
+    def test_system_bullet_yellow(self):
+        node = SystemNode("系统消息")
+        r = node._build_renderable()
+        assert any("d0b000" in str(s.style) for s in r.spans)
+
+    def test_body_bullet_white_and_connector_gray(self):
+        node = BodyNode()
+        node.append_chunk("正文第一行")
+        r = node._build_renderable()
+        assert isinstance(r, Text)
+        styles = [str(s.style) for s in r.spans]
+        assert any("ffffff" in st for st in styles)  # ● 白
+        assert any("555555" in st for st in styles)  # 连接符统一灰
+
+    def test_body_connector_matches_tool_connector(self):
+        """BodyNode 与 ToolNode 连接符同为统一灰（回归：body 曾无样式导致 ├/└ 色差）。"""
+        tool = ToolNode("read_file", {"path": "x"})
+        tool.set_result("ok")
+        body = BodyNode()
+        body.append_chunk("正文")
+        tool_conns = [str(s.style) for s in tool._build_renderable().spans]
+        body_conns = [str(s.style) for s in body._build_renderable().spans]
+        assert any("555555" in st for st in tool_conns)
+        assert any("555555" in st for st in body_conns)
+
+
 class TestRenderInlineMarkdown:
     """行内 Markdown → 带样式 Text（首行专用转换器）。"""
 

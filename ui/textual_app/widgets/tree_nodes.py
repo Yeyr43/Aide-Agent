@@ -26,6 +26,14 @@ logger = logging.getLogger(__name__)
 
 DOUBLE_CLICK_MS = 400
 
+# ── 树节点色板（● 随类型着色，连接符统一）────────────────────────────
+CONNECTOR_STYLE = "#555555"   # 树连接符（├ / └ / │）统一灰色
+BULLET_THINK = "#888888"      # 思考 · 灰
+BULLET_TOOL = "#5cb85c"       # 工具 · 绿
+BULLET_ERROR = "#cc3333"      # 警告/报错 · 红
+BULLET_SYSTEM = "#d0b000"     # 系统信息 · 黄
+BULLET_BODY = "#ffffff"       # 正文 · 白
+
 
 def should_separate(prev_kind: str | None, kind: str) -> bool:
     """前后节点类型不同时，插入一行 │ 引导线（首节点不插）。"""
@@ -57,7 +65,7 @@ def _guide_indented(text: str, indent: str = "  ", style: str = "") -> Text:
     for i, line in enumerate(lines):
         if i:
             t.append("\n")
-        t.append("│ ", style="#555555")
+        t.append("│ ", style=CONNECTOR_STYLE)
         t.append(indent)
         t.append(line, style=style)
     return t
@@ -135,7 +143,7 @@ class TreeNode(Static):
 
     def _label_line(self, label: str, bullet_style: str | None = None) -> Text:
         t = Text()
-        t.append(f"{self._connector} ", style="#555555")   # 引导列：树连接符
+        t.append(f"{self._connector} ", style=CONNECTOR_STYLE)   # 引导列：树连接符（统一）
         t.append("● ", style=bullet_style or self._bullet_style)  # 子弹列
         t.append(label, style="")  # 文本列，一律正常色
         return t
@@ -179,7 +187,7 @@ class ThinkNode(TreeNode):
     """思考节点：● think。流式期间展开，结束自动折叠。双击展开全文。"""
 
     _collapsible = True
-    _bullet_style = "#888888"
+    _bullet_style = BULLET_THINK
     _kind = "think"
 
     def __init__(self, **kwargs) -> None:
@@ -217,7 +225,7 @@ class ToolNode(TreeNode):
     """工具调用节点：● 工具名 参数  耗时。展开显示结果。"""
 
     _collapsible = True
-    _bullet_style = "#555555"
+    _bullet_style = BULLET_TOOL
     _kind = "tool"
 
     def __init__(self, tool_name: str, arguments: dict,
@@ -257,7 +265,7 @@ class ToolNode(TreeNode):
         return label
 
     def _bullet_color(self) -> str:
-        return "#cc3333" if self._is_error else self._bullet_style
+        return BULLET_ERROR if self._is_error else self._bullet_style
 
     def _toggle(self) -> None:
         self._expanded = not self._expanded
@@ -292,7 +300,7 @@ class BodyNode(TreeNode):
     _HUGE_BUFFER = 128_000
 
     _collapsible = False
-    _bullet_style = ""
+    _bullet_style = BULLET_BODY
     _kind = "body"
 
     def __init__(self, code_theme: str = "monokai",
@@ -357,8 +365,13 @@ class BodyNode(TreeNode):
         return Group(node_line, Padding(md, (0, 0, 0, 4)))
 
     def _node_line_with_inline(self, first: str) -> Text:
-        """节点行：│ ● + 首行（行内 Markdown 样式）。"""
-        t = Text(escape(f"{self._connector} ● "))
+        """节点行：│ ● + 首行（行内 Markdown 样式）。
+
+        连接符与其他节点统一灰色（修复 BodyNode 此前无样式导致的 ├/└ 色差）。
+        """
+        t = Text()
+        t.append(f"{self._connector} ", style=CONNECTOR_STYLE)
+        t.append("● ", style=BULLET_BODY)
         t.append_text(_render_inline_markdown(first))
         return t
 
@@ -366,7 +379,7 @@ class BodyNode(TreeNode):
 class ErrorNode(TreeNode):
     """错误节点：● 红。折叠显示首行，展开显示全文。"""
 
-    _bullet_style = "#cc3333"
+    _bullet_style = BULLET_ERROR
     _kind = "error"
 
     def __init__(self, text: str, **kwargs) -> None:
@@ -397,7 +410,7 @@ class ErrorNode(TreeNode):
 class SystemNode(TreeNode):
     """系统/命令节点：● 琥珀。折叠显示首行，过长可展开。"""
 
-    _bullet_style = "#e09030"
+    _bullet_style = BULLET_SYSTEM
     _kind = "system"
 
     def __init__(self, text: str, **kwargs) -> None:
