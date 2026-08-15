@@ -134,3 +134,101 @@ def compute_context_usage(
     else:
         pct = min(estimated / context_window, 1.0)
     return estimated, pct
+
+
+# ── 上下文爆满兜底（纯机械降级，不调 LLM）────────────────────────────
+
+def _split_turns(messages: list[dict]) -> list[list[dict]]:
+    """把扁平消息列表切成轮次（每个 user 消息开启一轮）。
+
+    与 pipeline._split_turns 同构，但保持本模块独立（避免跨模块循环依赖）。
+    """
+    turns: list[list[dict]] = []
+    current: list[dict] = []
+    for m in messages:
+        if m.get("role") == "user" and current:
+            turns.append(current)
+            current = []
+        current.append(m)
+    if current:
+        turns.append(current)
+    return turns
+
+
+def trim_conversation_to_window(
+    system_msgs: list[dict],
+    conv: list[dict],
+    context_window: int,
+    tools_schema: list[dict] | None = None,
+    ratio: float = 0.9,
+) -> list[dict]:
+    """上下文超预算兜底：估算 system+conv（+schema）超 window×ratio 时，
+    从头部逐轮丢弃最老轮次，直到不超预算。纯机械降级，不调 LLM。
+
+    不用于常规压缩——Aide 上下文靠轮数限制（older/recent split），
+    此函数只在"recent 全文 + system 仍超窗口"的极端情况下兜底，
+    避免 400 prompt-too-long。
+
+    Args:
+        system_msgs: system 消息（仅参与估算，不参与丢弃）
+        conv: 裁剪后的对话（system_msgs + conv = 实际发送内容）
+        context_window: 上下文窗口（token），0 表示不限制（原样返回）
+        tools_schema: tool schema JSON（估算用，None 表示无）
+        ratio: 预算比例（留出输出余量），默认 0.9
+
+    Returns:
+        修剪后的 conv。预算充足时原样返回（幂等）。
+    """
+    if context_window <= 0:
+        return conv
+    budget = int(context_window * ratio)
+
+    def _est(msgs: list[dict]) -> int:
+        estimated, _ = compute_context_usage(
+            system_msgs + msgs, tools_schema, context_window=0,
+        )
+        return estimated
+
+    if _est(conv) <= budget:
+        return conv  # 未超预算，不动
+
+    # 从最老轮次整组丢弃，直到不超预算
+    kept = list(_split_turns(conv))
+    while len(kept) > 1:
+        kept = kept[1:]
+        if _est([m for t in kept for m in t]) <= budget:
+            break
+
+    result = [m for t in kept for m in t]
+
+    # 只剩 1 轮仍超 → 截断该轮 assistant 正文（user 消息保留，语义不丢）
+    if _est(result) > budget:
+        result = _truncate_last_turn_to_budget(result, budget, _est)
+    return result
+
+
+def _truncate_last_turn_to_budget(
+    messages: list[dict],
+    budget: int,
+    est_fn,
+) -> list[dict]:
+    """截断 assistant 正文直到估算 ≤ budget（从最后一条 assistant 向前）。
+
+    每条 assistant 内容持续减半（下限 100 字符），到下限后处理更早的。
+    仅剩 user 消息仍超预算的极端情况放弃截断（语义优先）。
+    """
+    result = [dict(m) for m in messages]
+    assistant_idx = [
+        i for i, m in enumerate(result)
+        if m.get("role") == "assistant" and isinstance(m.get("content"), str)
+    ]
+
+    while est_fn(result) > budget and assistant_idx:
+        i = assistant_idx[-1]
+        content = result[i]["content"]
+        if len(content) <= 100:
+            assistant_idx.pop()  # 已到下限，处理更早的 assistant
+            continue
+        keep = max(len(content) // 2, 100)
+        result[i]["content"] = content[:keep]
+    return result

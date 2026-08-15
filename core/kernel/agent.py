@@ -221,15 +221,28 @@ class AgentKernel:
         user_msg: str,
         conversation: list[dict],
     ) -> tuple[list[dict], list[dict]]:
-        """组装上下文：system messages + 裁剪后的对话。"""
+        """组装上下文：system messages + 裁剪后的对话。
+
+        组装后做上下文爆满兜底：recent 全文 + system 超窗口时从头部逐轮
+        丢弃最老轮次（纯机械降级，避免 400 prompt-too-long；不用 LLM 摘要）。
+        """
         tool_descriptions = [
             t.description for t in self.tool_registry._tools.values()
         ] if self.tool_registry._tools else None
-        return await self._pipeline.assemble(
+        system_msgs, trimmed_conv = await self._pipeline.assemble(
             session_dir, user_msg, conversation,
             context_providers=self._plugins.get_context_providers(),
             tool_descriptions=tool_descriptions,
         )
+
+        window = self.config.app.context_window
+        if window > 0:
+            from core.context.token_counter import trim_conversation_to_window
+            trimmed_conv = trim_conversation_to_window(
+                system_msgs, trimmed_conv, window,
+                tools_schema=self.tool_registry.get_schemas(),
+            )
+        return system_msgs, trimmed_conv
 
     async def _run_and_merge(
         self,

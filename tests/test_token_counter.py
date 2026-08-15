@@ -10,7 +10,13 @@ from core.context.token_counter import (
     _extract_content_text_and_images,
     _estimate_image_tokens,
     DEFAULT_CONTEXT_WINDOW,
+    trim_conversation_to_window,
+    _split_turns,
 )
+
+
+def _msg(role: str, content: str) -> dict:
+    return {"role": role, "content": content}
 
 
 class TestEstimateTokens:
@@ -160,3 +166,64 @@ class TestComputeContextUsage:
         estimated, pct = compute_context_usage(messages)
         assert estimated > 0
         assert isinstance(pct, float)
+
+
+class TestSplitTurns:
+    def test_splits_by_user_message(self):
+        msgs = [_msg("user", "a"), _msg("assistant", "b"),
+                _msg("tool", "r"), _msg("user", "c"), _msg("assistant", "d")]
+        turns = _split_turns(msgs)
+        assert len(turns) == 2
+        assert [m["role"] for m in turns[0]] == ["user", "assistant", "tool"]
+        assert [m["role"] for m in turns[1]] == ["user", "assistant"]
+
+    def test_leading_orphan_messages_one_turn(self):
+        turns = _split_turns([_msg("assistant", "stray")])
+        assert len(turns) == 1
+        assert turns[0][0]["role"] == "assistant"
+
+
+class TestTrimConversation:
+    def test_within_budget_unchanged(self):
+        """预算充足时不修剪（幂等）。"""
+        system = [_msg("system", "soul")]
+        conv = [_msg("user", "hello"), _msg("assistant", "hi")]
+        out = trim_conversation_to_window(system, conv, context_window=128000)
+        assert out == conv
+
+    def test_unlimited_window_no_trim(self):
+        conv = [_msg("user", "q"), _msg("assistant", "A" * 5000)]
+        out = trim_conversation_to_window([_msg("system", "s")], conv,
+                                          context_window=0)
+        assert out == conv
+
+    def test_drops_oldest_turns(self):
+        """超预算时从头部逐轮丢弃最老轮次，保留最近轮。"""
+        system = [_msg("system", "s")]
+        turn = [_msg("user", "q"), _msg("assistant", "A" * 5000)]  # ~1251 tokens
+        conv = turn + turn + turn
+        # budget = 4000*0.9 = 3600；3 轮 3753 → 丢 1 轮 2502 ≤ 3600
+        out = trim_conversation_to_window(system, conv, context_window=4000)
+        users = [m for m in out if m["role"] == "user"]
+        assert len(users) == 2
+        # 保留的是最近两轮（顺序不变）
+        assert out[-1] == turn[1]
+
+    def test_truncates_last_turn_when_single_remains(self):
+        """只剩 1 轮仍超 → 截断 assistant 正文（user 保留），不超预算。"""
+        system = [_msg("system", "s")]
+        conv = [_msg("user", "q"), _msg("assistant", "A" * 50000)]  # ~12500 tokens
+        out = trim_conversation_to_window(system, conv, context_window=1000)
+        assert out[0]["role"] == "user"
+        assert len(out[1]["content"]) < 50000
+        est, _ = compute_context_usage(system + out, context_window=0)
+        assert est <= 1000 * 0.9
+
+    def test_system_messages_kept_intact(self):
+        """system 消息不参与丢弃，原样保留。"""
+        system = [_msg("system", "关键引导内容")]
+        conv = [_msg("user", "q"), _msg("assistant", "A" * 5000)] * 3
+        out = trim_conversation_to_window(system, conv, context_window=4000)
+        assert out[0]["role"] != "system"  # 返回的是 conv（不含 system）
+        est, _ = compute_context_usage(system + out, context_window=0)
+        assert est <= 4000 * 0.9
