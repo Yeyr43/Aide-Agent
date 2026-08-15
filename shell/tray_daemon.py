@@ -16,6 +16,17 @@ from PIL import Image
 
 from core.platform import IS_WINDOWS
 
+# ── Windows: 启动即释放控制台 ──
+# uv 的 pythonw.exe 是 CUI 子系统（PE subsystem=3，非标准 GUI），进程启动即被
+# Windows 分配控制台，Windows Terminal（默认终端）会为其弹出空白命令行。
+# 在此立即 FreeConsole 释放，避免每次运行 Aide 都弹空白窗口。
+if IS_WINDOWS:
+    try:
+        import ctypes
+        ctypes.windll.kernel32.FreeConsole()
+    except Exception:
+        pass
+
 
 def _load_icon() -> Image.Image:
     """加载托盘图标，优先 Aide.ico，回退到程序生成。"""
@@ -117,7 +128,10 @@ class TrayDaemon:
 
 def main() -> None:
     # Write PID for single-instance detection
-    pid_file = Path.home() / ".aide" / "daemon.pid"
+    # 用 aide_dir()（兼容 AIDE_HOME）而非 Path.home()/.aide — 与 ensure_daemon
+    # 检查的 _DAEMON_LOCK 路径一致，避免每次启动重复拉起 daemon
+    from core.setup import aide_dir
+    pid_file = aide_dir() / "daemon.pid"
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     pid_file.write_text(str(os.getpid()))
     atexit.register(lambda: pid_file.unlink(missing_ok=True))
