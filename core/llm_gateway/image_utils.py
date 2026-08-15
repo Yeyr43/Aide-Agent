@@ -54,7 +54,6 @@ def extract_file_paths(text: str) -> tuple[str, list[str]]:
         (剩余文本, 存在的文件路径列表)
     """
     import shlex
-    import sys
 
     paths: list[str] = []
     remaining_parts: list[str] = []
@@ -177,7 +176,6 @@ def open_with_os(file_path: str | Path) -> bool:
     """
     import os
     import subprocess
-    import sys
     path = str(file_path)
     try:
         if IS_WINDOWS:

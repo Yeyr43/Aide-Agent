@@ -3,8 +3,8 @@
 P4: 命令核心从 ui/textual_app/commands/ 移至 core/commands/。
 """
 
-from dataclasses import dataclass, field
-from typing import Callable, Awaitable, Any
+from dataclasses import dataclass
+from typing import Callable, Awaitable
 
 Handler = Callable[..., Awaitable[str]]
 

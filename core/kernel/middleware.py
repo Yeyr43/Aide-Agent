@@ -1,7 +1,8 @@
 """ChatMiddleware — 对话中间件协议 + ChatContext。
 
-P6: 可插拔的对话处理管线。内置中间件处理上下文组装、FC 循环、
-摄入保存、Token 计数、反馈验证。插件可注册自定义中间件插入任意位置。
+P6: 可插拔的对话处理管线。框架 6 步固化逻辑（上下文组装/FC 循环/摄入/
+Token 计数/反馈）直接内联在 AgentKernel.chat() 中，不注册为内置中间件。
+插件可经 MiddlewareRunner.add() 注册自定义中间件插入任意 hook 点。
 """
 
 from __future__ import annotations
@@ -86,66 +87,6 @@ class ChatMiddleware(Protocol):
     async def after_fc_loop(self, ctx: ChatContext) -> ChatContext:
         """FC 循环完成后。可修改 assistant_text 等。"""
         ...
-
-
-# ── 内置中间件（框架级义务，不可跳过）───────────────────────────────
-
-
-class ContextAssemblyMiddleware:
-    """组装上下文 + 裁剪对话窗口。"""
-
-    def __init__(self, pipeline, plugins):
-        self._pipeline = pipeline
-        self._plugins = plugins
-
-    async def before_context(self, ctx: ChatContext) -> ChatContext:
-        tool_descriptions = None
-        if hasattr(self._pipeline, '_tool_registry'):
-            pass  # 从外部获取，下面实际调用时传递
-        # 委托给 AgentKernel 的 _assemble_context 逻辑
-        return ctx
-
-
-class FCLoopMiddleware:
-    """执行 Function Calling 循环。"""
-
-    def __init__(self, fc_loop):
-        self._fc_loop = fc_loop
-
-    async def before_fc_loop(self, ctx: ChatContext) -> ChatContext:
-        return ctx
-
-
-class IngestMiddleware:
-    """摄入保存对话。"""
-
-    def __init__(self, ingester):
-        self._ingester = ingester
-
-    async def after_fc_loop(self, ctx: ChatContext) -> ChatContext:
-        return ctx
-
-
-class TokenCounterMiddleware:
-    """计算 Token 使用量。"""
-
-    def __init__(self, tool_registry, context_window):
-        self._tool_registry = tool_registry
-        self._context_window = context_window
-
-    async def after_fc_loop(self, ctx: ChatContext) -> ChatContext:
-        return ctx
-
-
-class FeedbackMiddleware:
-    """反馈验证。"""
-
-    def __init__(self, verifier, pipeline):
-        self._verifier = verifier
-        self._pipeline = pipeline
-
-    async def after_fc_loop(self, ctx: ChatContext) -> ChatContext:
-        return ctx
 
 
 # ── MiddlewareRunner ───────────────────────────────────────────────────

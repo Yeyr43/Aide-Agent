@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Protocol, runtime_checkable
@@ -170,10 +169,6 @@ class PluginAPI:
     def on_status_change(self, callback: Callable[[str, str], None]) -> None:
         """P7: 注册状态变更回调。callback(old_status, new_status)。"""
         self._status_callbacks.append(callback)
-
-    def fill_slot(self, slot_name: str, implementation: object) -> None:
-        self._filled_slots.append(slot_name)
-        # implementation 挂到 slot 上，供 PluginHost 匹配
 
     def provide_slot(self, slot_name: str) -> None:
         self._provided_slots.append(slot_name)

@@ -16,7 +16,7 @@ Aide Agent — 本地个人智能管家。核心不是"能做多少事"而是"�
 # 运行应用
 uv run python shell/main.py
 
-# 运行全部测试（1151 个）
+# 运行全部测试（1144 个）
 uv run pytest tests/ -q
 
 # 运行单个测试文件
@@ -90,7 +90,7 @@ core/
 │   ├── safety.py        # check_tool_safety() — 高危命令拦截（从 fc_loop 提取）
 │   ├── xml_tool_parser.py  # extract_xml_tool_calls() — XML fallback 解析（从 fc_loop 提取）
 │   ├── protocols.py     # ExecutorUI Protocol + NullUI + ChatResult + TokenUsage
-│   └── state.py         # ExecutorState 状态机（READY / BLOCKED）
+│   └── middleware.py    # ChatMiddleware Protocol + ChatContext + MiddlewareRunner
 ├── llm_gateway/         # 4 个 LLM Provider
 │   ├── provider.py      # AbstractProvider Protocol + StreamEvent 类型（TextDelta/ThinkingDelta/StreamEnd）
 │   ├── openai_compatible_provider.py  # OpenAI 兼容协议基类
@@ -220,7 +220,7 @@ async def execute(arguments: dict, ctx=None) -> str:
 
 ### Chat 中间件框架
 
-`AgentKernel.chat()` 不再硬编码 6 步流程。通过 `MiddlewareRunner` 编排 4 个 hook 点：
+`AgentKernel.chat()` 的 6 步管线（上下文组装 / FC 循环 / 摄入保存 / Token 计数 / 反馈验证）**固化在 chat() 内**，经 `MiddlewareRunner` 暴露 4 个 hook 点供插件扩展：
 
 ```
 before_context → [上下文组装] → after_context →
@@ -228,7 +228,7 @@ before_fc_loop → [FC 循环] → after_fc_loop →
 [摄入保存 / Token 计数 / 反馈验证 — 固化步骤，不走中间件]
 ```
 
-`ChatMiddleware` Protocol 有 4 个可选 hook 方法。插件可通过 `kernel._runner.add(my_mw)` 注册行为扩展。`ChatContext.metadata` 在中间件间自由传递数据。
+`ChatMiddleware` Protocol 有 4 个可选 hook 方法（均为 no-op 可选）。插件通过 `kernel._runner.add(my_mw)` 注册行为扩展，`ChatContext.metadata` 在中间件间自由传递数据。**不内置框架级中间件**——框架义务直接内联在 chat()，中间件仅作扩展点。
 
 ### 记忆结构化（MemoryEntry）+ 统一 frontmatter 解析
 
@@ -441,7 +441,7 @@ Python 插件可注册：工具、命令、生命周期钩子（`register_hook()
 | **P8** | 子 agent delegate 工具 / 声明式工具清单（definition.py）/ 编排判据（strategy_6 + subagent_system 完整性） |
 | **P8+ 优化批次** | 工具并发分级（只读并行/写串行/abort 兄弟）、记忆注入边界+新鲜度、自动记忆提取（/mem-auto）、上下文爆满兜底（trim_conversation_to_window） |
 
-1151 测试全部通过。
+1144 测试全部通过。
 
 ## Prompt 体系
 

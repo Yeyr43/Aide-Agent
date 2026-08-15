@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import html as _html_mod
-import io
 import ipaddress
 import re
 import socket

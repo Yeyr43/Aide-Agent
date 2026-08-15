@@ -89,6 +89,28 @@ class AbstractProvider(Protocol):
         ...
 
 
+# ── 流式纯文本消费（公共 helper）──────────────────────────────────
+
+async def stream_text(
+    provider: AbstractProvider,
+    messages: list[dict],
+    tools: list[dict] | None = None,
+) -> str:
+    """流式调用 LLM 并累积纯文本响应。
+
+    消费 chat_with_tools 的 TextDelta/StreamEnd 事件，返回累积文本。
+    错误处理由调用方负责（此函数只保证正确累积）。
+    ReflectEngine / AutoMemoryExtractor 复用，避免各写一份消费循环。
+    """
+    response_text = ""
+    async for event in provider.chat_with_tools(messages, tools or []):
+        if isinstance(event, TextDelta):
+            response_text += event.content
+        elif isinstance(event, StreamEnd):
+            break
+    return response_text
+
+
 # ── SSE 解析（P0 纯文本）─────────────────────────────────────────
 
 async def _parse_sse_stream(response: httpx.Response) -> AsyncIterator[str]:

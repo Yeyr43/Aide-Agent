@@ -9,14 +9,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .watcher import FileWatcher
 
 if TYPE_CHECKING:
-    from .adapter import MCPAdapter, MCPServerConfig
+    from .adapter import MCPAdapter
 
 logger = logging.getLogger(__name__)
 

@@ -15,7 +15,7 @@ import os
 import shutil
 from pathlib import Path
 
-from core.locale import t, build_soul, set_locale
+from core.locale import t, build_soul
 
 logger = logging.getLogger(__name__)
 
@@ -97,14 +97,6 @@ def _ensure_file(path: Path, content: str) -> bool:
     """如果文件不存在则创建，返回 True 表示新创建。"""
     if not path.exists():
         path.write_text(content, encoding="utf-8")
-        return True
-    return False
-
-
-def _ensure_json(path: Path, default) -> bool:
-    """如果 JSON 文件不存在则创建，返回 True 表示新创建。"""
-    if not path.exists():
-        path.write_text(json.dumps(default, ensure_ascii=False, indent=2), encoding="utf-8")
         return True
     return False
 

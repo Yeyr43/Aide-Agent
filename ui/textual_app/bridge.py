@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from core.kernel.protocols import ExecutorUI
 from core.locale import t
 
 if TYPE_CHECKING:

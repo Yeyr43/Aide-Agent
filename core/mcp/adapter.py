@@ -307,19 +307,7 @@ class MCPAdapter:
                 logger.exception(f"[MCP] 断开 {name} 时出错")
         logger.info(f"[MCP] 已断开服务端: {name}")
 
-    async def disconnect_all(self) -> None:
-        """断开所有 MCP 连接。"""
-        for name in list(self._transports.keys()):
-            await self.disconnect(name)
-
-    # ── 健康检查 + 自动重连 ────────────────────────────────────────
-
-    async def check_health(self, name: str) -> bool:
-        """检查服务端是否健康（连接正常 + 进程存活）。"""
-        transport = self._transports.get(name)
-        if transport is None:
-            return False
-        return transport.is_connected
+    # ── 自动重连 ─────────────────────────────────────────────────
 
     async def reconnect(self, name: str) -> bool:
         """尝试重连服务端。成功返回 True。"""

@@ -16,8 +16,8 @@ import logging
 from dataclasses import dataclass
 
 from .protocols import ExecutorUI
-from .safety import check_tool_safety, check_write_overwrite, strip_quoted
-from .xml_tool_parser import extract_xml_tool_calls, try_parse_xml
+from .safety import check_tool_safety, check_write_overwrite
+from .xml_tool_parser import extract_xml_tool_calls
 from core.tools import ToolRegistry
 from core.tools.truncation import truncate_output
 from core.llm_gateway import TextDelta, ThinkingDelta, StreamEnd
@@ -517,11 +517,6 @@ class FunctionCallingLoop:
                 pass
 
         return reason
-
-    @staticmethod
-    def _strip_quoted(text: str) -> str:
-        """移除 shell 命令中引号包裹的内容。委托给 core.kernel.safety.strip_quoted。"""
-        return strip_quoted(text)
 
     @staticmethod
     def _parse_args(raw_args: str | dict) -> dict:

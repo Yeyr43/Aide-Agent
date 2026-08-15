@@ -27,7 +27,7 @@ import logging
 import os
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from .adapter import ExtractedHook
@@ -253,15 +253,6 @@ class HookRunner:
         """注册一个 hook（编译 matcher）。"""
         matcher = self._compiler.compile(hook.matcher)
         self._hooks[hook.event].append((matcher, hook))
-
-    def register_raw(self, event: str, matcher_str: str,
-                     command: str, timeout: int = 60) -> None:
-        """注册原始 hook（无 ExtractedHook 对象时使用）。"""
-        hook = ExtractedHook(
-            event=event, matcher=matcher_str,
-            type="command", command=command, timeout=timeout,
-        )
-        self.register(hook)
 
     def load_from_dicts(self, hook_dicts: list[dict]) -> None:
         """从 dict 列表批量加载 hooks（来自 hooks.json）。"""

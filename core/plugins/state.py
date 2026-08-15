@@ -185,20 +185,9 @@ class PluginStateManager:
 
         return missing_keys
 
-    def record_usage(self, plugin_id: str) -> None:
-        """记录一次插件使用。"""
-        entry = self._entries.get(plugin_id, {})
-        entry["usage_count"] = entry.get("usage_count", 0) + 1
-        self._entries[plugin_id] = entry
-        self._save()
-
     def list_all(self) -> list[PluginStateEntry]:
         """列出所有已知插件状态。"""
         return [self.get(pid) for pid in self._entries]
-
-    def list_by_status(self, status: PluginStatus) -> list[PluginStateEntry]:
-        """按状态筛选。"""
-        return [e for e in self.list_all() if e.status == status]
 
     def count_by_status(self) -> dict[str, int]:
         """统计各状态插件数量。"""

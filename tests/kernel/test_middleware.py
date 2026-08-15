@@ -7,11 +7,6 @@ from core.kernel.middleware import (
     ChatContext,
     ChatMiddleware,
     MiddlewareRunner,
-    ContextAssemblyMiddleware,
-    FCLoopMiddleware,
-    IngestMiddleware,
-    TokenCounterMiddleware,
-    FeedbackMiddleware,
 )
 
 
@@ -249,32 +244,6 @@ class TestMiddlewareRunner:
         assert len(runner.all) == 2
 
 
-# ── Built-in Middleware 测试 ─────────────────────────────────────────────
-
-class TestBuiltinMiddleware:
-    """测试内置中间件基类——验证构造和基本 hook 调用。"""
-
-    async def test_context_assembly_construction(self):
-        mw = ContextAssemblyMiddleware(pipeline=None, plugins=None)
-        assert mw is not None
-
-    async def test_fc_loop_construction(self):
-        mw = FCLoopMiddleware(fc_loop=None)
-        assert mw is not None
-
-    async def test_ingest_construction(self):
-        mw = IngestMiddleware(ingester=None)
-        assert mw is not None
-
-    async def test_token_counter_construction(self):
-        mw = TokenCounterMiddleware(tool_registry=None, context_window=128000)
-        assert mw is not None
-
-    async def test_feedback_construction(self):
-        mw = FeedbackMiddleware(verifier=None, pipeline=None)
-        assert mw is not None
-
-
 # ── Protocol 兼容性 ──────────────────────────────────────────────────────
 
 class TestChatMiddlewareProtocol:
@@ -294,14 +263,3 @@ class TestChatMiddlewareProtocol:
         """NoopMiddleware 不实现任何 hook — Runner 会安全跳过。"""
         mw = NoopMiddleware()
         assert not callable(getattr(mw, 'before_context', None))
-
-    def test_builtin_mw_has_relevant_hooks(self):
-        """内置中间件只实现需要的 hook。"""
-        ca = ContextAssemblyMiddleware(None, None)
-        assert callable(getattr(ca, 'before_context', None))
-
-        fc = FCLoopMiddleware(None)
-        assert callable(getattr(fc, 'before_fc_loop', None))
-
-        ig = IngestMiddleware(None)
-        assert callable(getattr(ig, 'after_fc_loop', None))

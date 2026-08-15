@@ -318,24 +318,6 @@ class InputBox(TextArea):
         if self.styles.height != h:
             self.styles.height = h
 
-    # ── 附件管理 ─────────────────────────────────────────────────────
-
-    def remove_attachment(self, index: int) -> None:
-        """移除单个附件（按标签索引）。"""
-        image_count = len(self._pending_clipboard_images)
-        if index < len(self._pending_files):
-            del self._pending_files[index]
-        elif index < len(self._pending_files) + image_count:
-            img_idx = index - len(self._pending_files)
-            del self._pending_clipboard_images[img_idx]
-        self._update_placeholder()
-
-    def clear_attachments(self) -> None:
-        """清空所有附件。"""
-        self._pending_files = []
-        self._pending_clipboard_images = []
-        self._update_placeholder()
-
     # ── Token 管理（[filename] / [图片] 整体删除 + 光标隔离）──────────
 
     def _token_ranges(self) -> list[tuple[int, int, int]]:

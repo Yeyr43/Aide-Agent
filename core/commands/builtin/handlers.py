@@ -229,8 +229,6 @@ async def handle_mem_auto(app: CommandContext, args: str) -> str:
 
 async def handle_memory(app: CommandContext, args: str) -> str:
     """查看记忆条目（P5 .md 格式）。"""
-    from core.memory import MEMORY_FILES
-
     lines = [t("cmd.memory.title")]
 
     total_entries = 0
@@ -395,7 +393,7 @@ from .settings_handlers import (  # noqa: E402, F401
 # ── CommandRegistry 集成入口 ────────────────────────────────────────
 
 
-def register_builtin_commands(registry: Any) -> None:
+def register_builtin_commands(registry) -> None:
     """注册所有内置命令到 CommandRegistry。
 
     P4 Batch 2: 12 个命令。

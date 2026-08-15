@@ -262,7 +262,6 @@ def get_vocab_index() -> VocabularyIndex:
     供 recall.py / capture.py 等非 pipeline 子系统使用，
     确保它们与 pipeline 共享同一份词汇表。
     """
-    global _vocab_index
     if not _vocab_index.built:
         _build_vocabulary()
     return _vocab_index

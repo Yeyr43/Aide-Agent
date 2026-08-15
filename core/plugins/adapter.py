@@ -19,7 +19,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from .manifest_v2 import PluginManifestV2, SkillRef, HookRef, _parse_frontmatter
+from .manifest_v2 import PluginManifestV2, _parse_frontmatter
 
 logger = logging.getLogger(__name__)
 

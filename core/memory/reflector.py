@@ -15,10 +15,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.context.overview import split_sections
 from core.locale import t
 from core.setup import aide_dir
 from core.storage import atomic_write_json, atomic_write_text
-from .version import AGENT_ROOT, BACKUPS_DIR, _backup_prompt, _append_version_log, rollback_prompt
+from .version import AGENT_ROOT, _backup_prompt, _append_version_log
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +53,6 @@ MEMORY_SECTION_HEADERS = {
     "workflows": "## Workflows",
     "long_term_memory": "## Long-Term Memory",
 }
-
-OVERVIEW_SECTION = "## Session Overview"
 
 
 # ── ReflectEngine ────────────────────────────────────────────────────
@@ -312,13 +311,8 @@ class ReflectEngine:
         ]
 
         try:
-            response_text = ""
-            async for event in self._provider.chat_with_tools(messages, []):
-                from core.llm_gateway import TextDelta, StreamEnd
-                if isinstance(event, TextDelta):
-                    response_text += event.content
-                elif isinstance(event, StreamEnd):
-                    break
+            from core.llm_gateway.provider import stream_text
+            response_text = await stream_text(self._provider, messages)
         except TypeError:
             logger.exception("ReflectEngine LLM 流处理类型错误")
             return None
@@ -461,27 +455,11 @@ class ReflectEngine:
 
     @staticmethod
     def _split_sections(text: str) -> dict[str, str]:
-        """将 Markdown 按 ## 标题分割为 {标题: 内容}。"""
-        sections: dict[str, str] = {}
-        current_title: str | None = None
-        current_lines: list[str] = []
-
-        for line in text.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("## "):
-                # 保存上一个 section
-                if current_title is not None:
-                    sections[current_title] = "\n".join(current_lines).strip()
-                current_title = stripped[3:].strip()
-                current_lines = []
-            elif current_title is not None:
-                current_lines.append(line)
-
-        # 保存最后一个 section
-        if current_title is not None:
-            sections[current_title] = "\n".join(current_lines).strip()
-
-        return sections
+        """将 Markdown 按 ## 标题分割为 {标题: 内容}。复用 overview.split_sections。"""
+        return {
+            title: "\n".join(lines).strip()
+            for title, lines in split_sections(text).items()
+        }
 
     # ── Diff ───────────────────────────────────────────────────────────
 

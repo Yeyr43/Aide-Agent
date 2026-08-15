@@ -151,13 +151,14 @@ def _split_conversation(
 # ── overview.md 解析 + 检查点还原（从 compactor.py 移植）───────────────
 
 
-def parse_overview_md(text: str) -> dict[str, list[str]]:
-    """解析 overview.md 为结构化 sections。
+def split_sections(text: str) -> dict[str, list[str]]:
+    """将 Markdown 按 ## 标题分割为 {标题: 原始行列表}。
 
-    将 Markdown 的 ## 标题映射为 section key，其下的 - 列表项为值。
+    公共原语（统一 reflector / auto / overview 三处同款解析）：
+    保留每个标题下的原始行（含空行），由调用方决定如何从内容行提取结构。
 
     Returns:
-        dict like {"话题": [...], "用户偏好": [...], "纠正记录": [...], "决策与结论": [...]}
+        dict like {"话题": ["- ...", ""], ...}（重复标题合并到同一 key）
     """
     sections: dict[str, list[str]] = {}
     current: str | None = None
@@ -167,8 +168,26 @@ def parse_overview_md(text: str) -> dict[str, list[str]]:
             current = stripped[3:].strip()
             if current not in sections:
                 sections[current] = []
-        elif stripped.startswith("- ") and current is not None:
-            sections[current].append(stripped[2:].strip())
+        elif current is not None:
+            sections[current].append(line)
+    return sections
+
+
+def parse_overview_md(text: str) -> dict[str, list[str]]:
+    """解析 overview.md 为结构化 sections。
+
+    将 Markdown 的 ## 标题映射为 section key，其下的 - 列表项为值。
+
+    Returns:
+        dict like {"话题": [...], "用户偏好": [...], "纠正记录": [...], "决策与结论": [...]}
+    """
+    sections: dict[str, list[str]] = {}
+    for title, lines in split_sections(text).items():
+        items = [
+            ln.strip()[2:].strip()
+            for ln in lines if ln.strip().startswith("- ")
+        ]
+        sections[title] = items
     return sections
 
 

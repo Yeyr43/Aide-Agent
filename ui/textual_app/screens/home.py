@@ -9,7 +9,6 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual import on
@@ -21,9 +20,6 @@ from textual.widgets import Input, Static
 
 from core.locale import t
 from core.setup import aide_dir
-
-if TYPE_CHECKING:
-    from textual.app import App
 
 logger = logging.getLogger(__name__)
 

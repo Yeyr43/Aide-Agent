@@ -294,7 +294,3 @@ class Config:
     @property
     def backups_dir(self) -> Path:
         return self.aide_root / "backups"
-
-    @property
-    def logs_dir(self) -> Path:
-        return self.aide_root / "logs"

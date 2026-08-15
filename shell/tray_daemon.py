@@ -10,7 +10,6 @@ from __future__ import annotations
 import atexit
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 from PIL import Image

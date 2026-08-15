@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import sys
 
 # 重导出 core 平台常量（向后兼容 — 现有代码仍可 from ui.textual_app.platform import IS_WINDOWS）
 from core.platform import (

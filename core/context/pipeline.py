@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -30,7 +30,7 @@ from .tokenizer import (
     _tfidf_score, _decay_factor, _expand_query, flush_vocab_cache,
 )
 from .overview import _build_overview, _split_conversation
-from .token_counter import estimate_tokens
+from .token_counter import estimate_tokens, _split_turns
 
 logger = logging.getLogger(__name__)
 
@@ -94,20 +94,6 @@ def _msg_content_text(content) -> str:
             if isinstance(p, dict) and p.get("type") == "text"
         )
     return ""
-
-
-def _split_turns(messages: list[dict]) -> list[list[dict]]:
-    """把扁平消息列表切成轮次（每个 user 消息开启一轮）。"""
-    turns: list[list[dict]] = []
-    current: list[dict] = []
-    for m in messages:
-        if m.get("role") == "user" and current:
-            turns.append(current)
-            current = []
-        current.append(m)
-    if current:
-        turns.append(current)
-    return turns
 
 
 def _turn_text(messages: list[dict]) -> str:

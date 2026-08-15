@@ -20,6 +20,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.context.overview import split_sections
 from core.locale import t
 from core.setup import aide_dir
 from core.storage import atomic_write_text
@@ -126,14 +127,8 @@ class AutoMemoryExtractor:
             {"role": "user", "content": user_prompt},
         ]
         try:
-            response_text = ""
-            async for event in self._provider.chat_with_tools(messages, []):
-                from core.llm_gateway import TextDelta, StreamEnd
-                if isinstance(event, TextDelta):
-                    response_text += event.content
-                elif isinstance(event, StreamEnd):
-                    break
-            return response_text.strip()
+            from core.llm_gateway.provider import stream_text
+            return (await stream_text(self._provider, messages)).strip()
         except Exception:
             logger.debug("自动记忆提取 LLM 调用失败（静默）", exc_info=True)
             return ""
@@ -157,25 +152,24 @@ class AutoMemoryExtractor:
     def _parse_sections(self, text: str) -> dict[str, list[str]]:
         """把 LLM 输出按 ## section 分割，提取每个 section 下的 "- 内容" 列表。
 
+        复用 overview.split_sections 公共原语（统一三处 section 解析）。
+
         Returns:
             {"preferences": [...], "workflows": [...], "long_term_memory": [...]}
         """
         result: dict[str, list[str]] = {
             "preferences": [], "workflows": [], "long_term_memory": [],
         }
-        current_key: str | None = None
-        for line in text.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("## "):
-                title = stripped[3:].strip()
-                current_key = _SECTION_KEY.get(title)
-                continue
+        for title, lines in split_sections(text).items():
+            current_key = _SECTION_KEY.get(title)
             if current_key is None:
                 continue
-            if stripped.startswith("- "):
-                content = stripped[2:].strip()
-                if content and content not in ("(无变更)", "(无新增)", "(none)"):
-                    result[current_key].append(content)
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith("- "):
+                    content = stripped[2:].strip()
+                    if content and content not in ("(无变更)", "(无新增)", "(none)"):
+                        result[current_key].append(content)
         return result
 
     # ── 写入 ────────────────────────────────────────────────────────

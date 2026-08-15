@@ -7,8 +7,6 @@
 第二次运行 aide 时，不会启动新实例，而是激活已有窗口。
 """
 
-import atexit
-import os
 import sys
 from pathlib import Path
 
@@ -22,7 +20,6 @@ if not is_bundled():
 from core.setup import aide_dir, ensure_aide_root
 from core.launcher import (
     acquire_instance_lock,
-    release_instance_lock,
     decorate_console,
     ensure_daemon,
 )
@@ -42,7 +39,7 @@ def _smoke_test() -> None:
         "core.setup", "core.config", "core.storage", "core.resources",
         "core.platform", "core.locale", "core.locale_data",
         "core.launcher",
-        "core.kernel.agent", "core.kernel.state", "core.kernel.protocols",
+        "core.kernel.agent", "core.kernel.protocols",
         "core.kernel.bootstrap", "core.kernel.fc_loop", "core.kernel.context",
         "core.context.pipeline", "core.context.ingester",
         "core.context.relevance", "core.context.token_counter",

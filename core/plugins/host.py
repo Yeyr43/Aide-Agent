@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import re
 import sys
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from .contract import PluginManifest, PluginAPI, ContextProvider
-from .manifest_v2 import detect_plugin_format, PluginManifestV2
+from .contract import PluginManifest, PluginAPI
 from .adapter import PluginFormatDetector, ExtractedHook
 from .sdk import PluginEntry
 from .slots import SlotRegistry
@@ -697,10 +695,6 @@ class PluginHost:
     def disable_plugin(self, plugin_id: str) -> None:
         """P7: 禁用插件。"""
         self._state_mgr.disable(plugin_id)
-
-    def get_plugin_status(self, plugin_id: str) -> str:
-        """P7: 获取插件状态字符串。"""
-        return self._state_mgr.get(plugin_id).status.value
 
     @property
     def slot_registry(self) -> SlotRegistry:
