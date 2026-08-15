@@ -79,6 +79,9 @@ DEFAULT_DECAY_DAYS = 30
 FRAGMENT_BASE_RELEVANCE = {"overview": 0.6, "timeline": 0.4}
 # 历史回填：最多取最近 N 个 early 轮次的完整内容进候选（评分/预算再筛）
 HISTORY_MAX_TURNS = 10
+# 记忆片段占系统预算的比例上限：防止相关记忆过多挤占工具/技能上下文
+# （free-code 有界注入的简化版 — 单来源硬上限）
+MEMORY_BUDGET_RATIO = 0.4
 
 
 def _msg_content_text(content) -> str:
@@ -293,6 +296,8 @@ class ContextPipeline:
                 meta = {}
                 if entry.id:
                     meta["entry_id"] = entry.id
+                if entry.created:
+                    meta["created"] = entry.created
                 fragments.append(ContextFragment(
                     type="memory", content=entry.content,
                     recency=recency, metadata=meta,
@@ -419,6 +424,12 @@ class ContextPipeline:
 
         过滤看 relevance（内容相关性 × 类型权重，不含衰减），
         同分时短片段优先（token 效率）。
+
+        增强（free-code 有界注入）：
+        - memory 片段单独受 MEMORY_BUDGET_RATIO 上限（防止相关记忆挤占其它上下文）
+        - memory 片段注入时带 created 日期前缀，让模型判断记忆新旧
+        content 保持原始值不变（不破坏 FeedbackVerifier 的 content-hash 匹配），
+        前缀在打包拼接时前置。
         """
         # 分离 pinned 和 scored
         pinned = [f for f in fragments if f.pinned]
@@ -429,6 +440,8 @@ class ContextPipeline:
 
         # pinned 优先
         used = 0
+        memory_used = 0
+        memory_budget = int(token_budget * MEMORY_BUDGET_RATIO)
         parts: list[str] = []
 
         for frag in pinned:
@@ -440,8 +453,18 @@ class ContextPipeline:
             if frag.relevance < self.relevance_threshold:
                 continue  # 低于相关性阈值的注入候选不注入
             if used + frag.tokens > token_budget:
-                continue  # 超出预算
-            parts.append(frag.content)
+                continue  # 超出总预算
+            if frag.type == "memory":
+                if memory_used + frag.tokens > memory_budget:
+                    continue  # memory 超出单来源预算
+                memory_used += frag.tokens
+            # 新鲜度前缀：带 created 的记忆标注日期（content 本身不变）
+            prefix = ""
+            if frag.type == "memory":
+                created = (frag.metadata or {}).get("created", "")
+                if created:
+                    prefix = f"（记忆日期：{str(created)[:10]}）\n"
+            parts.append(prefix + frag.content)
             used += frag.tokens
 
         return "\n\n".join(parts)

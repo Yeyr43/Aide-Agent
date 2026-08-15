@@ -417,6 +417,66 @@ class TestScoringSystem:
         # 低相关片段被过滤
         assert "z" * 5 not in combined
 
+    def test_pack_memory_budget_cap(self, tmp_path):
+        """打包：memory 片段受单来源预算上限（MEMORY_BUDGET_RATIO=0.4）。
+
+        token_budget=1000 → memory_budget=400；4 个 150-token 的 memory
+        只装前 2 个（300 ≤ 400），后 2 个被跳过。
+        """
+        from core.context.pipeline import ContextFragment
+        pipeline = ContextPipeline(agent_root=_make_agent_dir(tmp_path))
+        frags = [
+            ContextFragment(type="memory", content=str(i) * 150, tokens=150,
+                            relevance=0.9, score=0.9)
+            for i in range(4)
+        ]
+        combined = pipeline._pack_fragments(frags, token_budget=1000)
+        assert "0" in combined and "1" in combined
+        assert "2" not in combined and "3" not in combined
+
+    def test_pack_memory_budget_does_not_affect_non_memory(self, tmp_path):
+        """非 memory 片段不受 memory 预算限制（只要总预算允许）。"""
+        from core.context.pipeline import ContextFragment
+        pipeline = ContextPipeline(agent_root=_make_agent_dir(tmp_path))
+        # 450 token 的 timeline 片段 > memory_budget(400)，但 < 总预算(1000) → 仍注入
+        frags = [
+            ContextFragment(type="timeline", content="T" * 450, tokens=450,
+                            relevance=0.9, score=0.9),
+        ]
+        combined = pipeline._pack_fragments(frags, token_budget=1000)
+        assert "T" in combined
+
+    def test_pack_memory_date_prefix(self, tmp_path):
+        """打包：带 created 的 memory 片段注入时带记忆日期前缀，无 created 的不带。"""
+        from core.context.pipeline import ContextFragment
+        pipeline = ContextPipeline(agent_root=_make_agent_dir(tmp_path))
+        frags = [
+            ContextFragment(type="memory", content="旧记忆", tokens=10,
+                            relevance=0.9, score=0.9,
+                            metadata={"created": "2026-06-01", "entry_id": "pref_001"}),
+            ContextFragment(type="memory", content="无日期记忆", tokens=10,
+                            relevance=0.9, score=0.9),
+        ]
+        combined = pipeline._pack_fragments(frags, token_budget=1000)
+        # 带 created → 前缀；无 created → 原样
+        assert "（记忆日期：2026-06-01）\n旧记忆" in combined
+        assert "\n无日期记忆" in combined or "无日期记忆" in combined
+
+    @pytest.mark.asyncio
+    async def test_assemble_injects_memory_date_prefix(self, tmp_path):
+        """集成：带 created 的记忆条目经 assemble 注入时带日期前缀。"""
+        agent_root = _make_agent_dir(tmp_path)
+        (agent_root / "preferences.md").write_text(
+            "---\nid: rel\ncreated: 2026-06-01\n---\n- 用户偏好用 Docker 部署\n",
+            encoding="utf-8",
+        )
+        pipeline = ContextPipeline(agent_root=agent_root)
+        system_msgs, _ = await pipeline.assemble(
+            session_dir=None, user_msg="怎么部署这个应用",
+        )
+        assert "记忆日期：2026-06-01" in system_msgs[0]["content"]
+        assert "用户偏好用 Docker 部署" in system_msgs[0]["content"]
+
 
 class TestHistoryBackfill:
     """方向 2：与当前问题相关的早期轮次完整内容回填到上下文。"""
