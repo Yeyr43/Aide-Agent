@@ -89,7 +89,9 @@ class OnboardingScreen(Screen):
     """
 
     CSS = ONBOARDING_CSS
-    BINDINGS = []  # 冷启动期间禁用所有快捷键
+    # screen 级 escape binding 拦截 App 级 escape→go_home，防止引导期间按 Esc 跳过
+    # （App 级 binding 派发到 App.action_go_home；screen 级先匹配则调用本类的 pass 方法）
+    BINDINGS = [("escape", "go_home")]
 
     def __init__(self) -> None:
         super().__init__()

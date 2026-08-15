@@ -40,8 +40,12 @@ def strip_quoted(text: str) -> str:
 def check_tool_safety(tool_name: str, arguments: dict) -> str | None:
     """检查工具调用是否高风险。返回阻止原因或 None。
 
+    仅返回**硬阻止**原因（必须拦截执行的操作）：
     - run_shell: 含破坏性命令 → 阻止
-    - write_file: 目标文件已存在 → 警告（可能覆盖用户数据）
+
+    write_file 覆盖已有文件属"警告而非阻止"——编辑/覆写模式要求目标已存在，
+    硬阻止会锁死正常功能。由 check_write_overwrite() 单独判定，
+    不阻断执行，只在工具结果中附加风险提示让 LLM 自行决策。
 
     Args:
         tool_name: 工具名（如 "run_shell", "write_file"）
@@ -59,10 +63,24 @@ def check_tool_safety(tool_name: str, arguments: dict) -> str | None:
                 if _re.search(pattern, unquoted):
                     return "Shell 命令包含破坏性操作，已被阻止"
 
-    if tool_name == "write_file":
-        filepath = arguments.get("file_path", arguments.get("filepath", ""))
-        if filepath:
-            if _Path(filepath).exists():
-                return f"目标文件已存在 ({filepath})，覆盖将丢失原有内容"
+    return None
 
+
+def check_write_overwrite(arguments: dict) -> str | None:
+    """write_file 覆盖已有文件的警告（不阻止，仅提示 LLM）。
+
+    write_file 的编辑模式（old_string/new_string）与覆写模式都可能修改
+    已存在的目标文件，这是正常操作。返回警告文本由调用方附加到工具结果，
+    让 LLM 感知覆盖风险后自行决策，而非硬性拦截。
+
+    Args:
+        arguments: write_file 的参数字典
+
+    Returns:
+        警告文本，或 None（目标不存在/无路径，无需警告）
+    """
+    filepath = arguments.get("file_path", arguments.get("filepath", ""))
+    if filepath:
+        if _Path(filepath).exists():
+            return f"目标文件已存在 ({filepath})，写入将覆盖原有内容"
     return None

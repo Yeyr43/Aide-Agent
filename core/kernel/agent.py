@@ -63,6 +63,8 @@ class AgentKernel:
         """
         self.provider = new_provider
         self._fc_loop.provider = new_provider
+        # 同步视觉能力判定（fc_loop 在 __init__ 一次性读取，不刷新会误清洗图片）
+        self._fc_loop.supports_vision = getattr(new_provider, 'supports_vision', False)
         self._reflector._provider = new_provider
         if self._auto_memory is not None:
             self._auto_memory._provider = new_provider

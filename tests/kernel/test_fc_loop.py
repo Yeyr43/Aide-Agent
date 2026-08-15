@@ -263,6 +263,71 @@ class TestToolGrouping:
         assert results[2]["content"] == "read:B"
 
 
+class TestWriteFileOverwriteWarning:
+    """write_file 覆盖已有文件 → 不阻止，结果附加警告（回归 Critical）。"""
+
+    @pytest.mark.asyncio
+    async def test_existing_file_warns_not_blocked(self, tmp_path):
+        """编辑/覆写已有文件不再被硬拦截，结果带覆盖警告。"""
+        import json as _json
+        registry = ToolRegistry()
+        from core.tools import ToolDefinition
+
+        async def fake_write(args):
+            return "文件已写入"
+
+        registry.register(ToolDefinition(
+            name="write_file", description="Write",
+            parameters={"type": "object", "properties": {}},
+            execute=fake_write,
+        ))
+        ui = MagicMock()
+        loop = FunctionCallingLoop(None, registry)
+
+        target = tmp_path / "existing.txt"
+        target.write_text("old")
+
+        tool_calls = [{
+            "id": "w",
+            "function": {"name": "write_file",
+                         "arguments": _json.dumps({"file_path": str(target)})},
+        }]
+        results = await loop._execute_tools(tool_calls, ui)
+        # 不阻止
+        assert "高风险操作已被阻止" not in results[0]["content"]
+        # 结果附带覆盖警告 + 原始结果保留
+        assert "已存在" in results[0]["content"]
+        assert "文件已写入" in results[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_new_file_no_warning(self, tmp_path):
+        """新建文件不附加警告。"""
+        import json as _json
+        registry = ToolRegistry()
+        from core.tools import ToolDefinition
+
+        async def fake_write(args):
+            return "文件已写入"
+
+        registry.register(ToolDefinition(
+            name="write_file", description="Write",
+            parameters={"type": "object", "properties": {}},
+            execute=fake_write,
+        ))
+        ui = MagicMock()
+        loop = FunctionCallingLoop(None, registry)
+
+        target = tmp_path / "brand_new.txt"
+        tool_calls = [{
+            "id": "w",
+            "function": {"name": "write_file",
+                         "arguments": _json.dumps({"file_path": str(target)})},
+        }]
+        results = await loop._execute_tools(tool_calls, ui)
+        assert "已存在" not in results[0]["content"]
+        assert results[0]["content"] == "文件已写入"
+
+
 class TestExecutionTimeout:
     """测试工具执行超时。"""
 

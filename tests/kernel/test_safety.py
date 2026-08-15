@@ -4,7 +4,9 @@ import pytest
 import tempfile
 from pathlib import Path
 
-from core.kernel.safety import check_tool_safety, strip_quoted, DESTRUCTIVE_PATTERNS
+from core.kernel.safety import (
+    check_tool_safety, check_write_overwrite, strip_quoted, DESTRUCTIVE_PATTERNS,
+)
 
 
 class TestStripQuoted:
@@ -88,28 +90,41 @@ class TestCheckToolSafetyRunShell:
 
 
 class TestCheckToolSafetyWriteFile:
-    """测试 write_file 工具安全校验。"""
+    """write_file 不再硬阻止——覆盖已有文件由 check_write_overwrite 警告。
+
+    编辑/覆写模式要求目标文件已存在，硬阻止会锁死正常功能
+    （回归 Critical：write_file 编辑模式不可达）。
+    """
 
     def test_new_file_passes(self, tmp_path):
         new_file = tmp_path / "new_file.txt"
         result = check_tool_safety("write_file", {"file_path": str(new_file)})
         assert result is None
+        assert check_write_overwrite({"file_path": str(new_file)}) is None
 
-    def test_existing_file_blocked(self, tmp_path):
+    def test_existing_file_not_blocked(self, tmp_path):
+        """已有文件不再被 check_tool_safety 硬阻止。"""
         existing = tmp_path / "existing.txt"
         existing.write_text("important data")
         result = check_tool_safety("write_file", {"file_path": str(existing)})
-        assert result is not None
-        assert "已存在" in result
+        assert result is None
+
+    def test_existing_file_warns(self, tmp_path):
+        """check_write_overwrite 对已有文件返回覆盖警告。"""
+        existing = tmp_path / "existing.txt"
+        existing.write_text("important data")
+        warning = check_write_overwrite({"file_path": str(existing)})
+        assert warning is not None
+        assert "已存在" in warning
 
     def test_filepath_alias(self, tmp_path):
         existing = tmp_path / "data.txt"
         existing.write_text("data")
-        result = check_tool_safety("write_file", {"filepath": str(existing)})
-        assert result is not None
+        assert check_write_overwrite({"filepath": str(existing)}) is not None
 
     def test_no_path_skipped(self):
-        assert check_tool_safety("write_file", {}) is None
+        assert check_write_overwrite({}) is None
+        assert check_write_overwrite({"file_path": ""}) is None
 
     def test_other_tool_skipped(self):
         assert check_tool_safety("read_file", {"file_path": "/etc/passwd"}) is None

@@ -44,6 +44,21 @@ def kernel(tmp_path):
 
 
 class TestAgentKernel:
+    def test_set_provider_syncs_supports_vision(self, kernel):
+        """set_provider 同步 fc_loop 的 supports_vision。
+
+        回归：fc_loop 在 __init__ 一次性读取该值，不刷新会导致切换视觉
+        模型后图片仍被 _sanitize_messages 替换成占位。
+        """
+        new_provider = MagicMock(supports_vision=True)
+        kernel.set_provider(new_provider)
+        assert kernel._fc_loop.provider is new_provider
+        assert kernel._fc_loop.supports_vision is True
+
+        non_visual = MagicMock(supports_vision=False)
+        kernel.set_provider(non_visual)
+        assert kernel._fc_loop.supports_vision is False
+
     @pytest.mark.asyncio
     async def test_list_sessions_delegates(self, kernel):
         kernel._sessions.list_all.return_value = []

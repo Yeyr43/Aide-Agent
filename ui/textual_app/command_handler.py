@@ -115,17 +115,26 @@ class CommandHandler:
         app = self._app
 
         async def _do_think() -> None:
-            if not app._session.is_ensured:
-                info, session_dir = await app._kernel.create_session(think_prompt)
-                app._ingester.set_session(info.id)
-                app._session.is_ensured = True
-                app._session.turn = 1
-                app._session.name = info.name
-                from textual.widgets import Static
-                app.query_one("#session-label", Static).update(f" {info.name}")
-            app._session.conversation.append({"role": "user", "content": think_prompt})
-            app._session.last_user_text = think_prompt
-            app.chat_worker()
+            # 禁用输入框：chat_worker 是 exclusive worker，新输入会取消在途 think 回合
+            input_box = app.query_one("#input", InputBox)
+            input_box.disabled = True
+            try:
+                if not app._session.is_ensured:
+                    info, session_dir = await app._kernel.create_session(think_prompt)
+                    app._ingester.set_session(info.id)
+                    app._session.is_ensured = True
+                    app._session.turn = 1
+                    app._session.name = info.name
+                    from textual.widgets import Static
+                    app.query_one("#session-label", Static).update(f" {info.name}")
+                app._session.conversation.append({"role": "user", "content": think_prompt})
+                app._session.last_user_text = think_prompt
+                app.chat_worker()
+            except Exception:
+                # kernel 未初始化等异常：恢复输入框，避免永久禁用
+                input_box.disabled = False
+                input_box.focus()
+                raise
 
         asyncio.create_task(_do_think())
 
@@ -182,6 +191,11 @@ class CommandHandler:
         ingester._session_dir = None
         ingester._session_id = None
         self._app._session.reset()
+
+        # 清空消息树与会话名标签，避免回对话页残留旧会话 UI
+        msg_list.clear()
+        from textual.widgets import Static
+        self._app.query_one("#session-label", Static).update("")
 
         msg_list.add_command_result(t("ui.cmd_handler.session_deleted"))
         self._app.action_go_home()

@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+from core.context.overview import parse_overview_md, read_current_overview
 from core.context.relevance import _tokenize, _tfidf_score, _expand_query, get_vocab_index
 from core.locale import t
 from core.memory import MEMORY_FILES
@@ -151,7 +152,6 @@ def _search_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
 
 def _read_session_overview(session_dir: Path) -> str:
     """读取会话当前总览（overview.json 最后一条检查点，兼容旧 overview.md）。"""
-    from core.context.overview import read_current_overview
     return read_current_overview(session_dir)
 
 

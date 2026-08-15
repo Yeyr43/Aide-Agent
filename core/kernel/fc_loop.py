@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass
 
 from .protocols import ExecutorUI
-from .safety import check_tool_safety, strip_quoted
+from .safety import check_tool_safety, check_write_overwrite, strip_quoted
 from .xml_tool_parser import extract_xml_tool_calls, try_parse_xml
 from core.tools import ToolRegistry
 from core.tools.truncation import truncate_output
@@ -159,7 +159,9 @@ class FunctionCallingLoop:
                         "content": result.response_text,
                     })
                     # P6: 若模型因 max_tokens 被截断，自动续写
-                    if (final.native_stop_reason == "max_tokens"
+                    # Anthropic 原生 stop_reason="max_tokens"；OpenAI 兼容系（DeepSeek/
+                    # Ollama）为 finish_reason="length"（经 provider.py 透传），两者都要兼容
+                    if (final.native_stop_reason in ("max_tokens", "length")
                             and turn < self.max_turns):
                         messages.append({"role": "user", "content": "(continue)"})
                         continue
@@ -349,6 +351,11 @@ class FunctionCallingLoop:
             else TOOL_TIMEOUT
         )
 
+        # write_file 覆盖已有文件的警告（不阻止，执行成功后附加到结果提示 LLM）
+        overwrite_warning = (
+            check_write_overwrite(arguments) if tool_name == "write_file" else None
+        )
+
         # ── 同轮缓存：相同工具+参数直接返回缓存（仅无副作用工具）──
         cacheable = tool_name not in self._uncacheable_tools
         cache_key = ""
@@ -378,6 +385,10 @@ class FunctionCallingLoop:
         else:
             # 截断过长结果
             result = self._truncate_result(result)
+            # write_file 覆盖已有文件时前置风险提示（不阻断执行，喂回 LLM 决策）
+            if overwrite_warning:
+                result = (f"[提示] {overwrite_warning}\n\n{result}"
+                          if result else f"[提示] {overwrite_warning}")
             # 缓存无副作用工具的结果（同轮重复调用直接返回）
             if cacheable:
                 self._result_cache[cache_key] = result

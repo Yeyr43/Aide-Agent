@@ -46,6 +46,22 @@ class TestRecall:
         assert len(results) > 0
         assert any("Python" in r["snippet"] for r in results)
 
+    @pytest.mark.asyncio
+    async def test_recall_matches_overview_content(self, tmp_path):
+        """会话总览正文可被搜索命中（回归：parse_overview_md 未导入被吞）。"""
+        import json
+        sessions_dir = tmp_path / "sessions" / "20260702_120000"
+        sessions_dir.mkdir(parents=True)
+        (sessions_dir / "meta.json").write_text(
+            json.dumps({"name": "无关会话"}))
+        (sessions_dir / "overview.md").write_text(
+            "## 决策与结论\n- 我们决定使用 Postgres 作为主数据库\n",
+            encoding="utf-8")
+
+        # 关键词只出现在 overview 正文，meta 名无关
+        results = await recall("Postgres", aide_root=tmp_path)
+        assert any("Postgres" in r["snippet"] for r in results)
+
 
 def test_synonym_map_coverage():
     """同义词映射覆盖常用技术术语。"""

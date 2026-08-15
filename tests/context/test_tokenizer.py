@@ -273,6 +273,50 @@ class TestSynonyms:
         assert "代码" in expanded or "code" in expanded or "optimize" in expanded
 
 
+# ── 时间线词汇收集 ─────────────────────────────────────────────────────────
+
+class TestCollectTimelineLines:
+    """测试 _collect_timeline_lines 的容错。"""
+
+    def test_timeline_read_oserror_skipped(self, tmp_path, monkeypatch):
+        """timeline 读取抛 OSError 时跳过，不抛 NameError。
+
+        回归：except (json.JSONDecodeError, OSError) 子句引用了未导入的 json，
+        修复前触发 OSError 会抛 NameError 向上传播。
+        """
+        import core.context.tokenizer as tok
+
+        sessions_root = tmp_path / "sessions"
+        session_dir = sessions_root / "20260101_000000"
+        session_dir.mkdir(parents=True)
+        (session_dir / "timeline.json").write_text("broken", encoding="utf-8")
+
+        def _raise(*a, **k):
+            raise OSError("boom")
+
+        monkeypatch.setattr("core.storage.read_jsonl", _raise)
+
+        sink: list[str] = []
+        tok._collect_timeline_lines(sessions_root, sink)
+        assert sink == []  # OSError 被吞，正常 continue
+
+    def test_broken_lines_skipped(self, tmp_path):
+        """损坏行被 read_jsonl 内部跳过，不贡献词汇。"""
+        import core.context.tokenizer as tok
+
+        sessions_root = tmp_path / "sessions"
+        session_dir = sessions_root / "20260101_000000"
+        session_dir.mkdir(parents=True)
+        # 首行损坏，第二行正常
+        (session_dir / "timeline.json").write_text(
+            "not-json\n{\"summary\": \"Python脚本处理CSV\"}\n",
+            encoding="utf-8")
+
+        sink: list[str] = []
+        tok._collect_timeline_lines(sessions_root, sink)
+        assert "Python脚本处理CSV" in sink
+
+
 # ── 词汇索引 ──────────────────────────────────────────────────────────────
 
 class TestVocabularyIndex:
