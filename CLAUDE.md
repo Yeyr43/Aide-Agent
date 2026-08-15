@@ -455,3 +455,4 @@ Python 插件可注册：工具、命令、生命周期钩子（`register_hook()
 - **`ContextIngester._sessions_root`**：使用 `aide_dir()` 而非 `Path.home()/.aide`（兼容 AIDE_HOME）
 - **`plugin_states.json`**：插件状态持久化文件，DISABLED 状态在 reload 时保留
 - **Claude Code 插件**：命令/MCP/settings 已提取但 MCP/settings 仅记录日志，需手动配置
+- **Textual Vertical 默认 `height: 1fr` + `overflow: hidden`**：滚动容器（VerticalScroll）内的树/卡片容器必须设 `height: auto`，否则内容超出视口即被裁剪、滚动条永远不可滚（`.turn-tree` 即因此加 `height: auto`）

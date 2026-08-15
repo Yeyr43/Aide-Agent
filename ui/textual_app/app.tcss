@@ -22,6 +22,7 @@ Screen {
 }
 
 .turn-tree {
+    height: auto;              /* 随内容生长：否则 Vertical 默认 1fr 填充视口，长正文被裁剪、不可滚动 */
     margin: 0 0 1 0;
 }
 

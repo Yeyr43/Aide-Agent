@@ -1,8 +1,16 @@
 """MessageList 树形流式集成测试（Textual run_test harness）。"""
+from pathlib import Path
+
 import pytest
 from textual.app import App
+from textual.containers import Vertical
+from textual.widgets import Static
 
 from ui.textual_app.widgets.message_list import MessageList
+
+# 真实 app.tcss：让测试布局与实际运行一致（含 .turn-tree height:auto）
+_APP_TCSS = (Path(__file__).resolve().parents[2]
+             / "ui" / "textual_app" / "app.tcss").read_text(encoding="utf-8")
 
 
 class MessageListTestApp(App):
@@ -195,3 +203,44 @@ async def test_restore_marks_tool_error_red():
                 if type(w).__name__ == "ToolNode"][0]
         assert tool._is_error is True
         assert "高风险操作已被阻止" in tool._plain
+
+
+class ScrollLayoutTestApp(App):
+    """镜像 AideApp 对话页结构，加载真实 app.tcss。"""
+
+    CSS = _APP_TCSS
+
+    def compose(self):
+        yield Static("", id="session-label")
+        yield MessageList(id="messages")
+        with Vertical(id="bottom-area"):
+            yield Static("", id="input")
+        yield Static("", id="status-bar")
+
+
+@pytest.mark.asyncio
+async def test_long_body_makes_message_list_scrollable():
+    """回归：长正文不裁剪 — TurnTree 随内容生长（height:auto），MessageList 可滚动。
+
+    根因：TurnTree 是 Vertical（Textual 默认 height:1fr + overflow:hidden），
+    若固定填充视口，正文超出即被裁剪，滚动容器虚拟高度永远 ≤ 视口 → 无法上下翻滚。
+    """
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        paras = "\n\n".join(f"第{i}段：这是一个段落，包含一些说明文字和内容。"
+                            for i in range(40))
+        ml.add_user_message("帮我写个总结")
+        ml.add_ai_chunk(paras)
+        ml.finish_ai_message()
+        await pilot.pause()
+
+        turn = ml.query_one(".turn-tree")
+        # TurnTree 不被视口裁剪：布局尺寸 == 内容虚拟高度
+        assert turn.size.height == turn.virtual_size.height
+        assert turn.virtual_size.height > ml.size.height
+        # MessageList 可滚动到更早内容
+        assert ml.max_scroll_y > 0
+        ml.scroll_to(y=ml.max_scroll_y)
+        await pilot.pause()
+        assert ml.scroll_y > 0
