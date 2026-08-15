@@ -4,7 +4,9 @@ import json
 import pytest
 from pathlib import Path
 
-from core.context.overview import parse_overview_md, restore_overview_from_checkpoint
+from core.context.overview import (
+    parse_overview_md, restore_overview_from_checkpoint, read_current_overview,
+)
 from core.memory.reflector import _clean_markdown_response
 
 
@@ -44,10 +46,35 @@ class TestRestoreOverview:
         ]), encoding="utf-8")
 
         assert restore_overview_from_checkpoint(session_dir, 3) is True
-        overview_md = session_dir / "overview.md"
-        assert overview_md.exists()
-        content = overview_md.read_text(encoding="utf-8")
-        assert "v1" in content
+        # 当前生效版 = 截断后 overview.json 最后一条检查点（不再写 overview.md）
+        assert not (session_dir / "overview.md").exists()
+        checkpoints = json.loads((session_dir / "overview.json").read_text(encoding="utf-8"))
+        assert len(checkpoints) == 1
+        assert checkpoints[0]["to_turn"] == 3
+        assert "v1" in read_current_overview(session_dir)
+
+
+class TestReadCurrentOverview:
+    def test_empty_when_no_file(self, tmp_path):
+        session_dir = tmp_path / "session"
+        session_dir.mkdir()
+        assert read_current_overview(session_dir) == ""
+
+    def test_reads_latest_checkpoint(self, tmp_path):
+        session_dir = tmp_path / "session"
+        session_dir.mkdir()
+        (session_dir / "overview.json").write_text(json.dumps([
+            {"to_turn": 3, "overview_md": "## Topics\n- v1"},
+            {"to_turn": 5, "overview_md": "## Topics\n- v2"},
+        ]), encoding="utf-8")
+        assert "v2" in read_current_overview(session_dir)
+
+    def test_fallback_to_legacy_md(self, tmp_path):
+        """旧会话只有 overview.md → 兼容回退。"""
+        session_dir = tmp_path / "session"
+        session_dir.mkdir()
+        (session_dir / "overview.md").write_text("## Topics\n- legacy", encoding="utf-8")
+        assert "legacy" in read_current_overview(session_dir)
 
 
 class TestCleanMarkdownResponse:

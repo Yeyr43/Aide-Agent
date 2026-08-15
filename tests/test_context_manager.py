@@ -154,12 +154,16 @@ class TestContextIngester:
         assert timeline[0]["turn"] == 1
         assert "你好" in timeline[0]["summary"]
 
-        # messages/turn_001.json
+        # messages/turn_001.json —— 顶层不再冗余 user/assistant
         msg = json.loads(
             (session_dir / "messages" / "turn_001.json").read_text(encoding="utf-8"))
         assert msg["turn"] == 1
-        assert msg["user"] == "你好"
-        # P5: tool_calls 不再在顶层
+        assert "user" not in msg
+        assert "assistant" not in msg
+        assert any(
+            m.get("role") == "user" and "你好" in m.get("content", "")
+            for m in msg["messages"]
+        )
 
     async def test_ingest_without_session_raises(self, store, sessions_root):
         """未 set_session 就 ingest 应抛错。"""

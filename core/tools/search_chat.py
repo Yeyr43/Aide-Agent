@@ -1,7 +1,7 @@
 """search_chat — 搜索对话历史。
 
 会话内搜索：直接扫描指定 session 的 timeline.json（关键词 + bigram Jaccard）。
-全局搜索：查询 _search_index.json（bigram Jaccard 关键词匹配）。
+全局搜索：通过 ToolContext 的 SearchIndex 内存索引（从 timeline 重建）。
 
 不加 session_id 时全局搜索，传入 session_id 时限定会话内搜索。
 """

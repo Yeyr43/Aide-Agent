@@ -1,10 +1,11 @@
-"""SearchIndex — 全局会话搜索索引。
+"""SearchIndex — 全局会话搜索索引（纯内存，从 timeline 重建）。
 
-每轮对话后追加一条摘要。
+每轮对话后 timeline.json 追加一条摘要（唯一源）。
+SearchIndex 启动时从所有会话的 timeline.json 重建到内存，运行时
+add/remove 只更新内存，不持久化索引文件 —— 消除了 _search_index.json
+这份与 timeline 的重复写入和潜在不一致。
+
 搜索时使用 bigram Jaccard 关键词匹配，返回 top-K。
-
-索引文件：
-  sessions/_search_index.json    — [{id, session_id, turn, summary}]
 """
 
 from __future__ import annotations
@@ -13,8 +14,6 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-
-from core.storage import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -30,42 +29,26 @@ class SearchResult:
 
 
 class SearchIndex:
-    """全局搜索索引：JSON metadata + bigram Jaccard 关键词匹配。
+    """全局搜索索引：timeline 派生 + bigram Jaccard 关键词匹配。
 
     用法:
         index = SearchIndex(sessions_root)
-        await index.add(session_id, turn, summary)
+        await index.rebuild()            # 启动时从所有 timeline 重建
+        index.add(session_id, turn, summary)
         results = await index.search("Docker 部署")
         index.remove_session(session_id)
     """
 
     def __init__(self, sessions_root: Path) -> None:
         self._root = sessions_root
-        self._index_path = sessions_root / "_search_index.json"
         # entries: [{id: int, session_id: str, turn: int, summary: str}, ...]
         self._entries: list[dict] = []
         self._next_id: int = 0
-        self._load()
-
-    # ── 持久化 ──────────────────────────────────────────────────────────
-
-    def _load(self) -> None:
-        """从磁盘加载索引（兼容 JSON 数组和 JSONL 两种格式）。"""
-        from core.storage import read_jsonl
-        self._entries = read_jsonl(self._index_path)
-        if self._entries:
-            self._next_id = max(e.get("id", 0) for e in self._entries) + 1
-
-    def _save_entries(self) -> None:
-        """全量重写索引（用于 remove_session / rebuild）。"""
-        from core.storage import overwrite_jsonl
-        overwrite_jsonl(self._index_path, self._entries)
 
     # ── CRUD ────────────────────────────────────────────────────────────
 
     def add(self, session_id: str, turn: int, summary: str) -> None:
-        """追加一条轮次摘要到索引（JSONL 追加）。"""
-        from core.storage import append_jsonl
+        """追加一条轮次摘要到内存索引。"""
         entry = {
             "id": self._next_id,
             "session_id": session_id,
@@ -74,7 +57,6 @@ class SearchIndex:
         }
         self._entries.append(entry)
         self._next_id += 1
-        append_jsonl(self._index_path, entry)
 
     def remove_session(self, session_id: str) -> int:
         """删除指定会话的所有索引条目。
@@ -91,7 +73,6 @@ class SearchIndex:
         self._entries = new_entries
         if not new_entries:
             self._next_id = 0
-        self._save_entries()
 
         logger.info(
             f"搜索索引：从会话 {session_id} 移除 {removed} 条记录"
@@ -129,7 +110,7 @@ class SearchIndex:
     # ── 重建 ────────────────────────────────────────────────────────────
 
     async def rebuild(self) -> int:
-        """从所有 timeline.json 重建索引。
+        """从所有 timeline.json 重建索引（timeline 是唯一源）。
 
         Returns:
             索引的条目总数
@@ -138,7 +119,6 @@ class SearchIndex:
         self._next_id = 0
 
         if not self._root.exists():
-            self._save_entries()
             return 0
 
         for session_dir in sorted(self._root.iterdir()):
@@ -164,8 +144,6 @@ class SearchIndex:
                 }
                 self._next_id += 1
                 self._entries.append(entry)
-
-        self._save_entries()
 
         logger.info(f"搜索索引重建完成：{len(self._entries)} 条记录")
         return len(self._entries)

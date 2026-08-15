@@ -224,11 +224,10 @@ class AppBootstrap:
         store = JsonStore(config.aide_root)
         await store.start()
 
-        # 全局搜索索引
+        # 全局搜索索引：从所有会话 timeline.json 重建（timeline 是唯一源）
+        # await 保证首次搜索前索引已就绪（个人量级扫描为毫秒级）
         search_index = SearchIndex(config.sessions_root)
-        if search_index.size == 0:
-            import asyncio
-            asyncio.create_task(search_index.rebuild())
+        await search_index.rebuild()
 
         ingester = ContextIngester(store, sessions_root=config.sessions_root, search_index=search_index)
 

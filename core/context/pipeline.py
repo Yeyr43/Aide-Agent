@@ -213,19 +213,16 @@ class ContextPipeline:
                     metadata=meta,
                 ))
 
-        # 会话总览（overview.md）
+        # 会话总览（overview.json 最后一条检查点，兼容旧 overview.md）
         if session_dir is not None:
-            overview_path = session_dir / "overview.md"
-            if overview_path.exists():
-                try:
-                    overview = await asyncio.to_thread(overview_path.read_text, encoding="utf-8")
-                    fragments.append(ContextFragment(
-                        type="overview",
-                        content=t("ctx.session_overview") + "\n" + overview,
-                        score=0.4,  # 中等相关性
-                    ))
-                except OSError:
-                    logger.debug("Failed to read overview.md, skipping")
+            from core.context.overview import read_current_overview
+            overview = await asyncio.to_thread(read_current_overview, session_dir)
+            if overview:
+                fragments.append(ContextFragment(
+                    type="overview",
+                    content=t("ctx.session_overview") + "\n" + overview,
+                    score=0.4,  # 中等相关性
+                ))
 
             # 早期轮次总览
             if older:

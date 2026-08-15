@@ -11,7 +11,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from core.storage import atomic_write_text, atomic_write_json
+from core.storage import atomic_write_json
 
 from .tokenizer import _ZH_STOP_WORDS
 
@@ -172,8 +172,40 @@ def parse_overview_md(text: str) -> dict[str, list[str]]:
     return sections
 
 
+def read_current_overview(session_dir: Path) -> str:
+    """读取当前生效的会话总览。
+
+    单一来源：overview.json 检查点的最后一条 overview_md。
+    兼容旧格式：overview.json 不存在时回退读 overview.md（迁移期残留）。
+
+    Returns:
+        当前总览 markdown 文本，无则为 ""
+    """
+    overview_json_path = session_dir / "overview.json"
+    if overview_json_path.exists():
+        try:
+            from core.storage import read_jsonl
+            checkpoints: list[dict] = read_jsonl(overview_json_path)
+        except (json.JSONDecodeError, OSError, ValueError):
+            checkpoints = []
+        if checkpoints:
+            return checkpoints[-1].get("overview_md", "")
+
+    # 兼容旧格式 overview.md
+    overview_md_path = session_dir / "overview.md"
+    if overview_md_path.exists():
+        try:
+            return overview_md_path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    return ""
+
+
 def restore_overview_from_checkpoint(session_dir: Path, target_turn: int) -> bool:
-    """回滚时：从 overview.json 找到匹配检查点，还原 overview.md。
+    """回滚时：截断 overview.json 到匹配检查点。
+
+    当前生效版 = overview.json 最后一条检查点的 overview_md，截断后
+    即还原到回滚目标轮次，无需单独维护 overview.md。
 
     Args:
         session_dir: 会话目录
@@ -183,7 +215,6 @@ def restore_overview_from_checkpoint(session_dir: Path, target_turn: int) -> boo
         True 如果成功还原，False 如果无匹配检查点
     """
     overview_json_path = session_dir / "overview.json"
-    overview_md_path = session_dir / "overview.md"
 
     if not overview_json_path.exists():
         return False
@@ -206,21 +237,12 @@ def restore_overview_from_checkpoint(session_dir: Path, target_turn: int) -> boo
             break
 
     if matched is None:
-        # 没有检查点覆盖到 target_turn → 删除 overview.md
-        if overview_md_path.exists():
-            overview_md_path.unlink()
+        # 没有检查点覆盖到 target_turn → 清空 overview.json
+        atomic_write_json(overview_json_path, [])
         return False
 
-    # 还原 overview.md
-    overview_md = matched.get("overview_md", "")
-    if overview_md:
-        atomic_write_text(overview_md_path, overview_md)
-    elif overview_md_path.exists():
-        overview_md_path.unlink()
-
-    # 截断 overview.json 到匹配检查点（含）
+    # 截断 overview.json 到匹配检查点（含）—— 当前生效版随之还原
     truncated = [cp for cp in checkpoints if cp.get("to_turn", 0) <= target_turn]
-    if truncated:
-        atomic_write_json(overview_json_path, truncated)
+    atomic_write_json(overview_json_path, truncated)
 
     return True

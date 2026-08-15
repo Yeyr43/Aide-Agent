@@ -318,10 +318,15 @@ class TestChatIntegration:
         assert turn_file.exists()
         data = json.loads(turn_file.read_text(encoding="utf-8"))
         assert data["turn"] == 1
-        assert data["user"] == "Hello"
-        assert "Hello! How can I help?" in data["assistant"]
-        # P5: tool_calls 不再在顶层（在 messages 内）
+        # 顶层不再冗余 user/assistant（messages 内完整）
+        assert "user" not in data
+        assert "assistant" not in data
         assert "tool_calls" not in data
+        msgs = data["messages"]
+        assert any(
+            m.get("role") == "assistant" and "Hello! How can I help?" in m.get("content", "")
+            for m in msgs
+        )
 
         # Check timeline was written
         timeline = session_dir / "timeline.json"

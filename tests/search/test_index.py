@@ -95,24 +95,29 @@ class TestSearchIndex:
         if len(results) >= 2:
             assert results[0].score >= results[-1].score
 
-    def test_persistence_roundtrip(self, tmp_path):
-        """索引写入磁盘后可重新加载。"""
-        idx1 = SearchIndex(tmp_path)
-        idx1.add("session_1", 1, "持久化测试")
-        idx1.add("session_1", 2, "继续测试")
+    @pytest.mark.asyncio
+    async def test_rebuild_from_timeline(self, tmp_path):
+        """索引从各会话 timeline.json 重建（timeline 是唯一源，不持久化索引文件）。"""
+        session_dir = tmp_path / "20260801_120000"
+        session_dir.mkdir()
+        from core.storage import append_jsonl
+        append_jsonl(session_dir / "timeline.json", {
+            "turn": 1, "timestamp": "x", "summary": "Python 异步编程",
+        })
 
-        # 重新加载
-        idx2 = SearchIndex(tmp_path)
-        assert idx2.size == 2
+        idx = SearchIndex(tmp_path)
+        assert idx.size == 0  # 启动时为空，不加载旧索引文件
+        await idx.rebuild()
+        assert idx.size == 1
 
-    def test_persistence_with_jsonl_format(self, tmp_path):
-        """兼容 JSONL 格式。"""
+    def test_ignores_old_index_file(self, tmp_path):
+        """旧 _search_index.json 缓存不再加载（索引从 timeline 重建）。"""
         index_path = tmp_path / "_search_index.json"
         from core.storage import append_jsonl
         append_jsonl(index_path, {"id": 0, "session_id": "s1", "turn": 1, "summary": "old data"})
 
         idx = SearchIndex(tmp_path)
-        assert idx.size == 1
+        assert idx.size == 0
 
 
 class TestSearchResult:

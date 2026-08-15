@@ -26,6 +26,19 @@ logger = logging.getLogger(__name__)
 
 SESSIONS_ROOT = aide_dir() / "sessions"
 
+
+def _msg_text(content) -> str:
+    """从消息 content 提取纯文本（兼容 str 与多模态 list）。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            p.get("text", "") for p in content
+            if isinstance(p, dict) and p.get("type") == "text"
+        )
+    return ""
+
+
 # ── 记忆文件列表 ──────────────────────────────────────────────────────
 
 MEMORY_FILES = {
@@ -145,12 +158,7 @@ class ReflectEngine:
             result: reflect() 返回的结果
             current_turn: 当前轮次
         """
-        # 写入 overview
-        overview_path = session_dir / "overview.md"
-        if result.overview:
-            atomic_write_text(overview_path, result.overview)
-
-        # 追加 overview.json 检查点
+        # 写入 overview —— 单一文件 overview.json（当前生效版 = 最后一条检查点）
         self._append_checkpoint(session_dir, result.overview, current_turn)
 
         # 写入记忆文件（只写有变更的）
@@ -191,14 +199,9 @@ class ReflectEngine:
         return result
 
     def _read_existing_overview(self, session_dir: Path) -> str:
-        """读取已有 overview.md。"""
-        path = session_dir / "overview.md"
-        if path.exists():
-            try:
-                return path.read_text(encoding="utf-8")
-            except OSError:
-                pass
-        return ""
+        """读取已有 overview（overview.json 最后一条检查点，兼容旧 overview.md）。"""
+        from core.context.overview import read_current_overview
+        return read_current_overview(session_dir)
 
     def _read_reflection_marker(self, session_dir: Path) -> int:
         """读取反思标记：从 meta.json 的 last_reflected_turn 字段。
@@ -250,10 +253,24 @@ class ReflectEngine:
                 continue
             try:
                 data = json.loads(turn_path.read_text(encoding="utf-8"))
-                user_text = data.get("user", "")
-                assistant_text = data.get("assistant", "")
-                # P5: tool_calls 从 messages 内 assistant 消息提取
+                # 优先从 messages 提取 user / assistant 文本（新格式无顶层字段）
                 msgs = data.get("messages", [])
+                user_text = ""
+                assistant_text = ""
+                for msg in (msgs or []):
+                    if not isinstance(msg, dict):
+                        continue
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role == "user" and not user_text:
+                        user_text = _msg_text(content)
+                    elif role == "assistant" and content and not assistant_text:
+                        assistant_text = _msg_text(content)
+                # 兼容旧格式：顶层 user/assistant
+                if not user_text:
+                    user_text = data.get("user", "")
+                if not assistant_text:
+                    assistant_text = data.get("assistant", "")
                 tool_names = []
                 for msg in (msgs or []):
                     if isinstance(msg, dict):

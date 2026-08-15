@@ -101,7 +101,7 @@ class TestRollback:
         assert [e["turn"] for e in timeline] == [1, 2]
 
     def test_rollback_handles_overview_checkpoints(self, tmp_path):
-        """回滚时从 overview.json 检查点还原 overview.md。"""
+        """回滚时截断 overview.json 到匹配检查点（当前生效版 = 最后一条）。"""
         session_dir = tmp_path / "sessions" / "20260703_test"
         _make_turn_files(session_dir, 3)
 
@@ -116,9 +116,9 @@ class TestRollback:
         mgr = SessionManager(tmp_path / "sessions")
         mgr.rollback(session_dir, 2)
 
-        # overview.md 应为检查点中的版本
-        restored = (session_dir / "overview.md").read_text(encoding="utf-8")
-        assert "早期话题" in restored
+        # 当前生效版 = overview.json 最后一条检查点（不再写 overview.md）
+        from core.context.overview import read_current_overview
+        assert "早期话题" in read_current_overview(session_dir)
         # overview.json 应截断到匹配检查点
         checkpoints = json.loads((session_dir / "overview.json").read_text(encoding="utf-8"))
         assert len(checkpoints) == 1

@@ -128,12 +128,11 @@ class ContextIngester:
         summary = _turn_summary(user_msg, assistant_msg, tool_calls)
 
         # ── 1. 写入 messages/turn_{NNN}.json（仅当轮增量消息）──
-        # P5: tool_calls 已从顶层移除（在 messages 内），保留 user 和 assistant
+        # 单文件自包含：完整数据在 messages 内（含 tool_calls / tool 结果）。
+        # 不再冗余顶层 user/assistant —— 旧格式读侧已兼容（restorer._extract_messages）。
         turn_data = {
             "turn": turn,
             "timestamp": timestamp,
-            "user": user_msg,
-            "assistant": assistant_msg,
             "thinking": thinking or "",
             "messages": turn_messages or [],
         }

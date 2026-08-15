@@ -29,7 +29,7 @@ async def recall(
     """搜索记忆数据，返回相关结果。
 
     两阶段搜索：
-      1. 全局搜索索引（_search_index.json）快速筛选候选会话
+      1. 全局搜索索引（SearchIndex，从 timeline 重建）快速筛选候选会话
       2. 对候选会话读 meta.json + overview.md 补充细节
       3. 搜索 agent/*.md 记忆文件
 
@@ -130,12 +130,10 @@ def _search_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
         except (json.JSONDecodeError, OSError):
             logger.debug("Failed to read timeline.json for session %s, skipping", session_dir.name)
 
-    # overview.md
-    overview_path = session_dir / "overview.md"
-    if overview_path.exists():
+    # overview（overview.json 当前版，兼容旧 overview.md）
+    text = _read_session_overview(session_dir)
+    if text:
         try:
-            from core.context.overview import parse_overview_md
-            text = overview_path.read_text(encoding="utf-8")
             sections = parse_overview_md(text)
             for section_name, items in sections.items():
                 for item in items:
@@ -147,8 +145,14 @@ def _search_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
                             "score": score + 1,
                             "_session_dir": session_dir.name,
                         })
-        except (OSError, Exception):
-            logger.debug("Failed to read/parse overview.md for session %s, skipping", session_dir.name)
+        except Exception:
+            logger.debug("Failed to read/parse overview for session %s, skipping", session_dir.name)
+
+
+def _read_session_overview(session_dir: Path) -> str:
+    """读取会话当前总览（overview.json 最后一条检查点，兼容旧 overview.md）。"""
+    from core.context.overview import read_current_overview
+    return read_current_overview(session_dir)
 
 
 def _enrich_session(session_dir: Path, keywords: set[str], matches: list[dict]) -> None:
@@ -170,12 +174,10 @@ def _enrich_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
         except (json.JSONDecodeError, OSError):
             pass
 
-    # overview.md
-    overview_path = session_dir / "overview.md"
-    if overview_path.exists():
+    # overview（overview.json 当前版，兼容旧 overview.md）
+    text = _read_session_overview(session_dir)
+    if text:
         try:
-            from core.context.overview import parse_overview_md
-            text = overview_path.read_text(encoding="utf-8")
             sections = parse_overview_md(text)
             for section_name, items in sections.items():
                 for item in items:
@@ -187,7 +189,7 @@ def _enrich_session(session_dir: Path, keywords: set[str], matches: list[dict]) 
                             "score": score + 1,
                             "_session_dir": session_dir.name,
                         })
-        except (OSError, Exception):
+        except Exception:
             pass
 
 

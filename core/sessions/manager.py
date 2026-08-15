@@ -89,7 +89,7 @@ class SessionManager:
         副作用：
           - 删除 messages/turn_{N+1}.json 到 turn_{M}.json
           - 截断 timeline.json 到前 target_turn 条
-          - 从 overview.json 检查点还原匹配的 overview.md
+          - 截断 overview.json 检查点（当前生效版随之还原）
 
         Args:
             session_dir: 会话目录路径
@@ -131,7 +131,7 @@ class SessionManager:
             key="turn",
         )
 
-        # 3. 还原 overview.md + 截断 overview.json 检查点
+        # 3. 截断 overview.json 检查点（当前生效版 = 最后一条）
         from core.context.overview import restore_overview_from_checkpoint
         restore_overview_from_checkpoint(session_dir, target_turn)
 
