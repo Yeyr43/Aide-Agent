@@ -16,7 +16,7 @@ Screen {
 }
 
 .user-message {
-    margin: 1 0 2 9;          /* 与树对齐（右移一格）+ 底部留空一行 */
+    margin: 1 0 2 0;          /* 贴左占满整行（去掉树对齐的 9 左缩进）+ 底部留空一行 */
     background: #0c0c0c;
     color: #c8c8c0;
 }
