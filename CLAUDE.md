@@ -259,10 +259,10 @@ FC Loop 利用 `native_stop_reason == "max_tokens"` 实现智能续写：模型�
 纯暗主题（`#0c0c0c`），全宽对话区无右侧栏。Esc 切换首页↔对话页。
 
 **回合树展示**：每个 assistant 回合 = 一棵 `TurnTree`（`ui/textual_app/widgets/tree_nodes.py`），节点用 `●` 标记、颜色随类型变化：
-think（灰，流式展开→结束折叠）/ tool（精简单行，双击展开结果）/ body（正文，流式 Text→完成 Markdown）/ error（红）/ system（琥珀）。
+think（灰，流式展开→结束折叠）/ tool（精简单行，双击展开结果）/ body（正文，流式实时 Markdown → 完成态一致）/ error（红）/ system（琥珀）。
 
 - 树连接符统一"栈顶"规则：新节点一律 `└`，加入后自动降级为 `├`，无首节点特例；相邻节点类型不同时插入一行 `│` 引导线
-- 正文首行与节点同行（`│ ● 正文…`），后续行缩进到文本列（col 4）
+- 正文实时 Markdown：首行与节点同行（`│ ● 正文…`）做**行内 Markdown**（`_render_inline_markdown()` 转加粗/代码/斜体/删除线/链接，复用 `markdown.*` 主题样式与正文一致，未闭合定界保持字面量）；换行后的正文 RichMarkdown 流式渲染，`append_chunk` 节流重解析（未换行逐 token；换行后 80ms，>32K 250ms，>128K 500ms），`finish()`/连接符变更强制立即渲染，后续行缩进到文本列（col 4）
 - 节点交互：左键双击折叠/展开（可折叠节点），右键复制内容
 - 列布局：`│`(col 0) → `●`(col 2) → 文本(col 4)；CSS 用 `.tree-node` / `.tree-guide` margin `0 0 0 9` 对齐
 - 用户消息保留气泡框（`MessageWidget`），与树之间空一行

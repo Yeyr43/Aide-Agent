@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 
 from rich.console import Group
@@ -59,6 +60,53 @@ def _guide_indented(text: str, indent: str = "  ", style: str = "") -> Text:
         t.append("│ ", style="#555555")
         t.append(indent)
         t.append(line, style=style)
+    return t
+
+
+# ── 行内 Markdown（正文首行专用）─────────────────────────────────────────
+
+# 单趟 alternation：code 优先（`` 内不解析 * / [），加粗先于斜体（共用 * 定界）。
+# 未闭合的定界保持字面量 —— 流式中语法还没写完就不渲染，写完立即生效。
+_INLINE_MD_RE = re.compile(
+    r"(`[^`\n]+`)"                            # 1 inline code
+    r"|(\*\*[^*\n]+\*\*)"                     # 2 bold
+    r"|(\*[^*\s][^*\n]*\*)"                   # 3 italic（* 两侧必须紧贴非空白，避免 2*3 误判）
+    r"|(~~[^~\n]+~~)"                         # 4 strike
+    r"|(\[[^\]\n]+\]\([^)\s\n]+\))"           # 5 link
+)
+
+
+def _inline_md_text(match: "re.Match") -> tuple[str, str]:
+    """提取内联标记的展示文本与主题样式名（与 RichMarkdown 正文一致的 markdown.* 样式）。"""
+    if match.group(1):
+        return match.group(1)[1:-1], "markdown.code"
+    if match.group(2):
+        return match.group(2)[2:-2], "markdown.strong"
+    if match.group(3):
+        return match.group(3)[1:-1], "markdown.em"
+    if match.group(4):
+        return match.group(4)[2:-2], "markdown.s"
+    inner = match.group(5)
+    return inner[1:inner.index("]")], "markdown.link"
+
+
+def _render_inline_markdown(text: str) -> Text:
+    """把行内 Markdown 语法转成带样式的 Text（正文首行专用）。
+
+    用与 RichMarkdown 正文一致的 markdown.* 主题样式（渲染期解析），
+    保证首行加粗/代码/斜体与换行后的正文视觉一致。直接拼 Text span，
+    不经 Text.from_markup，字面量 [x] 不会被误当 Rich markup。
+    """
+    t = Text()
+    pos = 0
+    for m in _INLINE_MD_RE.finditer(text):
+        if m.start() > pos:
+            t.append(text[pos:m.start()])
+        shown, style = _inline_md_text(m)
+        t.append(shown, style=style)
+        pos = m.end()
+    if pos < len(text):
+        t.append(text[pos:])
     return t
 
 
@@ -230,22 +278,52 @@ class ToolNode(TreeNode):
 
 
 class BodyNode(TreeNode):
-    """正文节点：● 正文（Markdown）。流式阶段 Text 快速渲染，完成阶段 Markdown。"""
+    """正文节点：● 正文（Markdown）。流式阶段也渲染 Markdown，节流避免频繁重解析。
+
+    渲染统一为：首行（行内 Markdown）与节点同行，换行后的正文 RichMarkdown
+    缩进到文本列。流式按节流重解析（未换行时廉价逐 token 更新）；完成态立即渲染。
+    """
+
+    # 流式重解析节流（秒）：大 buffer 加大间隔，避免长文逐 token 解析卡顿
+    STREAM_MD_THROTTLE = 0.08
+    STREAM_MD_THROTTLE_LARGE = 0.25
+    STREAM_MD_THROTTLE_HUGE = 0.5
+    _LARGE_BUFFER = 32_000
+    _HUGE_BUFFER = 128_000
 
     _collapsible = False
     _bullet_style = ""
     _kind = "body"
 
-    def __init__(self, code_theme: str = "monokai", **kwargs) -> None:
+    def __init__(self, code_theme: str = "monokai",
+                 stream_throttle: float = STREAM_MD_THROTTLE, **kwargs) -> None:
         super().__init__(**kwargs)
         self._code_theme = code_theme
         self._buffer = ""
         self._finished = False
+        self._stream_throttle = stream_throttle
+        self._last_stream_render = 0.0  # 上次 Markdown 重解析时间（仅换行后更新）
 
     def append_chunk(self, chunk: str) -> None:
         self._buffer += chunk
-        if not self._finished:
+        if self._finished:
+            return
+        if "\n" not in self._buffer:
+            # 未换行：整段都是首行 → 廉价行内渲染，逐 token 更新
             self._refresh()
+        else:
+            now = time.monotonic()
+            if now - self._last_stream_render >= self._throttle():
+                self._last_stream_render = now
+                self._refresh()
+
+    def _throttle(self) -> float:
+        n = len(self._buffer)
+        if n > self._HUGE_BUFFER:
+            return self.STREAM_MD_THROTTLE_HUGE
+        if n > self._LARGE_BUFFER:
+            return self.STREAM_MD_THROTTLE_LARGE
+        return self._stream_throttle
 
     def finish(self) -> None:
         self._finished = True
@@ -267,17 +345,8 @@ class BodyNode(TreeNode):
     def _build_renderable(self):
         if not self._buffer:
             return self._label_line("")
-        if not self._finished:
-            # 流式：首行接在节点行（│ ● 正文）；后续行缩进到文本列，与完成态一致不跳行
-            t = Text(f"{self._connector} ● ")
-            for i, line in enumerate(self._buffer.split("\n")):
-                if i:
-                    t.append("\n    ")  # 正文不加树线，仅缩进到文本列
-                t.append(line, style="")
-            return t
-        # 完成态：首行与节点同水平行；其余行以 Markdown 缩进到文本列
         first, sep, rest = self._buffer.partition("\n")
-        node_line = Text.from_markup(escape(f"{self._connector} ● " + first))
+        node_line = self._node_line_with_inline(first)
         if not sep:
             return node_line
         safe_rest = rest.replace("<", "&lt;").replace(">", "&gt;")
@@ -286,6 +355,12 @@ class BodyNode(TreeNode):
         except Exception:
             md = Text(rest)
         return Group(node_line, Padding(md, (0, 0, 0, 4)))
+
+    def _node_line_with_inline(self, first: str) -> Text:
+        """节点行：│ ● + 首行（行内 Markdown 样式）。"""
+        t = Text(escape(f"{self._connector} ● "))
+        t.append_text(_render_inline_markdown(first))
+        return t
 
 
 class ErrorNode(TreeNode):

@@ -3,15 +3,28 @@ import re
 from unittest.mock import patch
 
 import pytest
-from rich.console import Group
+from rich.console import Console, Group
 from rich.markdown import Markdown
+from rich.padding import Padding
 from rich.text import Text
 from textual.widgets import Static
 
 from ui.textual_app.widgets.tree_nodes import (
-    should_separate, _format_args, _guide_indented, TurnTree, ThinkNode,
-    ToolNode, BodyNode, ErrorNode, SystemNode,
+    should_separate, _format_args, _guide_indented, _render_inline_markdown,
+    TurnTree, ThinkNode, ToolNode, BodyNode, ErrorNode, SystemNode,
 )
+
+
+def _console_segments(renderable):
+    """用真实 Console 渲染 renderable，返回 (text, style_str) 段列表。
+
+    Text 的命名主题样式（markdown.code 等）只在渲染期解析，
+    因此断言样式必须渲染后看，不能只看 Text.spans。
+    """
+    c = Console(force_terminal=False, width=200)
+    return [(seg.text, str(seg.style))
+            for seg in c.render(renderable, c.options)
+            if seg.text]
 
 
 @pytest.fixture(autouse=True)
@@ -118,16 +131,20 @@ class TestNodeRenderables:
         assert isinstance(r, Text)
         assert "正文第一行" in r.plain
 
-    def test_body_streaming_continuation_aligned_to_text_column(self):
-        """流式正文：首行接节点行，后续行缩进到文本列（第 4 列）。"""
+    def test_body_streaming_with_newline_uses_markdown_tail(self):
+        """流式正文换行后：首行接节点行，尾部 RichMarkdown 缩进到文本列。"""
         node = BodyNode()
         node.append_chunk("第一行\n第二行")
         r = node._build_renderable()
-        assert isinstance(r, Text)
-        lines = r.plain.split("\n")
-        assert "● 第一行" in lines[0]
-        assert lines[0].index("第一行") == 4  # 节点行文本列 = 第 4 列
-        assert lines[1] == "    第二行"  # 4 空格 = │ ● 到文本列的宽度
+        assert isinstance(r, Group)
+        assert "第一行" in r.renderables[0].plain
+        tail = r.renderables[1]
+        assert isinstance(tail, Padding)
+        assert isinstance(tail.renderable, Markdown)
+        # 左填充 4 空格 → 缩进到文本列（第 4 列）
+        segs = _console_segments(tail)
+        assert any(text == "    " for text, _ in segs)
+        assert any("第二行" in text for text, _ in segs)
 
     def test_error_node_prefix(self):
         node = ErrorNode("401 认证失败")
@@ -138,3 +155,122 @@ class TestNodeRenderables:
         node = SystemNode("命令完成")
         r = node._build_renderable()
         assert "命令完成" in r.plain
+
+
+class TestRenderInlineMarkdown:
+    """行内 Markdown → 带样式 Text（首行专用转换器）。"""
+
+    def test_plain_passthrough(self):
+        t = _render_inline_markdown("普通文本 123")
+        assert t.plain == "普通文本 123"
+
+    def test_bold(self):
+        assert _render_inline_markdown("**加粗**").plain == "加粗"
+
+    def test_code(self):
+        assert _render_inline_markdown("`code`").plain == "code"
+
+    def test_italic(self):
+        assert _render_inline_markdown("*斜体*").plain == "斜体"
+
+    def test_strike(self):
+        assert _render_inline_markdown("~~删除~~").plain == "删除"
+
+    def test_link(self):
+        assert _render_inline_markdown("[链接](https://x.com)").plain == "链接"
+
+    def test_mixed(self):
+        t = _render_inline_markdown("前 **b** 中 `c` 后 *i*")
+        assert t.plain == "前 b 中 c 后 i"
+
+    def test_unclosed_bold_stays_literal(self):
+        """流式语义：还没写完的 ** 保持字面量。"""
+        assert _render_inline_markdown("**未闭合").plain == "**未闭合"
+
+    def test_code_does_not_bold_inside(self):
+        t = _render_inline_markdown("`**code**`")
+        assert t.plain == "**code**"
+        assert len(t.spans) == 1  # 整个是 code 段
+
+    def test_brackets_not_treated_as_markup(self):
+        assert _render_inline_markdown("[200] 和 <tag>").plain == "[200] 和 <tag>"
+
+    def test_code_style_matches_body(self):
+        """行内代码用 markdown.code 主题样式 — 与正文 RichMarkdown 一致。"""
+        segs = _console_segments(_render_inline_markdown("`code`"))
+        assert any(text == "code" and "bold cyan on black" in style
+                   for text, style in segs)
+
+    def test_bold_style_matches_body(self):
+        segs = _console_segments(_render_inline_markdown("**加粗**"))
+        assert any(text == "加粗" and "bold" in style for text, style in segs)
+
+    def test_italic_style(self):
+        segs = _console_segments(_render_inline_markdown("*斜体*"))
+        assert any(text == "斜体" and "italic" in style for text, style in segs)
+
+
+class TestBodyStreamingMarkdown:
+    """流式正文实时 Markdown 渲染 + 节流。"""
+
+    def test_streaming_markdown_tail_bold_rendered(self):
+        node = BodyNode()
+        node.append_chunk("正文第一行\n**加粗**尾部")
+        r = node._build_renderable()
+        assert isinstance(r, Group)
+        # 尾部是 RichMarkdown，加粗被渲染（首行 node_line 不含尾部）
+        assert "正文第一行" in r.renderables[0].plain
+        assert "加粗" not in r.renderables[0].plain
+        segs = _console_segments(r.renderables[1])
+        assert any(text == "加粗" and "bold" in style for text, style in segs)
+
+    def test_streaming_single_line_is_text_with_inline(self):
+        node = BodyNode()
+        node.append_chunk("**好的** 继续")
+        r = node._build_renderable()
+        assert isinstance(r, Text)
+        assert "好的 继续" in r.plain
+
+    def test_streaming_first_line_inline_bold_applied(self):
+        node = BodyNode()
+        node.append_chunk("**好的**\n正文")
+        r = node._build_renderable()
+        assert isinstance(r, Group)
+        segs = _console_segments(r.renderables[0])
+        assert any(text == "好的" and "bold" in style for text, style in segs)
+
+    def test_throttle_skips_renders_within_window(self):
+        node = BodyNode(stream_throttle=0.08)
+        node._buffer = "第一行\n"  # 已有换行 → 走节流路径
+        node._last_stream_render = 0.0
+        clock = iter([0.05, 0.20])
+        with patch("ui.textual_app.widgets.tree_nodes.time.monotonic",
+                   side_effect=lambda: next(clock)), \
+             patch.object(BodyNode, "_refresh") as mock:
+            node.append_chunk("a")  # 0.05 < 0.08 → 跳过
+            node.append_chunk("b")  # 0.20 ≥ 0.08 → 渲染
+        assert mock.call_count == 1
+
+    def test_no_newline_renders_every_chunk(self):
+        node = BodyNode()
+        with patch.object(BodyNode, "_refresh") as mock:
+            node.append_chunk("a")
+            node.append_chunk("b")
+        assert mock.call_count == 2
+
+    def test_finish_forces_render_within_throttle(self):
+        node = BodyNode(stream_throttle=0.08)
+        node._buffer = "第一行\n"
+        node._last_stream_render = 1.0
+        with patch("ui.textual_app.widgets.tree_nodes.time.monotonic",
+                   return_value=1.03), \
+             patch.object(BodyNode, "_refresh") as mock:
+            node.append_chunk("a")  # 1.03-1.0 < 0.08 → 跳过
+            node.finish()           # 强制渲染
+        assert mock.call_count == 1
+
+    def test_finished_plain_is_raw_buffer(self):
+        node = BodyNode()
+        node.append_chunk("**正文**\n第二行")
+        node.finish()
+        assert node._plain == "**正文**\n第二行"
