@@ -348,7 +348,7 @@ class PluginHost:
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
-        except Exception as e:
+        except Exception:
             logger.exception(f"加载插件 {plugin_id} 失败")
             return None
 
@@ -373,7 +373,7 @@ class PluginHost:
         api = PluginAPI(plugin_id)
         try:
             register_fn(api)
-        except Exception as e:
+        except Exception:
             logger.exception(f"插件 {plugin_id} register() 执行失败")
             sys.modules.pop(module_name, None)
             return None

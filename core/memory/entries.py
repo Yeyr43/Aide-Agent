@@ -26,6 +26,28 @@ _FRONTMATTER_RE = re.compile(
 )
 
 
+def split_sections(text: str) -> dict[str, list[str]]:
+    """将 Markdown 按 ## 标题分割为 {标题: 原始行列表}。
+
+    公共原语（统一 reflector / auto / overview 三处同款 section 解析）。
+    保留每个标题下的原始行（含空行），由调用方决定如何提取结构。
+
+    Returns:
+        dict like {"话题": ["- ...", ""], ...}（重复标题合并到同一 key）
+    """
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            current = stripped[3:].strip()
+            if current not in sections:
+                sections[current] = []
+        elif current is not None:
+            sections[current].append(line)
+    return sections
+
+
 def _parse_simple_frontmatter(text: str) -> tuple[dict, str]:
     """解析简单的 YAML-like frontmatter（无依赖，仅支持 key: value 格式）。
 

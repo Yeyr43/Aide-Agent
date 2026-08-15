@@ -15,10 +15,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core.context.overview import split_sections
 from core.locale import t
 from core.setup import aide_dir
 from core.storage import atomic_write_json, atomic_write_text
+from .entries import split_sections
 from .version import AGENT_ROOT, _backup_prompt, _append_version_log
 
 logger = logging.getLogger(__name__)
@@ -224,17 +224,13 @@ class ReflectEngine:
         return 0
 
     def _write_reflection_marker(self, session_dir: Path, turn: int) -> None:
-        """写入反思标记到 meta.json。"""
-        meta_path = session_dir / "meta.json"
-        meta: dict = {}
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                meta = {}
-        meta["last_reflected_turn"] = turn
-        meta["reflected_at"] = datetime.now(timezone.utc).isoformat()
-        atomic_write_json(meta_path, meta)
+        """写入反思标记到 meta.json。复用 sessions.manager 公共读写。"""
+        from core.sessions.manager import update_session_meta
+        update_session_meta(
+            session_dir,
+            last_reflected_turn=turn,
+            reflected_at=datetime.now(timezone.utc).isoformat(),
+        )
 
     # ── 读取对话 ──────────────────────────────────────────────────────
 

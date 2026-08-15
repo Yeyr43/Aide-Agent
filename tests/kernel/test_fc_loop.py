@@ -4,11 +4,8 @@ import asyncio
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from core.kernel.fc_loop import (
-    FunctionCallingLoop,
-    TOOL_TIMEOUT,
-    TOOL_RESULT_MAX_CHARS,
-)
+from core.kernel.fc_loop import FunctionCallingLoop
+from core.kernel.tool_executor import ToolExecutor, TOOL_TIMEOUT, TOOL_RESULT_MAX_CHARS
 from core.tools import ToolRegistry
 
 
@@ -17,18 +14,18 @@ class TestTruncateResult:
 
     def test_no_truncation_for_short_result(self):
         short = "hello world"
-        result = FunctionCallingLoop._truncate_result(short)
+        result = ToolExecutor._truncate_result(short)
         assert result == short
 
     def test_no_truncation_at_boundary(self):
         exact = "x" * TOOL_RESULT_MAX_CHARS
-        result = FunctionCallingLoop._truncate_result(exact)
+        result = ToolExecutor._truncate_result(exact)
         assert len(result) == TOOL_RESULT_MAX_CHARS
         assert "截断" not in result
 
     def test_truncation_for_long_result(self):
         long_text = "abcdefghij" * 2000  # 20000 chars, well over 8000
-        result = FunctionCallingLoop._truncate_result(long_text)
+        result = ToolExecutor._truncate_result(long_text)
         assert len(result) < len(long_text)
         assert "仅展示前" in result  # actionable hint
         # 应保留头部
@@ -38,10 +35,10 @@ class TestTruncateResult:
 
     def test_truncation_preserves_structure(self):
         """截断保留首尾但不崩溃于极端情况。"""
-        result = FunctionCallingLoop._truncate_result("")
+        result = ToolExecutor._truncate_result("")
         assert result == ""
 
-        result = FunctionCallingLoop._truncate_result("a" * (TOOL_RESULT_MAX_CHARS + 1))
+        result = ToolExecutor._truncate_result("a" * (TOOL_RESULT_MAX_CHARS + 1))
         assert "仅展示前" in result
 
 
@@ -216,7 +213,7 @@ class TestToolGrouping:
         # A 被高危检查阻止（立即失败 ok=False），B 仍在阻塞
         async def fake_block(name, arguments):
             return "高危测试" if arguments.get("id") == "A" else None
-        loop._should_block = fake_block
+        loop._tools_executor._should_block = fake_block
 
         tool_calls = [
             {"id": "c1", "function": {"name": "read_file", "arguments": '{"id":"A"}'}},
@@ -407,13 +404,13 @@ class TestXMLFallback:
         assert calls == []
 
     def test_parse_args_valid_json(self):
-        result = FunctionCallingLoop._parse_args('{"key": "value"}')
+        result = ToolExecutor._parse_args('{"key": "value"}')
         assert result == {"key": "value"}
 
     def test_parse_args_invalid_json(self):
-        result = FunctionCallingLoop._parse_args("not json")
+        result = ToolExecutor._parse_args("not json")
         assert result == {}
 
     def test_parse_args_already_dict(self):
-        result = FunctionCallingLoop._parse_args({"key": "value"})
+        result = ToolExecutor._parse_args({"key": "value"})
         assert result == {"key": "value"}

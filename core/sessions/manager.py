@@ -11,6 +11,26 @@ from pathlib import Path
 from core.storage import atomic_write_json
 
 
+# ── meta.json 公共读写（统一读-改-写，供 reflector/auto/ingester 复用）──
+
+def read_session_meta(session_dir: Path) -> dict:
+    """读取会话 meta.json，不存在或损坏时回退空 dict。"""
+    meta_path = session_dir / "meta.json"
+    if not meta_path.exists():
+        return {}
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def update_session_meta(session_dir: Path, **fields) -> None:
+    """读-改-写会话 meta.json（原子，字段级更新，互不覆盖）。"""
+    meta = read_session_meta(session_dir)
+    meta.update(fields)
+    atomic_write_json(session_dir / "meta.json", meta)
+
+
 @dataclass
 class SessionInfo:
     id: str

@@ -86,11 +86,11 @@ core/
 │   ├── context.py       # KernelContext — 依赖聚合（Memory/Tooling/Session 三个子 context）
 │   ├── agent.py         # AgentKernel 门面 — chat() 通过 MiddlewareRunner 编排 6 步管线
 │   ├── fc_loop.py       # Function Calling 循环（max_turns=10，XML fallback，smart continuation）
+│   ├── tool_executor.py # ToolExecutor — 只读并行/写串行/abort 兄弟 + 超时 + 截断 + 安全（从 fc_loop 提取）
 │   ├── middleware.py    # ChatMiddleware Protocol + ChatContext + MiddlewareRunner
 │   ├── safety.py        # check_tool_safety() — 高危命令拦截（从 fc_loop 提取）
 │   ├── xml_tool_parser.py  # extract_xml_tool_calls() — XML fallback 解析（从 fc_loop 提取）
-│   ├── protocols.py     # ExecutorUI Protocol + NullUI + ChatResult + TokenUsage
-│   └── middleware.py    # ChatMiddleware Protocol + ChatContext + MiddlewareRunner
+│   └── protocols.py     # ExecutorUI Protocol + NullUI + ChatResult + TokenUsage
 ├── llm_gateway/         # 4 个 LLM Provider
 │   ├── provider.py      # AbstractProvider Protocol + StreamEvent 类型（TextDelta/ThinkingDelta/StreamEnd）
 │   ├── openai_compatible_provider.py  # OpenAI 兼容协议基类
@@ -212,7 +212,7 @@ async def execute(arguments: dict, ctx=None) -> str:
 - **递归保护**：子 agent 的 `ToolRegistry` 根本不含 `delegate`（白名单注册天然禁止），无需深度标记
 - **默认只读白名单**：`read_file / search_in_files / search_chat / search_memory / web`，主 agent 可参数 `tools` 覆盖
 - **运行时依赖**：通过 `ToolContext.provider / tool_registry / hook_runner` 获取（`bootstrap.py` 注入；`set_provider()` 热重载时同步更新 provider）
-- **超时**：`DELEGATE_TOOL_TIMEOUT = 180s`（`fc_loop.py`，比普通工具 30s 长）
+- **超时**：`DELEGATE_TOOL_TIMEOUT = 180s`（`tool_executor.py`，比普通工具 30s 长）
 - **并发限流**：`MAX_CONCURRENT_SUBAGENTS = 3` + 计数限流（`_active_subagents`），同时最多跑 3 个子 agent，超出的直接拒绝（返回错误，主 agent 自行决定重试或合并）
 - **队列查询**：`action=status` 返回当前队列情况（上限/运行中/可用配额），主 agent 编排前先查、再派发（二次确认）
 - **编排判据在 `tools.strategy_6`**（Tools Prompt 使用策略段落，`prompts.json`），而非 delegate 工具描述——工具描述是被动的，模型不会主动看；策略段落才是主 agent 的决策上下文。判据：可拆多独立子任务/需大量扫描→委派；单一小任务/强依赖/需看中间结果→直接做
@@ -377,7 +377,7 @@ FeedbackStore 优先用 `entry_id`（来自 frontmatter）做 key，fallback 到
 |------|---------|------|
 | SessionStart | `bootstrap.py` | 所有插件加载完毕 |
 | UserPromptSubmit | `agent.py` → chat() 入口 | 用户提交消息 |
-| **PermissionRequest** | `fc_loop.py` → `_should_block()` | 高危操作审批（exit 2=阻止） |
+| **PermissionRequest** | `tool_executor.py` → `_should_block()` | 高危操作审批（exit 2=阻止） |
 | PreToolUse | `tools/__init__.py` → `execute()` | 工具执行前（exit 2=阻止，返回钩子被封锁） |
 | PostToolUse | `tools/__init__.py` → `execute()` | 工具执行后 |
 | **PreCompact** | `agent.py` → 上下文组装前 | 插件可预处理压缩 |
@@ -417,13 +417,13 @@ Python 插件可注册：工具、命令、生命周期钩子（`register_hook()
 - **ErrorClass**：TRANSIENT（重试）/ PERMANENT（立即返回）/ UNKNOWN（保守重试 1 次）
 - ToolRegistry.execute() 内置重试 + ToolContext 自动注入
 
-### 工具并发分级（`fc_loop._execute_tools`）
+### 工具并发分级（`tool_executor.py` ToolExecutor.execute_tools）
 
 同轮工具调用分两组执行（free-code `isConcurrencySafe` 分片的简化版）：
 - **串行组**：有副作用工具（`_uncacheable_tools` = write_file/run_shell）+ MCP 工具——依次执行，消除同轮多写竞态
-- **并发组**：其余（只读类 + 插件工具）——并行；**任一失败 → 取消其余兄弟**（超时/异常/高危阻止/网络限流算失败，`_run_one` 返回 `(ok, result)`），被取消者标记"已取消"喂回 LLM
+- **并发组**：其余（只读类 + 插件工具）——并行；**任一失败 → 取消其余兄弟**（超时/异常/高危阻止/网络限流算失败，`ToolExecutor._run_one` 返回 `(ok, result)`），被取消者标记"已取消"喂回 LLM
 - 结果按原 tool_calls 顺序重组（`zip(final.tool_calls, tool_results)` 依赖顺序）
-- 注意：`ToolRegistry.execute` 经 `async_retry` 把工具异常**吞成错误字符串**返回（不向上抛），所以"失败"指超时/高危阻止等 `_run_one` 层判定，非 execute 抛异常
+- 注意：`ToolRegistry.execute` 经 `async_retry` 把工具异常**吞成错误字符串**返回（不向上抛），所以"失败"指超时/高危阻止等 `ToolExecutor._run_one` 层判定，非 execute 抛异常
 
 ## CI/CD
 

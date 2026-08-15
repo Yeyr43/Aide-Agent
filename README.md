@@ -87,11 +87,11 @@ uv run python shell/main.py
 
 - **终端原生 TUI** — Textual 全栈框架，纯暗主题 (`#0c0c0c`)，键盘驱动
 - **多模型** — OpenAI 兼容 API / Ollama 本地 / 自定义 base URL
-- **六层上下文** — Soul 人设 → 工具提示 → 技能 → 动态 Prompt → 会话总览 → 窗口上下文
-- **记忆系统** — 自动截获偏好/工作流/长记忆，`/profile update` 触发 LLM 回溯整合
-- **插件系统** — Python 插件 + Markdown 技能，自动发现加载
-- **MCP 协议** — stdio + HTTP Transport，健康检查 + 自动重连
-- **语义搜索** — ONNX embedding（all-MiniLM-L6-v2, 384-dim），TF-IDF + 语义混合排序
+- **优先级队列上下文** — 收集 → 评分 → 打包，Soul/工具/技能/记忆/总览/窗口上下文按相关性与 token 预算注入
+- **记忆系统** — 手动 `/reflect` 结构化记忆 + 会话总览；`/mem-auto` 可选自动提取（默认关）
+- **插件系统** — Python 插件 + Markdown 技能，三格式兼容自动发现加载
+- **MCP 协议** — stdio + HTTP Transport，熔断 + 自动重连
+- **语义搜索** — 词级 TF-IDF + bigram Jaccard + 同义词扩展，时间衰减加权
 - **跨平台** — Windows / macOS / Linux
 
 ## 平台支持
@@ -104,7 +104,7 @@ uv run python shell/main.py
 
 ## 技术栈
 
-Python 3.13+ · Textual 0.80+ · ONNX Runtime · Pydantic 2 · pystray · Pygments · httpx · ddgs
+Python 3.13+ · Textual 0.80+ · Pydantic 2 · pystray · Pygments · httpx · ddgs
 
 ## 开源协议
 

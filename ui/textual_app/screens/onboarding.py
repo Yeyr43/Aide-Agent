@@ -362,7 +362,6 @@ class OnboardingScreen(Screen):
         self._save_current()
 
         name = self._answers.get("name", "Aide")
-        personality = self._answers.get("personality", t("ui.onboard.default_personality"))
         preferences = self._answers.get("preferences", t("ui.onboard.default_workstyle"))
         long_term = self._answers.get("long_term", "")
 

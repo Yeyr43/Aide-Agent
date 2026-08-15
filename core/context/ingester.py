@@ -11,7 +11,6 @@ Session 目录由 SessionManager 统一创建，ContextIngester 不重复创建�
 """
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -140,19 +139,10 @@ class ContextIngester:
         await self._store.write(turn_path, turn_data)
 
         # ── 1.5 更新 meta.json 的 last_active_at ──
-        meta_path = self._session_dir / "meta.json"
-        from core.storage import atomic_write_json
-        meta: dict = {}
-        if meta_path.exists():
-            try:
-                meta_raw = await asyncio.to_thread(
-                    meta_path.read_text, encoding="utf-8",
-                )
-                meta = json.loads(meta_raw)
-            except (json.JSONDecodeError, OSError):
-                meta = {}
-        meta["last_active_at"] = timestamp
-        atomic_write_json(meta_path, meta)
+        from core.sessions.manager import update_session_meta
+        await asyncio.to_thread(
+            update_session_meta, self._session_dir, last_active_at=timestamp,
+        )
 
         # ── 2. 追加 timeline.json（JSONL 格式：每行一个 JSON 对象）──
         from core.storage import append_jsonl

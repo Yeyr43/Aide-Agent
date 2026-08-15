@@ -20,12 +20,11 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core.context.overview import split_sections
 from core.locale import t
 from core.setup import aide_dir
 from core.storage import atomic_write_text
 
-from .entries import MemoryEntry, format_memory_entry, parse_memory_file
+from .entries import MemoryEntry, format_memory_entry, parse_memory_file, split_sections
 from .reflector import MEMORY_FILES
 
 logger = logging.getLogger(__name__)
@@ -274,16 +273,10 @@ class AutoMemoryExtractor:
 
     async def _write_marker(self, session_dir: Path, turn: int) -> None:
         """写入自动提取标记到 meta.json（last_auto_memory_turn）。"""
-        from core.storage import atomic_write_json
-        meta_path = session_dir / "meta.json"
-        meta: dict = {}
-        if meta_path.exists():
-            try:
-                meta = json.loads(await asyncio.to_thread(
-                    meta_path.read_text, encoding="utf-8",
-                ))
-            except (json.JSONDecodeError, OSError):
-                meta = {}
-        meta["last_auto_memory_turn"] = turn
-        meta["auto_memory_at"] = datetime.now(timezone.utc).isoformat()
-        await asyncio.to_thread(atomic_write_json, meta_path, meta)
+        from core.sessions.manager import update_session_meta
+        await asyncio.to_thread(
+            update_session_meta,
+            session_dir,
+            last_auto_memory_turn=turn,
+            auto_memory_at=datetime.now(timezone.utc).isoformat(),
+        )
