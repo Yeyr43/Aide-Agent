@@ -303,11 +303,11 @@ sessions/{YYYYMMDD_HHMMSS}/
 
 **收集 → 评分 → 打包**三阶段：
 
-1. **收集**：Soul + Tools Prompt（pinned）+ 技能注入 + 记忆条目（结构化解析）+ overview + timeline
-2. **评分**：TF-IDF/Jaccard + 时间衰减（30 天半衰期）。pinned 项 score=1.0。记忆条目叠加 feedback 权重（用 stable id 匹配）
-3. **打包**：pinned 置顶，scored 按分数降序，填满 token 预算（~40% context_window）后截断
+1. **收集**：Soul + Tools Prompt（pinned）+ 技能注入 + 记忆条目（结构化解析）+ overview + timeline + **相关早期轮次完整回填**（`type="history"`，最近 10 轮，评分/预算再筛）
+2. **评分**（内容相关性为主序）：`relevance = content_corr × type_weight`（memory 1.0 / overview 0.8 / skill 0.7 / history 0.7 / timeline 0.5）决定**是否注入**；`score = relevance × recency × feedback` 决定注入顺序。overview/timeline 有基础注入分（`FRAGMENT_BASE_RELEVANCE`，会话背景不严格过滤）。记忆衰减按条目 `created`（frontmatter）而非文件 mtime，`long_term_memory.md` 不衰减。feedback 权重用 stable id 匹配
+3. **打包**：pinned 置顶，按 score 降序（同分短片段优先）填满 token 预算（~40% context_window），低于相关性阈值的跳过
 
-所有文件 I/O 通过 `asyncio.to_thread()` 执行，不阻塞事件循环。
+词汇索引（`_build_vocabulary`）从 agent/*.md **+ 会话 timeline 摘要**构建（缓解冷启动分词退化）。所有文件 I/O 通过 `asyncio.to_thread()` 执行，不阻塞事件循环。
 
 ## 反馈闭环
 

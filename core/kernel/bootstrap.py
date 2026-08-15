@@ -241,6 +241,7 @@ class AppBootstrap:
             summary_turns=config.app.summary_turns,
             relevance_threshold=config.app.relevance_threshold,
             feedback_store=feedback_store,
+            sessions_root=config.sessions_root,
         )
 
         reflector = ReflectEngine(

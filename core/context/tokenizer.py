@@ -133,11 +133,41 @@ def _detect_language(text: str) -> str:
     return "zh" if cjk_count / len(cleaned) >= 0.3 else "en"
 
 
-def _build_vocabulary(agent_root: Path | None = None) -> VocabularyIndex:
-    """从 agent/*.md 记忆文件中构建词汇表和 DF 表。
+def _collect_timeline_lines(sessions_root: Path, sink: list[str],
+                            max_lines: int = 300) -> None:
+    """从会话 timeline.json 摘要收集文本行（供词汇构建），控制扫描成本。
 
-    扫描 ~/.aide/agent/*.md 中的内容行，
-    提取 2-4 字中/英文片段（出现 ≥2 次）作为词汇表。
+    缓解冷启动：记忆文件少时分词退化（用户查询/记忆里的领域词
+    不在词汇表 → 词级 TF-IDF 失效）。会话摘要补充领域词汇。
+    """
+    if not sessions_root.exists():
+        return
+    count = 0
+    for session_dir in sorted(sessions_root.iterdir()):
+        if not session_dir.is_dir() or session_dir.name.startswith("_"):
+            continue
+        timeline = session_dir / "timeline.json"
+        if not timeline.exists():
+            continue
+        try:
+            from core.storage import read_jsonl
+            for e in read_jsonl(timeline):
+                s = (e.get("summary", "") or "").strip()
+                if s:
+                    sink.append(s)
+                    count += 1
+                    if count >= max_lines:
+                        return
+        except (json.JSONDecodeError, OSError):
+            continue
+
+
+def _build_vocabulary(agent_root: Path | None = None,
+                      sessions_root: Path | None = None) -> VocabularyIndex:
+    """从 agent/*.md 记忆文件 + 会话 timeline 摘要构建词汇表和 DF 表。
+
+    扫描 ~/.aide/agent/*.md 中的内容行，以及（若提供 sessions_root）
+    各会话 timeline.json 摘要，提取 2-4 字中/英文片段（出现 ≥2 次）作为词汇表。
 
     P5: 切换到 .md 文件（不再有 JSON 条目）。
     """
@@ -164,6 +194,10 @@ def _build_vocabulary(agent_root: Path | None = None) -> VocabularyIndex:
                     all_lines.append(clean)
         except Exception:
             continue
+
+    # 会话摘要补充领域词汇（记忆不足时仍能分词）
+    if sessions_root is not None:
+        _collect_timeline_lines(sessions_root, all_lines)
 
     if not all_lines:
         _vocab_index = VocabularyIndex(

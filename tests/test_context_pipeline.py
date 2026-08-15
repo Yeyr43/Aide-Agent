@@ -8,6 +8,15 @@ from unittest.mock import MagicMock, AsyncMock
 from core.context.pipeline import ContextPipeline
 
 
+@pytest.fixture(autouse=True)
+def _reset_vocab():
+    """每个测试前重置全局词汇索引，避免会话词汇污染测试间状态。"""
+    from core.context.tokenizer import flush_vocab_cache
+    flush_vocab_cache()
+    yield
+    flush_vocab_cache()
+
+
 def _make_agent_dir(tmp_path: Path) -> Path:
     """Create a minimal agent directory with soul.md."""
     agent_root = tmp_path / "agent"
@@ -280,6 +289,208 @@ class TestAssembleDynamicPrompt:
         )
         # Should not crash on empty file
         assert len(system_msgs) == 1
+
+
+class TestEntryDecay:
+    """记忆条目时间衰减语义（方向 1：created 而非文件 mtime，长记忆不衰减）。"""
+
+    def _old_file(self, path: Path, days: int) -> None:
+        import os
+        import time
+        path.write_text("x", encoding="utf-8")
+        old = time.time() - days * 86400
+        os.utime(path, (old, old))
+
+    def test_ltm_never_decays(self, tmp_path):
+        """long_term_memory 的条目不随时间衰减。"""
+        from core.context.pipeline import _entry_decay
+        from core.memory.entries import MemoryEntry
+        ltm = tmp_path / "long_term_memory.md"
+        self._old_file(ltm, days=120)
+        entry = MemoryEntry(created="2026-01-01", file="long_term_memory.md")
+        assert _entry_decay(entry, ltm) == 1.0
+
+    def test_preference_uses_created(self, tmp_path):
+        """preferences 条目按 created 衰减（而非整个文件的 mtime）。"""
+        from core.context.pipeline import _entry_decay
+        from core.memory.entries import MemoryEntry
+        pref = tmp_path / "preferences.md"
+        self._old_file(pref, days=120)  # 文件 120 天前
+        entry = MemoryEntry(created="2026-06-01", file="preferences.md")  # 条目 ~2 月前
+        decay = _entry_decay(entry, pref)
+        assert 0 < decay < 1.0
+        # 按条目 created 计算（约 75 天 → ~0.18），而非按文件 mtime（120 天 → ~0.06）
+        assert decay > 0.1
+
+    def test_no_created_falls_back_to_file_mtime(self, tmp_path):
+        """无 created 字段的旧条目回退文件 mtime 衰减。"""
+        from core.context.pipeline import _entry_decay
+        from core.memory.entries import MemoryEntry
+        pref = tmp_path / "preferences.md"
+        self._old_file(pref, days=30)
+        entry = MemoryEntry(file="preferences.md")  # 无 created
+        assert 0 < _entry_decay(entry, pref) < 1.0
+
+
+class TestScoringSystem:
+    """修复后的评分体系：内容相关性为主序（衰减只是排序次要因子）。"""
+
+    @pytest.mark.asyncio
+    async def test_relevant_old_memory_injected_irrelevant_new_filtered(self, tmp_path):
+        """相关旧记忆应注入，不相关新记忆被过滤（修复前相反：主序是衰减）。"""
+        import os
+        import time
+        agent_root = _make_agent_dir(tmp_path)
+        # 相关旧记忆：preferences.md 带 created（2 个月前），内容与"部署"相关
+        (agent_root / "preferences.md").write_text(
+            "---\nid: old_rel\ncreated: 2026-06-01\n---\n- 用户偏好用 Docker 部署\n",
+            encoding="utf-8",
+        )
+        old = time.time() - 60 * 86400
+        os.utime(agent_root / "preferences.md", (old, old))
+        # 不相关新记忆：workflows.md 刚写，内容无关
+        (agent_root / "workflows.md").write_text("- 用户喜欢蓝色\n", encoding="utf-8")
+
+        pipeline = ContextPipeline(agent_root=agent_root)
+        system_msgs, _ = await pipeline.assemble(
+            session_dir=None, user_msg="怎么部署这个应用",
+        )
+        combined = system_msgs[0]["content"]
+        # 相关旧记忆注入（相关性决定生死，衰减只影响顺序）
+        assert "Docker" in combined
+        # 不相关新记忆被过滤
+        assert "蓝色" not in combined
+
+    @pytest.mark.asyncio
+    async def test_ltm_old_memory_injected(self, tmp_path):
+        """长期记忆 created 很久前仍应注入（不衰减）。"""
+        import os
+        import time
+        agent_root = _make_agent_dir(tmp_path)
+        (agent_root / "long_term_memory.md").write_text(
+            "---\nid: ltm_1\ncreated: 2026-01-01\n---\n- 用户偏好用 Docker 部署\n",
+            encoding="utf-8",
+        )
+        old = time.time() - 120 * 86400
+        os.utime(agent_root / "long_term_memory.md", (old, old))
+
+        pipeline = ContextPipeline(agent_root=agent_root)
+        system_msgs, _ = await pipeline.assemble(
+            session_dir=None, user_msg="怎么部署这个应用",
+        )
+        assert "Docker" in system_msgs[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_last_memory_fragments_collected_after_scoring(self, tmp_path):
+        """收集时机修复：用评分后的相关性判断，而非收集时的衰减基础分。"""
+        agent_root = _make_agent_dir(tmp_path)
+        (agent_root / "preferences.md").write_text(
+            "---\nid: rel\ncreated: 2026-06-01\n---\n- 用户偏好用 Docker 部署\n",
+            encoding="utf-8",
+        )
+        (agent_root / "workflows.md").write_text("- 用户喜欢蓝色\n", encoding="utf-8")
+
+        pipeline = ContextPipeline(agent_root=agent_root)
+        await pipeline.assemble(
+            session_dir=None, user_msg="怎么部署这个应用",
+        )
+        frags = pipeline.get_last_memory_fragments()
+        contents = [f.content for f in frags]
+        assert "用户偏好用 Docker 部署" in contents
+        assert "用户喜欢蓝色" not in contents
+
+    def test_pack_short_first_on_tie(self, tmp_path):
+        """打包：同分数时短片段优先（token 效率），且低于相关性阈值的被过滤。"""
+        from core.context.pipeline import ContextFragment
+        pipeline = ContextPipeline(agent_root=_make_agent_dir(tmp_path))
+        frags = [
+            ContextFragment(type="memory", content="y" * 10, tokens=10,
+                            relevance=0.5, score=0.5),
+            ContextFragment(type="memory", content="x" * 100, tokens=100,
+                            relevance=0.5, score=0.5),
+            ContextFragment(type="memory", content="z" * 5, tokens=5,
+                            relevance=0.01, score=0.01),
+        ]
+        combined = pipeline._pack_fragments(frags, token_budget=1000)
+        # 同分短优先：y 块(10) 在 x 块(100) 前
+        assert combined.index("y" * 10) < combined.index("x" * 100)
+        # 低相关片段被过滤
+        assert "z" * 5 not in combined
+
+
+class TestHistoryBackfill:
+    """方向 2：与当前问题相关的早期轮次完整内容回填到上下文。"""
+
+    @pytest.mark.asyncio
+    async def test_related_older_turn_backfilled(self, tmp_path):
+        """相关早期轮次的完整 assistant 内容应注入（而非只留一句话摘要）。"""
+        agent_root = _make_agent_dir(tmp_path)
+        session_dir = tmp_path / "sessions" / "test"
+        session_dir.mkdir(parents=True)
+        pipeline = ContextPipeline(agent_root=agent_root, full_text_turns=1)
+        conv = [
+            {"role": "user", "content": "我们讨论过 Docker 部署方案"},
+            {"role": "assistant", "content": "用 docker-compose 部署服务"},
+            {"role": "user", "content": "最后用什么方案"},
+            {"role": "assistant", "content": "选定了 docker-compose"},
+            {"role": "user", "content": "现在有新问题"},
+        ]
+        system_msgs, _ = await pipeline.assemble(
+            session_dir=session_dir, user_msg="Docker 怎么部署",
+            conversation=conv,
+        )
+        combined = system_msgs[0]["content"]
+        # 完整 assistant 句回填（_build_overview 只提取话题/决策，不会保留完整句）
+        assert "用 docker-compose 部署服务" in combined
+
+    @pytest.mark.asyncio
+    async def test_unrelated_older_turn_not_backfilled(self, tmp_path):
+        """与当前问题无关的早期轮次不注入完整内容。"""
+        agent_root = _make_agent_dir(tmp_path)
+        session_dir = tmp_path / "sessions" / "test"
+        session_dir.mkdir(parents=True)
+        pipeline = ContextPipeline(agent_root=agent_root, full_text_turns=1)
+        conv = [
+            {"role": "user", "content": "我们讨论了蓝色主题"},
+            {"role": "assistant", "content": "建议用蓝色"},
+            {"role": "user", "content": "现在有新问题"},
+        ]
+        system_msgs, _ = await pipeline.assemble(
+            session_dir=session_dir, user_msg="Docker 怎么部署",
+            conversation=conv,
+        )
+        combined = system_msgs[0]["content"]
+        assert "建议用蓝色" not in combined
+
+
+class TestVocabularyFromSessions:
+    """方向 4：词汇表从会话 timeline 摘要构建（缓解冷启动分词退化）。"""
+
+    def test_vocab_includes_session_terms(self, tmp_path):
+        from core.context.tokenizer import _build_vocabulary, flush_vocab_cache
+        agent_root = _make_agent_dir(tmp_path)  # 无记忆文件 → 冷启动
+        sessions_root = tmp_path / "sessions"
+        sd = sessions_root / "20260701_120000"
+        sd.mkdir(parents=True)
+        (sd / "timeline.json").write_text(
+            json.dumps([
+                {"turn": 1, "summary": "讨论了个人助手的设计"},
+                {"turn": 2, "summary": "个人助手的功能规划"},
+            ], ensure_ascii=False), encoding="utf-8",
+        )
+
+        flush_vocab_cache()
+        idx = _build_vocabulary(agent_root, sessions_root)
+        # 会话摘要中的领域词（出现 ≥2 次）应进入词汇表
+        assert "个人助手" in idx.vocab
+
+    def test_no_sessions_root_no_crash(self, tmp_path):
+        """sessions_root 为 None 时（旧调用方）行为不变，不扫描会话。"""
+        from core.context.tokenizer import _build_vocabulary, flush_vocab_cache
+        agent_root = _make_agent_dir(tmp_path)
+        flush_vocab_cache()
+        idx = _build_vocabulary(agent_root)  # 无 sessions_root
+        assert idx.built is True
 
 
 class TestFlushCache:
