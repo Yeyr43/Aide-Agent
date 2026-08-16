@@ -152,3 +152,29 @@ class TestWriteFileSchema:
         assert "content" in schema["properties"]
         assert "old_string" in schema["properties"]
         assert "new_string" in schema["properties"]
+
+
+# ── 原子写回归 ───────────────────────────────────────────────────────────────
+
+class TestAtomicWrite:
+    @pytest.mark.asyncio
+    async def test_no_leftover_tmp_after_successful_write(self, tmp_path):
+        """write_file 必须走原子写：成功后不留 .tmp_ 残留文件。"""
+        f = tmp_path / "target.txt"
+        result = await execute({"file_path": str(f), "content": "data"})
+        assert "已写入" in result
+        assert f.exists()
+        leftovers = [p for p in tmp_path.iterdir() if p.name.startswith(".tmp_")]
+        assert leftovers == [], f"原子写不应残留临时文件: {[p.name for p in leftovers]}"
+
+    @pytest.mark.asyncio
+    async def test_tilde_expanded_not_literal_dir(self, tmp_path, monkeypatch):
+        """覆写模式 `~/` 前缀必须展开到用户主目录（曾写进字面 ~ 目录）。"""
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))
+        f = tmp_path / "tilde_test.txt"
+
+        result = await execute({"file_path": f"~/{f.name}", "content": "x"})
+        assert "已写入" in result
+        assert f.exists(), "应写入主目录而非字面 ~ 目录"
+        assert not (tmp_path.parent / "~" / f.name).exists()

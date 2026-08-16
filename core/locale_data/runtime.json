@@ -4,8 +4,8 @@
     "en": "Read local file contents."
   },
   "tool_desc.write_file": {
-    "zh": "写入/创建/精确编辑本地文件。传 content 覆写，传 old_string+new_string 手术替换。",
-    "en": "Write/create/precisely edit a local file. Pass content to overwrite, or old_string+new_string to surgically replace."
+    "zh": "写入/创建/精确编辑本地文件。**原子写入**（临时文件 + 原子重命名，崩溃安全，绝不出现写一半的文件）。传 content 覆写；传 old_string+new_string 手术替换。",
+    "en": "Write/create/precisely edit a local file. **Atomic write** (temp file + atomic rename, crash-safe — never leaves a half-written file). Pass content to overwrite, or old_string+new_string to surgically replace."
   },
   "tool_desc.run_shell": {
     "zh": "执行 Shell 命令并返回输出。超时 30 秒。",

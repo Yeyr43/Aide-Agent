@@ -57,7 +57,7 @@ async def _write_mode(file_path: str, content: str) -> str:
     if len(content_bytes) > MAX_CONTENT_BYTES:
         return t("tool.write_file.too_large", max_kb=MAX_CONTENT_BYTES // 1024)
 
-    path = Path(file_path)
+    path = Path(file_path).expanduser()  # 与 _edit_mode 一致：~ 前缀展开（曾写进字面 ~ 目录）
     if path.is_dir():
         return t("tool.write_file.is_dir", path=file_path)
 
