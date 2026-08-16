@@ -309,3 +309,39 @@ class TestBodyStreamingMarkdown:
         node.append_chunk("**正文**\n第二行")
         node.finish()
         assert node._plain == "**正文**\n第二行"
+
+
+class TestBreathing:
+    """进行中节点呼吸效果：● 原色 ↔ 压暗色。"""
+
+    def test_dim_color_darkens(self):
+        from ui.textual_app.widgets.tree_nodes import _dim_color
+        assert _dim_color("#5cb85c") == "#295229"
+        assert _dim_color("#ffffff") == "#727272"
+        assert _dim_color("not-a-color") == "not-a-color"  # 解析失败原样返回
+
+    def test_bright_phase_uses_original_color(self):
+        node = ToolNode("read_file", {"path": "x"})
+        node._breath_interval = object()  # 模拟呼吸中（不启动真实定时器）
+        node._breath_on = True            # 亮相位
+        from ui.textual_app.widgets.tree_nodes import BULLET_TOOL
+        assert node._active_bullet_color() == BULLET_TOOL
+
+    def test_dark_phase_dims_color(self):
+        from ui.textual_app.widgets.tree_nodes import _dim_color, BULLET_TOOL
+        node = ToolNode("read_file", {"path": "x"})
+        node._breath_interval = object()
+        node._breath_on = False           # 暗相位
+        assert node._active_bullet_color() == _dim_color(BULLET_TOOL)
+
+    def test_not_breathing_uses_original(self):
+        from ui.textual_app.widgets.tree_nodes import BULLET_TOOL
+        node = ToolNode("read_file", {"path": "x"})
+        assert node._active_bullet_color() == BULLET_TOOL
+
+    def test_tool_error_color_applied_when_not_breathing(self):
+        """出错时 stop_breathing 已先执行 → 显示完整错误红。"""
+        from ui.textual_app.widgets.tree_nodes import BULLET_ERROR
+        node = ToolNode("read_file", {"path": "x"})
+        node.set_error("boom")
+        assert node._active_bullet_color() == BULLET_ERROR

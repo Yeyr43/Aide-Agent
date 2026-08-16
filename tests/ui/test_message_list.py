@@ -571,3 +571,50 @@ async def test_sticky_releases_when_tree_hidden_behind_header():
         ml.scroll_to(y=t1b - H1, animate=False)
         await pilot.pause(0.1)
         assert ml._pinned_msg is None, "树被标题完全遮挡时 M1 应释放（无钉住）"
+
+
+@pytest.mark.asyncio
+async def test_tool_node_breathes_while_running():
+    """工具节点进行中呼吸、完成后停止（回归）。"""
+    app = MessageListTestApp()
+    async with app.run_test():
+        ml = app.ml
+        ml.add_tool_start("read_file", {"path": "x"})
+        node = ml._tool_fifo["read_file"][0]
+        assert node._breath_interval is not None  # 进行中 → 呼吸定时器在跑
+        node._tick_breath()                       # 模拟一次 tick：亮→暗
+        assert node._breath_on is False
+        node._tick_breath()                       # 暗→亮
+        assert node._breath_on is True
+        ml.add_tool_done("read_file", "content")
+        assert node._breath_interval is None      # 完成 → 停呼吸
+        assert node._breath_on is False
+
+
+@pytest.mark.asyncio
+async def test_tool_error_stops_breathing():
+    app = MessageListTestApp()
+    async with app.run_test():
+        ml = app.ml
+        ml.add_tool_start("read_file", {"path": "x"})
+        node = ml._tool_fifo["read_file"][0]
+        assert node._breath_interval is not None
+        ml.add_tool_error("read_file", "boom")
+        assert node._breath_interval is None
+
+
+@pytest.mark.asyncio
+async def test_think_and_body_breathing_lifecycle():
+    """think 流式呼吸 → 正文开始折叠停；正文流式呼吸 → finish 停。"""
+    app = MessageListTestApp()
+    async with app.run_test():
+        ml = app.ml
+        ml.add_thinking_chunk("思考中")
+        think = ml._think_node
+        assert think._breath_interval is not None
+        ml.add_ai_chunk("正文")                  # 正文开始 → think 折叠停呼吸
+        assert think._breath_interval is None
+        body = ml._body_node
+        assert body._breath_interval is not None
+        ml.finish_ai_message()                   # 正文收尾 → 停呼吸
+        assert body._breath_interval is None

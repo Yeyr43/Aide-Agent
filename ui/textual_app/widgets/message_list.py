@@ -126,9 +126,11 @@ class MessageList(VerticalScroll):
     def _close_open_text(self) -> None:
         """折叠当前 think + 收尾当前正文（若存在）。"""
         if self._think_node is not None:
+            self._think_node.stop_breathing()
             self._think_node.finish()
             self._think_node = None
         if self._body_node is not None:
+            self._body_node.stop_breathing()
             self._body_node.finish()
             self._body_node = None
 
@@ -188,6 +190,7 @@ class MessageList(VerticalScroll):
             tree = self._ensure_turn()
             self._think_node = ThinkNode()
             tree.add_node(self._think_node, "think")
+            self._think_node.start_breathing()  # 思考流式中 → ● 呼吸
         self._think_node.append_chunk(chunk)
         self._scroll_end()
 
@@ -200,6 +203,7 @@ class MessageList(VerticalScroll):
         tree.add_node(node, "tool")
         self._tool_fifo.setdefault(tool_name, []).append(node)
         self._tool_start_times[id(node)] = time.monotonic()
+        node.start_breathing()  # 工具执行中 → ● 呼吸
         self._scroll_end()
 
     def _pop_tool_node(self, tool_name: str) -> ToolNode | None:
@@ -221,6 +225,7 @@ class MessageList(VerticalScroll):
         node = self._pop_tool_node(tool_name)
         if node is None:
             return
+        node.stop_breathing()  # 工具完成 → 停呼吸
         node.set_result(result)
         node.set_duration(self._elapsed(id(node)))
         self._scroll_end()
@@ -234,6 +239,7 @@ class MessageList(VerticalScroll):
             tree.add_node(node, "error")
             self._scroll_end()
             return
+        node.stop_breathing()  # 工具出错 → 停呼吸
         node.set_error(error)
         node.set_duration(self._elapsed(id(node)))
         self._scroll_end()
@@ -242,12 +248,14 @@ class MessageList(VerticalScroll):
 
     def add_ai_chunk(self, chunk: str) -> None:
         if self._think_node is not None:  # 正文开始 → 思考折叠
+            self._think_node.stop_breathing()
             self._think_node.finish()
             self._think_node = None
         tree = self._ensure_turn()
         if self._body_node is None:
             self._body_node = BodyNode(code_theme=self._code_theme)
             tree.add_node(self._body_node, "body")
+            self._body_node.start_breathing()  # 正文流式中 → ● 呼吸
         self._body_node.append_chunk(chunk)
         self._turn_ai_text += chunk
         self._scroll_end()

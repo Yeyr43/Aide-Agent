@@ -33,6 +33,19 @@ BULLET_ERROR = "#cc3333"      # 警告/报错 · 红
 BULLET_SYSTEM = "#d0b000"     # 系统信息 · 黄
 BULLET_BODY = "#ffffff"       # 正文 · 白
 
+# 呼吸效果：进行中节点的 ● 在原色 ↔ 压暗色之间缓慢切换（"缓慢开关"）
+BREATH_PERIOD = 1.1            # 半周期（秒）：亮 1.1s → 暗 1.1s
+
+
+def _dim_color(hex_color: str) -> str:
+    """把 #RRGGBB 压暗到约 45% 亮度（呼吸的"暗"相位）。解析失败原样返回。"""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+        return f"#{int(r * 0.45):02x}{int(g * 0.45):02x}{int(b * 0.45):02x}"
+    except (ValueError, AttributeError):
+        return hex_color
+
 
 def should_separate(prev_kind: str | None, kind: str) -> bool:
     """前后节点类型不同时，插入一行 │ 引导线（首节点不插）。"""
@@ -133,6 +146,8 @@ class TreeNode(Static):
         self._plain = plain_text
         self._last_click = 0.0
         self._connector = "│"  # 树连接符，由 TurnTree 设为 ├ / └
+        self._breath_on = False        # 呼吸"亮"相位（True=原色，False=压暗）
+        self._breath_interval = None   # set_interval 定时器（进行中才存在）
 
     def set_connector(self, char: str) -> None:
         """设置树连接符（├ 中间 / └ 末节点），并重渲染。"""
@@ -143,9 +158,51 @@ class TreeNode(Static):
     def _label_line(self, label: str, bullet_style: str | None = None) -> Text:
         t = Text()
         t.append(f"{self._connector} ", style=CONNECTOR_STYLE)   # 引导列：树连接符（统一）
-        t.append("● ", style=bullet_style or self._bullet_style)  # 子弹列
+        t.append("● ", style=self._active_bullet_color() if bullet_style is None
+                 else bullet_style)  # 子弹列（未显式指定时随呼吸变化）
         t.append(label, style="")  # 文本列，一律正常色
         return t
+
+    # ── 呼吸效果（进行中节点 ● 缓慢开关）───────────────────────
+
+    def _bullet_color(self) -> str:
+        """有效子弹色（子类可覆盖，如 ToolNode 错误时返回红）。"""
+        return self._bullet_style
+
+    def _active_bullet_color(self) -> str:
+        """渲染用子弹色：呼吸中且处于"暗"相位时压暗，否则有效色。"""
+        color = self._bullet_color()
+        if self._breath_interval is not None and not self._breath_on:
+            return _dim_color(color)
+        return color
+
+    def start_breathing(self) -> None:
+        """进入进行中状态：启动慢速定时器交替亮/暗。重复调用无操作。"""
+        if self._breath_interval is not None:
+            return
+        self._breath_on = True
+        self._breath_interval = self.set_interval(BREATH_PERIOD, self._tick_breath)
+        self._refresh()
+
+    def stop_breathing(self) -> None:
+        """结束进行中状态：停定时器、恢复原色。"""
+        if self._breath_interval is not None:
+            self._breath_interval.stop()
+            self._breath_interval = None
+        if not self._breath_on:
+            return
+        self._breath_on = False
+        self._refresh()
+
+    def _tick_breath(self) -> None:
+        self._breath_on = not self._breath_on
+        self._refresh()
+
+    def on_unmount(self) -> None:
+        """节点移除时停掉呼吸定时器（防泄漏）。"""
+        if self._breath_interval is not None:
+            self._breath_interval.stop()
+            self._breath_interval = None
 
     def _build_renderable(self):
         raise NotImplementedError
@@ -212,12 +269,12 @@ class ThinkNode(TreeNode):
     def _build_renderable(self):
         if self._expanded:
             t = Text()
-            t.append_text(self._label_line("think", self._bullet_style))
+            t.append_text(self._label_line("think"))
             if self._thinking:
                 t.append("\n")
                 t.append_text(_guide_indented(self._thinking, style="italic #888888"))
             return t
-        return self._label_line("think", self._bullet_style)
+        return self._label_line("think")
 
 
 class ToolNode(TreeNode):
@@ -271,7 +328,7 @@ class ToolNode(TreeNode):
         self._refresh()
 
     def _build_renderable(self):
-        line = self._label_line(self._label(), self._bullet_color())
+        line = self._label_line(self._label())
         if not self._expanded:
             return line
         body = self._result or self._error or ""
@@ -370,7 +427,7 @@ class BodyNode(TreeNode):
         """
         t = Text()
         t.append(f"{self._connector} ", style=CONNECTOR_STYLE)
-        t.append("● ", style=BULLET_BODY)
+        t.append("● ", style=self._active_bullet_color())
         t.append_text(_render_inline_markdown(first))
         return t
 
