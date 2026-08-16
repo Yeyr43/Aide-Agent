@@ -294,3 +294,280 @@ async def test_scroll_pin_follows_bottom_unless_user_scrolls_up():
         await pilot.pause(0.1)
         assert ml._pinned is True
         assert ml.scroll_y >= ml.max_scroll_y - 0.5
+
+
+@pytest.mark.asyncio
+async def test_sticky_pins_short_message_top_while_streaming():
+    """短消息 + 长回复 → 消息钉在窗口顶部（不区分消息是否足一屏）。
+
+    回归需求：短消息也应钉住（v2 只钉超窗高消息）。钉住 = 流内消息
+    display:none + 固定头显示消息副本；树正常显示，滚动范围零扰动。
+    """
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        ml.add_user_message("帮我写个总结")
+        await pilot.pause(0.1)
+        msg = app.query(".user-message")[-1]
+        msg_h = msg.size.height
+        assert msg_h < ml.size.height  # 短消息（不足一屏）
+
+        paras = "\n\n".join(f"第{i}段：这是一个段落，包含一些说明文字和内容。"
+                            for i in range(40))
+        ml.add_ai_chunk(paras)
+        ml.finish_ai_message()
+        await pilot.pause(0.2)
+
+        # 已钉住：流内消息隐藏 + 固定头显示消息副本
+        assert ml._pinned_msg is msg
+        assert msg.styles.display == "none"
+        header = ml._sticky_header
+        assert header.styles.display == "block"
+        assert header._plain_content == "帮我写个总结"
+        assert int(header.styles.height.value) == msg_h
+        # 钉住位置紧贴顶部标题栏：header 屏内 y == 2（标题栏 1 行 + #messages 上 padding 1 行）
+        assert header.region.y == 2, f"应紧贴标题栏（屏内 y=2），实际 {header.region.y}"
+
+        # 树可滚动（钉住不改变滚动范围：长内容超出视口）
+        assert ml.max_scroll_y > ml.size.height
+
+        # 流式继续：钉住保持
+        ml.add_ai_chunk("\n\n更多回复内容，继续向下生长。")
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is msg
+
+
+@pytest.mark.asyncio
+async def test_sticky_pin_does_not_hold_scroll():
+    """钉住 ≠ 锁滚动：树中可自由滚动、位置不被拽回（钉住是视觉固定头）。"""
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        ml.add_user_message("问题")
+        paras = "\n\n".join(f"第{i}段：这是一个段落，包含一些说明文字和内容。"
+                            for i in range(40))
+        ml.add_ai_chunk(paras)
+        ml.finish_ai_message()
+        await pilot.pause(0.2)
+        assert ml._pinned_msg is not None  # 已钉住
+
+        tree = ml._msg_trees[0]
+        t_top = tree.virtual_region_with_margin.y
+        for offset in (8, 20, 5):
+            ml.scroll_to(y=t_top + offset, animate=False)
+            await pilot.pause(0.1)
+            assert abs(ml.scroll_y - (t_top + offset)) <= 1  # 位置保持
+            assert ml._pinned_msg is not None                # 仍钉住
+
+
+@pytest.mark.asyncio
+async def test_sticky_releases_when_message_fits():
+    """消息顶回到视口（可正常显示）→ 钉住解除，消息恢复流内显示。
+
+    相同内容下 max_scroll_y 钉住/释放前后一致（display:none 占位与
+    dock 间距抵消 → 零扰动）。
+    """
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        ml.add_user_message("问题")
+        paras = "\n\n".join(f"第{i}段：这是一个段落，包含一些说明文字和内容。"
+                            for i in range(40))
+        ml.add_ai_chunk(paras)
+        ml.finish_ai_message()
+        await pilot.pause(0.2)
+        assert ml._pinned_msg is not None
+        max_pinned = ml.max_scroll_y
+
+        ml.scroll_home(animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is None
+        msg = app.query(".user-message")[-1]
+        assert msg.styles.display == "block"  # 恢复显示
+        assert abs(ml.max_scroll_y - max_pinned) <= 1  # 滚动范围不变
+
+
+@pytest.mark.asyncio
+async def test_sticky_switches_between_messages():
+    """多轮对话：滚动经过前一轮 → 钉住切到下一轮（消息树滑出窗口即释放）。"""
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        ml.add_user_message("第一问")
+        paras1 = "\n\n".join(f"第一轮第{i}段：内容。" for i in range(30))
+        ml.add_ai_chunk(paras1)
+        ml.finish_ai_message()
+        await pilot.pause(0.1)
+        ml.add_user_message("第二问")
+        paras2 = "\n\n".join(f"第二轮第{i}段：内容。" for i in range(30))
+        ml.add_ai_chunk(paras2)
+        ml.finish_ai_message()
+        await pilot.pause(0.2)
+
+        msgs = app.query(".user-message")
+        msg1, msg2 = msgs[-2], msgs[-1]
+
+        # 底部：第二问钉住（第一问的树已滑出窗口）
+        assert ml._pinned_msg is msg2
+
+        # 滚到第一轮树中部：第一问钉住（其树在窗口中，第二问尚未进入视口）
+        tree1 = ml._msg_trees[0]
+        t1_top = tree1.virtual_region_with_margin.y
+        ml.scroll_to(y=t1_top + 5, animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is msg1
+
+        # 滚到顶部：无钉住（第一问可正常显示）
+        ml.scroll_home(animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is None
+
+
+@pytest.mark.asyncio
+async def test_sticky_tall_message_scrolls_naturally():
+    """消息 ≥ 一屏：钉住会盖住回复（违背"消息树正常显示"）→ 跳过，自然滚动。"""
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        long = "\n\n".join(f"第{i}行：很长的用户消息，用来撑高气泡框超过一屏。"
+                           for i in range(40))
+        ml.add_user_message(long)
+        await pilot.pause(0.2)
+        msg = app.query(".user-message")[-1]
+        assert msg.size.height > ml.size.height  # 确实超窗高
+
+        paras = "\n\n".join(f"第{i}段：这是回复内容。" for i in range(40))
+        ml.add_ai_chunk(paras)
+        ml.finish_ai_message()
+        await pilot.pause(0.2)
+
+        # 不钉住（自然滚动），树可自由滚动
+        assert ml._pinned_msg is None
+        tree = ml._msg_trees[0]
+        t_top = tree.virtual_region_with_margin.y
+        ml.scroll_to(y=t_top + 5, animate=False)
+        await pilot.pause(0.1)
+        assert abs(ml.scroll_y - (t_top + 5)) <= 1
+        assert ml._pinned_msg is None
+
+
+@pytest.mark.asyncio
+async def test_sticky_clear_resets_pin():
+    """clear() 解除钉顶并复位状态（固定头隐藏、消息恢复显示）。"""
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        ml.add_user_message("问题")
+        paras = "\n\n".join(f"第{i}段：内容。" for i in range(40))
+        ml.add_ai_chunk(paras)
+        ml.finish_ai_message()
+        await pilot.pause(0.2)
+        assert ml._pinned_msg is not None
+
+        ml.clear()
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is None
+        assert ml._sticky_header.styles.display == "none"
+        assert ml._user_msgs == []
+        assert ml._msg_trees == []
+
+
+@pytest.mark.asyncio
+async def test_pinned_box_cjk_not_split_by_tree_cut():
+    """树连接符列不再产生 compositor cut，切断钉住框的双宽 CJK 字符。
+
+    回归：树滚到钉住框背后时，.tree-node/.tree-guide 若用 margin-left 缩进，
+    其区域左边缘落在列 11 → 该处产生 cut，框内容跨列 11 的双宽字符（如"题"）
+    被切断显示为空白。改用 padding-left 后区域左边缘回到列 2，字符不再被切。
+    """
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        ml.add_user_message("我的问题")   # "题" 在列 10-11，横跨列 11
+        ml.add_thinking_chunk("思考中")
+        ml.add_ai_chunk("正文第一行内容。")
+        for i in range(30):
+            ml.add_ai_chunk(f"第{i}段：内容比较长用来撑高，abcdefghijklmn。")
+        ml.finish_ai_message()
+        await pilot.pause(0.2)
+        assert ml._pinned_msg is not None
+        hdr = ml._sticky_header
+        content_y = hdr.region.y + 1  # 框内容行（中间行）
+
+        # 扫多个 sy：树第一行（连接符）从框下方滚到框内容行背后
+        for sy in range(3, 8):
+            ml.scroll_to(y=sy, animate=False, immediate=True)
+            await pilot.pause(0.04)
+            assert ml._pinned_msg is not None, f"sy={sy} 应处于钉住状态"
+            strips = app.screen._compositor.render_strips()
+            text = strips[content_y].text
+            assert "我的问题" in text, f"sy={sy} 钉住框内容被树 cut 切断: {text[:30]!r}"
+
+
+@pytest.mark.asyncio
+async def test_spacing_message_tree_compact():
+    """间距：消息↔自己的树 1 行（紧凑）；上一棵树尾↔下一消息框 4 行（避免钉顶冲突）。
+
+    纵向 margin 折叠为相邻两者较大值，故盒到盒间距即折叠结果。
+    """
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        ml.add_user_message("第一问")
+        ml.add_ai_chunk("第一轮回复。")
+        ml.finish_ai_message()
+        await pilot.pause(0.1)
+        ml.add_user_message("第二问")
+        ml.add_ai_chunk("第二轮回复。")
+        ml.finish_ai_message()
+        await pilot.pause(0.2)
+
+        msgs = app.query(".user-message")
+        m1, m2 = msgs[-2], msgs[-1]
+        t1 = ml._msg_trees[0]
+        gap_mt = t1.virtual_region.y - m1.virtual_region.bottom
+        gap_tm = m2.virtual_region.y - t1.virtual_region.bottom
+        assert gap_mt == 1, f"消息↔自己的树应 1 行，实际 {gap_mt}"
+        assert gap_tm == 4, f"树尾↔下一消息框应 4 行，实际 {gap_tm}"
+
+
+@pytest.mark.asyncio
+async def test_sticky_releases_when_tree_hidden_behind_header():
+    """消息树被钉住标题完全遮挡（视觉消失）→ 钉住释放，不与下一消息框冲突。
+
+    回归诊断：树被标题遮挡后几何上仍在窗口中，旧逻辑钉住不释放 → 与下一消息框并排冲突。
+    修复：树尾进入标题波段（t.bottom <= sy + 消息占位高）即释放。
+    """
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        ml.add_user_message("第一问")
+        ml.add_ai_chunk("第一轮回复。")   # 短树
+        ml.finish_ai_message()
+        await pilot.pause(0.1)
+        ml.add_user_message("第二问")
+        paras = "\n\n".join(f"第{i}段：内容。" for i in range(40))
+        ml.add_ai_chunk(paras)             # 长树（把可滚动区撑大，目标位置可达）
+        ml.finish_ai_message()
+        await pilot.pause(0.2)
+
+        msgs = app.query(".user-message")
+        m1, m2 = msgs[-2], msgs[-1]
+        t1 = ml._msg_trees[0]
+
+        # 回顶 → 无钉住，读取未钉住几何
+        ml.scroll_home(animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is None
+        H1 = m1.virtual_region_with_margin.height
+        t1b = t1.virtual_region_with_margin.bottom
+
+        # 树尾可见 → M1 钉住
+        ml.scroll_to(y=m1.virtual_region.y + 1, animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is m1, "树尾可见时应钉住 M1"
+
+        # 树尾进入标题波段（完全遮挡）→ M1 释放
+        ml.scroll_to(y=t1b - H1, animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is None, "树被标题完全遮挡时 M1 应释放（无钉住）"

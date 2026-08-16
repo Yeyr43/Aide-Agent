@@ -16,24 +16,42 @@ Screen {
 }
 
 .user-message {
-    margin: 1 0 2 0;          /* 贴左占满整行（去掉树对齐的 9 左缩进）+ 底部留空一行 */
+    /* 纵向 margin 折叠为相邻两者较大值：
+       下 1 → 消息与自己的树紧贴 1 行；
+       上 2 → 与上一棵树的下边距 4 折叠后拉开 4 行（避免钉住消息与下一消息框冲突）。
+       总高（含 margin）= 3，与 .sticky-header 对齐保证钉住位移抵消 */
+    margin: 2 0 1 0;
     background: #0c0c0c;
     color: #c8c8c0;
 }
 
 .turn-tree {
     height: auto;              /* 随内容生长：否则 Vertical 默认 1fr 填充视口，长正文被裁剪、不可滚动 */
-    margin: 0 0 1 0;
+    margin: 0 0 4 0;           /* 上 0（紧贴消息下边距 1 行）；下 4 提供与下一消息的 4 行间距 */
+}
+
+.sticky-header {
+    dock: top;                 /* 滚动容器内固定：不随内容滚动，也不计入 virtual_size */
+    display: none;             /* 未钉住时隐藏（display:none → 无 dock 间距，布局零扰动） */
+    margin: 0 0 3 0;           /* 总高（含 margin）== .user-message 的 2+1=3：dock 间距 == 被钉消息占位，位移抵消 */
+                               /* 上边距 0 → 钉住消息紧贴顶部（比 .user-message 上移两行） */
 }
 
 .tree-guide {
     color: #555555;
     height: 1;
-    margin: 0 0 0 9;           /* │ 引导列：与节点行的 │ 同列 */
+    /* 用 padding 而非 margin 缩进：margin 会让 widget 区域左边缘落在列 11，
+       树滚到钉住框背后时该处产生 compositor cut，切断框内跨列 11 的双宽 CJK
+       字符（"题"→空白）。padding 保持视觉缩进，但区域左边缘回到列 2（与消息框
+       左缘一致），不再产生列 11 的 cut。 */
+    margin: 0;
+    padding-left: 9;
 }
 
 .tree-node {
-    margin: 0 0 0 9;           /* 树内容右移一格：│ 单列，● 单列，文本单列 */
+    /* 同上：padding 缩进避免树区域左边缘产生列 11 的 cut，破坏钉住框内容 */
+    margin: 0;
+    padding-left: 9;
     color: #c8c8c0;
 }
 
