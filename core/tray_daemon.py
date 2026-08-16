@@ -7,10 +7,24 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# 脚本位于 core/ 包内（PyInstaller bundle 中 sys.frozen 已设，跳过）：
+# 1) 移除脚本目录（core/）——否则 `import locale` 解析到 core/locale.py 遮蔽
+#    stdlib locale，subprocess 等 stdlib 导入崩溃；
+# 2) 注入项目根目录，使 core.* 导入可用。
+if not getattr(sys, "frozen", False):
+    _here = Path(__file__).resolve().parent
+    if str(_here) in sys.path:
+        sys.path.remove(str(_here))
+    _project_root = _here.parent
+    if str(_project_root) not in sys.path:
+        sys.path.insert(0, str(_project_root))
+
 import atexit
 import os
 import subprocess
-from pathlib import Path
 
 from PIL import Image
 
