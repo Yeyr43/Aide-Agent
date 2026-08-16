@@ -379,6 +379,9 @@ class MessageList(VerticalScroll):
                 elif role == "assistant" and msg.get("content"):
                     text, _ = _parse_multimodal_content(msg["content"])
                     if text:
+                        # 清理旧数据残留的 XML 工具块（修复前未提取的 <tool_call>/<invoke> 落盘了）
+                        from core.kernel.xml_tool_parser import strip_xml_tool_blocks
+                        text = strip_xml_tool_blocks(text)
                         body = BodyNode(code_theme=self._code_theme)
                         body.set_finished_text(text)
                         tree.add_node(body, "body")

@@ -153,3 +153,28 @@ class TestToolCallFormat:
         assert len(calls) == 2
         assert calls[0]["function"]["name"] == "search_chat"
         assert calls[1]["function"]["name"] == "web"
+
+
+class TestStripXmlBlocks:
+    """回归：恢复渲染时清理旧数据残留的 XML 工具块（修复前落盘的乱码）。"""
+
+    def test_strips_tool_call_block_keeps_text(self):
+        from core.kernel.xml_tool_parser import strip_xml_tool_blocks
+        text = ('✅ 成功。\n\n现在测试：'
+                '<tool_call>\n<function=write_file>\n<parameter=file_path>x</parameter>\n</function>\n</tool_call>')
+        clean = strip_xml_tool_blocks(text)
+        assert "<tool_call>" not in clean
+        assert "<function=" not in clean
+        assert "✅ 成功" in clean
+        assert "现在测试" in clean
+
+    def test_strips_invoke_block(self):
+        from core.kernel.xml_tool_parser import strip_xml_tool_blocks
+        text = '前言<invoke name="run_shell"><parameter name="command">ls</parameter></invoke>后语'
+        clean = strip_xml_tool_blocks(text)
+        assert "<invoke" not in clean
+        assert "前言" in clean and "后语" in clean
+
+    def test_no_xml_returns_unchanged(self):
+        from core.kernel.xml_tool_parser import strip_xml_tool_blocks
+        assert strip_xml_tool_blocks("纯文本") == "纯文本"

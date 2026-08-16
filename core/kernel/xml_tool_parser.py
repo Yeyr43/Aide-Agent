@@ -86,6 +86,19 @@ def extract_xml_tool_calls(text: str) -> list[dict]:
     return calls
 
 
+def strip_xml_tool_blocks(text: str) -> str:
+    """从文本中移除 XML 工具调用块（<invoke>…</invoke> 与 <tool_call>…</tool_call>）。
+
+    用于渲染/恢复时清理旧数据中残留的 XML 乱码（修复前的 turn 文件可能把
+    未提取的 XML 工具块写进了 assistant content）。
+    """
+    if "<invoke" not in text and "<tool_call" not in text:
+        return text
+    result = _XML_INVOKE_RE.sub("", text)
+    result = _XML_TOOLCALL_RE.sub("", result)
+    return result.strip()
+
+
 def try_parse_xml(text: str) -> tuple[str, list[dict]]:
     """从 LLM 输出中分离文本内容和 XML 工具调用。
 

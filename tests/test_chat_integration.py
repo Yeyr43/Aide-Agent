@@ -388,3 +388,83 @@ class TestChatIntegration:
         # 思考不进对话消息（不进 LLM 上下文）
         assert not any(m.get("content", "").startswith("用户想要一个简洁的脚本")
                        for m in data["messages"])
+
+
+class TestXmlToolCallPersistence:
+    """回归：模型流式输出 <tool_call> XML → 工具执行 + 落盘 content 干净（再次渲染无乱码）。"""
+
+    @pytest.mark.asyncio
+    async def test_xml_tool_call_saved_clean(self, tmp_path):
+        store = await _make_store()
+        try:
+            await self._run(store, tmp_path)
+        finally:
+            await store.close()
+
+    async def _run(self, store, tmp_path):
+        agent_root = _make_agent_dir(tmp_path)
+        sessions_root = tmp_path / "sessions"
+        sessions_root.mkdir()
+        config = Config(aide_root=tmp_path / ".aide")
+
+        provider = AsyncMock()
+        call = [0]
+
+        async def _mock_chat(messages, tools):
+            call[0] += 1
+            if call[0] == 1:
+                yield TextDelta(content="开始执行。")
+                yield TextDelta(content="\n<tool_call><function=echo><parameter=msg>hi</parameter></function></tool_call>")
+            else:
+                yield TextDelta(content="完成")
+            yield StreamEnd(finish_reason="stop", tool_calls=[])
+
+        provider.chat_with_tools = _mock_chat
+
+        tool_registry = ToolRegistry()
+
+        async def echo(args):
+            return "echo: " + args.get("msg", "")
+        tool_registry.register(ToolDefinition(
+            name="echo", description="Echo", parameters={"type": "object", "properties": {}},
+            execute=echo,
+        ))
+
+        pipeline = ContextPipeline(agent_root=agent_root)
+        ingester = ContextIngester(store, sessions_root=sessions_root)
+        kernel_ctx = KernelContext(
+            config=config,
+            provider=provider,
+            tooling=ToolingContext(
+                tool_registry=tool_registry, command_registry=MagicMock(),
+                plugin_host=MagicMock(), slot_registry=MagicMock(),
+            ),
+            memory=MemoryContext(reflector=MagicMock()),
+            session=SessionContext(
+                context_pipeline=pipeline, ingester=ingester, session_manager=MagicMock(),
+            ),
+        )
+        kernel = AgentKernel(kernel_ctx)
+
+        session_dir = tmp_path / "session"
+        session_dir.mkdir()
+        (session_dir / "messages").mkdir()
+
+        ui = MagicMock()
+        await kernel.chat(user_msg="go", session_dir=session_dir, turn=1,
+                          conversation=[{"role": "user", "content": "go"}], ui=ui)
+
+        # 落盘 turn 文件必须干净（无 <tool_call>/<function=）
+        turn_file = session_dir / "messages" / "turn_001.json"
+        data = json.loads(turn_file.read_text(encoding="utf-8"))
+        msgs = data.get("messages", [])
+        dirty = [m for m in msgs
+                 if isinstance(m.get("content"), str)
+                 and ("<tool_call>" in m["content"] or "<function=" in m["content"])]
+        assert dirty == [], f"落盘消息残留 XML: {[m['content'][:60] for m in dirty]}"
+
+        # tool_calls 消息存在、content 干净
+        tc_msgs = [m for m in msgs if m.get("tool_calls")]
+        assert tc_msgs, "应有带 tool_calls 的消息"
+        assert "<tool_call>" not in tc_msgs[0]["content"]
+        assert tc_msgs[0]["tool_calls"][0]["function"]["name"] == "echo"
