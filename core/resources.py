@@ -39,6 +39,6 @@ def get_resource_path(relative_path: str | Path) -> Path:
     用法:
         templates = get_resource_path("core/plugins/templates")
         css = get_resource_path("ui/textual_app/app.tcss")
-        model = get_resource_path("models/all-MiniLM-L6-v2/model.onnx")
+        servers = get_resource_path("mcp/servers.json")
     """
     return (get_bundle_dir() / relative_path).resolve()

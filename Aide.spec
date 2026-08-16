@@ -29,14 +29,6 @@ datas = [
     (str(PROJECT_ROOT / "core" / "locale_data" / "runtime.json"), "core/locale_data"),
 ]
 
-# ONNX 模型（构建前由 scripts/build.py 下载到 models/）
-model_dir = PROJECT_ROOT / "models" / "all-MiniLM-L6-v2"
-if (model_dir / "model.onnx").exists():
-    datas.append((str(model_dir / "model.onnx"), "models/all-MiniLM-L6-v2"))
-    datas.append((str(model_dir / "vocab.txt"), "models/all-MiniLM-L6-v2"))
-else:
-    print("警告: ONNX 模型未找到，请先运行 scripts/build.py --no-installer 下载模型")
-
 # ── 隐藏导入（动态加载的模块） ──
 hiddenimports = [
     # Textual 内部模块
@@ -53,11 +45,6 @@ hiddenimports = [
     "textual.drivers.linux_driver",
     "textual.drivers.windows_driver",
     "textual.drivers.macos_driver",
-    # onnxruntime 原生后端
-    "onnxruntime",
-    "onnxruntime.capi",
-    "onnxruntime.capi.onnxruntime_pybind11_state",
-    "onnxruntime.transformers",
     # pystray 平台后端
     "pystray._win32",
     "pystray._darwin",
