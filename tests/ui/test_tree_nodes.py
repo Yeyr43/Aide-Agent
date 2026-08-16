@@ -97,6 +97,25 @@ class TestNodeRenderables:
         r = node._build_renderable()
         assert "思考内容" in r.plain
 
+    def test_think_expanded_non_last_continuation_has_connector(self):
+        """非末节点（├）展开：思考续行带 │ —— 树左边框不因换行断开。"""
+        node = ThinkNode()
+        node._connector = "├"
+        node.append_chunk("第一行\n第二行")
+        r = node._build_renderable()
+        lines = r.plain.split("\n")
+        assert lines[1].startswith("│")
+
+    def test_think_expanded_last_continuation_pure_indent(self):
+        """末节点（└）展开：思考续行纯缩进 —— 运行中下方不长出连接符。"""
+        node = ThinkNode()
+        node._connector = "└"
+        node.append_chunk("第一行\n第二行")
+        r = node._build_renderable()
+        lines = r.plain.split("\n")
+        assert not lines[1].startswith("│")
+        assert lines[1].startswith("    ")
+
     def test_tool_line_has_name_args_duration(self):
         node = ToolNode("read_file", {"path": "src/main.py"})
         node.set_result("content")
@@ -145,6 +164,42 @@ class TestNodeRenderables:
         segs = _console_segments(tail)
         assert any(text == "    " for text, _ in segs)
         assert any("第二行" in text for text, _ in segs)
+
+    def test_body_non_last_continuation_has_connector(self):
+        """非末节点（├）多行正文：续行带 │ —— 换行不打断树左边框（修断链）。"""
+        node = BodyNode()
+        node._connector = "├"
+        node.append_chunk("第一行\n第二行")
+        r = node._build_renderable()
+        assert isinstance(r, Group)
+        segs = _console_segments(r)
+        # 续行（第二行）以 │ 开头
+        text = "".join(t for t, _ in segs)
+        lines = [ln for ln in text.split("\n")]
+        assert any(ln.strip().startswith("│") for ln in lines[1:])
+
+    def test_body_last_continuation_pure_indent(self):
+        """末节点（└）多行正文：续行纯缩进 —— 运行中下方不长出连接符。"""
+        node = BodyNode()
+        node._connector = "└"
+        node.append_chunk("第一行\n第二行")
+        r = node._build_renderable()
+        segs = _console_segments(r)
+        text = "".join(t for t, _ in segs)
+        lines = [ln for ln in text.split("\n")]
+        assert not any(ln.strip().startswith("│") for ln in lines[1:])
+
+    def test_body_demotes_to_non_last_gains_connector(self):
+        """流式末节点 → 后续节点加入降级为 ├：续行由纯缩进变为带 │。"""
+        node = BodyNode()
+        node._connector = "└"
+        node.append_chunk("第一行\n第二行")
+        node.set_connector("├")  # 新节点加入 → 降级
+        r = node._build_renderable()
+        segs = _console_segments(r)
+        text = "".join(t for t, _ in segs)
+        lines = [ln for ln in text.split("\n")]
+        assert any(ln.strip().startswith("│") for ln in lines[1:])
 
     def test_error_node_prefix(self):
         node = ErrorNode("401 认证失败")

@@ -16,7 +16,9 @@ import time
 
 from rich.console import Group
 from rich.markdown import Markdown as RichMarkdown
+from rich.measure import Measurement
 from rich.padding import Padding
+from rich.segment import Segment
 from rich.text import Text
 from textual.containers import Vertical
 from textual.events import Click
@@ -96,6 +98,39 @@ def _guide_indented(text: str, indent: str = "  ", style: str = "", guide: bool 
         t.append(indent)
         t.append(line, style=style)
     return t
+
+
+class _PrefixedLines:
+    """把任意 renderable 的每行前置 │ 引导线（树形续行保留竖线）。
+
+    用于正文 RichMarkdown 尾部：非末节点时续行也要带 │，否则正文换行会
+    打断树左边框（断链）。guide 由调用方按节点连接符决定——末节点（└）
+    传纯缩进（Padding），非末节点（├）传本包装。
+    """
+
+    def __init__(self, renderable, prefix: str = "│   ", prefix_style: str = CONNECTOR_STYLE) -> None:
+        self._inner = renderable
+        self._prefix = prefix
+        # Segment 不解析字符串样式（Text 会解析）；Textual 样式缓存合并时
+        # 字符串会导致 AttributeError，这里预解析为 Style 对象
+        from rich.style import Style
+        self._prefix_style = Style.parse(prefix_style)
+
+    def __rich_console__(self, console, options):
+        inner_options = options.update_width(max(1, options.max_width - len(self._prefix)))
+        inner_segments = console.render(self._inner, inner_options)
+        first = True
+        for line in Segment.split_lines(inner_segments):
+            if not first:
+                yield Segment("\n")
+            first = False
+            yield Segment(self._prefix, self._prefix_style)
+            yield from line
+
+    def __rich_measure__(self, console, options):
+        inner_options = options.update_width(max(1, options.max_width - len(self._prefix)))
+        m = Measurement.get(console, inner_options, self._inner)
+        return Measurement(m.minimum + len(self._prefix), m.maximum + len(self._prefix))
 
 
 # ── 行内 Markdown（正文首行专用）─────────────────────────────────────────
@@ -288,10 +323,12 @@ class ThinkNode(TreeNode):
             t.append_text(self._label_line("think"))
             if self._thinking:
                 t.append("\n")
-                # guide=False：思考续行仅缩进不显示 │ —— 运行中不再在下方"长出"连接符，
-                # 与正文续行的纯缩进对齐（col 4）
+                # guide 随连接符：非末节点（├）续行带 │ 保持竖线连续；
+                # 末节点（└）仅缩进 —— 运行中不在下方"长出"连接符
+                guide = self._connector == "├"
                 t.append_text(_guide_indented(
-                    self._thinking, indent="    ", style="italic #888888", guide=False))
+                    self._thinking, indent="  " if guide else "    ",
+                    style="italic #888888", guide=guide))
             return t
         return self._label_line("think")
 
@@ -356,7 +393,9 @@ class ToolNode(TreeNode):
         t = Text()
         t.append_text(line)
         t.append("\n")
-        t.append_text(_guide_indented(body, style="dim"))
+        guide = self._connector == "├"
+        t.append_text(_guide_indented(body, indent="  " if guide else "    ",
+                                      style="dim", guide=guide))
         return t
 
 
@@ -435,7 +474,13 @@ class BodyNode(TreeNode):
         if not sep:
             return node_line
         md = self._markdown_for(rest)
-        return Group(node_line, Padding(md, (0, 0, 0, 4)))
+        # 非末节点（├）：续行带 │ 引导线，正文换行不打断树左边框（修断链）；
+        # 末节点（└）：纯缩进，运行/流式时下方不"长出"连接符
+        if self._connector == "├":
+            tail = _PrefixedLines(md)
+        else:
+            tail = Padding(md, (0, 0, 0, 4))
+        return Group(node_line, tail)
 
     def _markdown_for(self, rest: str):
         """续行 RichMarkdown：按 rest 内容缓存，流式变化才重解析。
@@ -487,7 +532,10 @@ class ErrorNode(TreeNode):
             t = Text()
             t.append_text(self._label_line("error", self._bullet_style))
             t.append("\n")
-            t.append_text(_guide_indented(self._text))
+            guide = self._connector == "├"
+            t.append_text(_guide_indented(self._text,
+                                          indent="  " if guide else "    ",
+                                          guide=guide))
             return t
         return self._label_line("error " + self._summary(), self._bullet_style)
 
@@ -518,7 +566,10 @@ class SystemNode(TreeNode):
             t = Text()
             t.append_text(self._label_line(self._summary() + "（展开）", self._bullet_style))
             t.append("\n")
-            t.append_text(_guide_indented(self._text))
+            guide = self._connector == "├"
+            t.append_text(_guide_indented(self._text,
+                                          indent="  " if guide else "    ",
+                                          guide=guide))
             return t
         return self._label_line(self._summary(), self._bullet_style)
 
