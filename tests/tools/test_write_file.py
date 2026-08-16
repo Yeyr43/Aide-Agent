@@ -178,3 +178,24 @@ class TestAtomicWrite:
         assert "已写入" in result
         assert f.exists(), "应写入主目录而非字面 ~ 目录"
         assert not (tmp_path.parent / "~" / f.name).exists()
+
+
+class TestEmptyWriteGuard:
+    """回归：只传 file_path（无 content/old_string/new_string）必须拒绝，
+    不能静默写空文件清空原文件。"""
+
+    @pytest.mark.asyncio
+    async def test_only_file_path_rejected(self, tmp_path):
+        f = tmp_path / "existing.txt"
+        f.write_text("original content", encoding="utf-8")
+
+        result = await execute({"file_path": str(f)})
+        assert "content" in result or "old_string" in result or "模式" in result
+        # 原文件必须原封不动
+        assert f.read_text(encoding="utf-8") == "original content"
+
+    @pytest.mark.asyncio
+    async def test_only_file_path_no_file_created(self, tmp_path):
+        f = tmp_path / "brand_new.txt"
+        result = await execute({"file_path": str(f)})
+        assert not f.exists(), "不应创建空文件"

@@ -159,8 +159,8 @@ schema = {
             "description": f"要执行的 shell 命令。{_shell_hint()}",
         },
         "timeout": {
-            "type": "integer",
-            "description": f"命令超时秒数（默认 {DEFAULT_TIMEOUT}s）",
+            "type": "number",
+            "description": f"命令超时秒数（默认 {DEFAULT_TIMEOUT}s，1~30s 生效，>30 被外层硬超时掐断）",
         },
     },
     "required": ["command"],

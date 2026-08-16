@@ -44,32 +44,32 @@
     "en": "## Tool List"
   },
   "tools.read_file": {
-    "zh": "**read_file** — 读取本地文件内容。文本文件直接返回，图片/PDF 暂不支持。限制 100KB。",
-    "en": "**read_file** — Read local file contents. Returns text files directly; images/PDF not yet supported. Limit 100 KB."
+    "zh": "**read_file** — 读取本地文本文件（UTF-8，非 UTF-8 以 � 替代）。单次上限 100KB，超出截断并提示，无 offset/行范围。支持 ~ 路径。",
+    "en": "**read_file** — Read a local text file (UTF-8; non-UTF-8 becomes �). Hard cap 100KB with truncation notice; no offset/line-range. Supports ~ paths."
   },
   "tools.write_file": {
-    "zh": "**write_file** — 创建/覆写文件（传 content）或精确替换片段（传 old_string+new_string）。需要用户明确同意。",
-    "en": "**write_file** — Create/overwrite a file (pass content) or surgically replace a snippet (pass old_string+new_string). Requires explicit user consent."
+    "zh": "**write_file** — 写入/编辑本地文件。**原子写入**（崩溃安全）。content 全量覆写或新建（自动建父目录，≤500KB）；old_string+new_string 替换首个唯一匹配（文件须 UTF-8）。",
+    "en": "**write_file** — Write/edit a local file. **Atomic write** (crash-safe). content = full overwrite/create (auto-makes dirs, ≤500KB); old_string+new_string = replace first unique match (file must be UTF-8)."
   },
   "tools.run_shell": {
-    "zh": "**run_shell** — 执行 Shell 命令。Windows 用 cmd.exe（非交互），macOS/Linux 用 sh。需要用户明确同意。",
-    "en": "**run_shell** — Execute a shell command. Uses cmd.exe on Windows (non-interactive), sh on macOS/Linux. Requires explicit user consent."
+    "zh": "**run_shell** — 执行 Shell 命令，返回退出码与输出。超时 30s（可调低 1~30s）。rm -rf/mkfs/dd/fdisk/chmod 777 等高危命令被硬阻止。输出 >6000 字符截断。Windows=cmd.exe，Unix=sh。",
+    "en": "**run_shell** — Execute a shell command; returns exit code and output. 30s timeout (lowerable 1-30s). Destructive commands (rm -rf/mkfs/dd/fdisk/chmod 777) hard-blocked. Output >6000 chars truncated. cmd.exe on Windows, sh on Unix."
   },
   "tools.search_in_files": {
-    "zh": "**search_in_files** — 搜索文件内容（传 pattern，类似grep）或列出目录（pattern留空，类似ls）。支持 glob 过滤和递归。",
-    "en": "**search_in_files** — Search file contents (pass pattern, like grep) or list directory (empty pattern, like ls). Supports glob filtering and recursion."
+    "zh": "**search_in_files** — 正则搜索文件内容（默认不区分大小写）或列目录（pattern 留空）。glob 过滤（fnmatch 风格，不支持 {..}）。搜索总递归；跳过 >1MB 与忽略目录。",
+    "en": "**search_in_files** — Per-line regex content search (case-insensitive) or directory listing (empty pattern). Glob filter (fnmatch style, no {..}). Search always recursive; skips >1MB files and ignored dirs."
   },
   "tools.search_memory": {
-    "zh": "**search_memory** — 搜索 Aide 跨会话记忆。当用户问「之前聊过什么」或引用过去信息时使用。",
-    "en": "**search_memory** — Search Aide cross-session memory. Use when the user asks \"what did we discuss before\" or references past information."
+    "zh": "**search_memory** — 搜索记忆与会话摘要（agent 记忆文件 + 会话 timeline/总览/名称），TF-IDF 相关度排序，固定返回前 10 条摘要（非全文）。支持同义词/模糊匹配。",
+    "en": "**search_memory** — Search memories & session summaries (agent memory files + session timeline/overview/name); TF-IDF ranked; fixed top-10 snippets (not full text). Synonym/fuzzy matching."
   },
   "tools.web": {
-    "zh": "**web** — 联网搜索(action='search')或抓取 URL 内容(action='fetch')。需要用户明确同意。",
-    "en": "**web** — Web search (action='search') or fetch URL content (action='fetch'). Requires explicit user consent."
+    "zh": "**web** — 联网搜索（DuckDuckGo，最多 10 条）或抓取网页转纯文本。fetch 仅 text/* 内容、阻断内网 IP，5MB 下载/5 万字符上限；timeout 仅 fetch 生效。",
+    "en": "**web** — Web search (DuckDuckGo, up to 10 results) or fetch a page as plain text. fetch: text/* only, blocks private IPs, 5MB/50k-char caps; timeout applies to fetch only."
   },
   "tools.search_chat": {
-    "zh": "**search_chat** — 搜索对话历史。不加 session_id 时全局搜索所有会话（语义匹配），传入 session_id 时限定会话内搜索（关键词+相似度）。用于「之前聊过什么」「上次讨论的XX在哪次对话里」等跨轮/跨会话回溯。",
-    "en": "**search_chat** — Search chat history. Global semantic search across all sessions when no session_id; keyword + similarity search within a session when session_id is given. Use for \"what did we discuss before\", \"which conversation was about X\", etc."
+    "zh": "**search_chat** — 搜索对话历史（每轮摘要，非全文）。不加 session_id 全局搜所有会话（字符二元组关键词匹配，非语义）；加 session_id 限定单会话更精确。默认 5 条、最多 20 条。",
+    "en": "**search_chat** — Search chat history (per-turn summaries only). Without session_id: all sessions via bigram keyword matching (NOT semantic); with session_id: scoped single-session, more precise. Default 5, max 20."
   },
   "tools.strategy_title": {
     "zh": "## 使用策略",
@@ -118,5 +118,9 @@
   "tmpl.long_term_memory": {
     "zh": "# 长记忆\n\n<!-- 此文件由 Aide 自动维护，记录跨会话的重要事实 -->\n",
     "en": "# Long-Term Memory\n\n<!-- This file is maintained by Aide and records important cross-session facts -->\n"
+  },
+  "tools.delegate": {
+    "zh": "**delegate** — 把子任务派给独立子 agent（默认只读工具，可 tools 覆盖），只返回压缩结论（≤4000 字符）。子 agent 默认 6 轮、180s 超时；同时最多 3 个、超出拒绝。派发前先 action=status 查配额。",
+    "en": "**delegate** — Delegate a subtask to an independent sub-agent (read-only tools by default, overridable via tools); returns a condensed conclusion (≤4000 chars). 6 turns default, 180s timeout; at most 3 concurrent. Run action=status first."
   }
 }

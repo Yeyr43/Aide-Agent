@@ -1,31 +1,31 @@
 {
   "tool_desc.read_file": {
-    "zh": "读取本地文件内容。",
-    "en": "Read local file contents."
+    "zh": "读取本地文本文件。UTF-8 解码（非 UTF-8/二进制以 � 替代）；单次上限 100KB，超出仅返回前 ~100KB 并附截断提示（无 offset/行范围，截断后无法读后续，大文件请用 search_in_files 或 run_shell）。错误以「错误：」字符串返回。路径支持 ~ 展开。",
+    "en": "Read a local text file (UTF-8; non-UTF-8/binary bytes become �). Hard cap 100KB — larger files return only the first ~100KB with a truncation notice; no offset/line-range, so for big files use search_in_files or run_shell. Errors return as strings prefixed 错误：. Paths support ~ expansion."
   },
   "tool_desc.write_file": {
-    "zh": "写入/创建/精确编辑本地文件。**原子写入**（临时文件 + 原子重命名，崩溃安全，绝不出现写一半的文件）。传 content 覆写；传 old_string+new_string 手术替换。",
-    "en": "Write/create/precisely edit a local file. **Atomic write** (temp file + atomic rename, crash-safe — never leaves a half-written file). Pass content to overwrite, or old_string+new_string to surgically replace."
+    "zh": "写入/创建/精确编辑本地文件。**原子写入**（临时文件+原子重命名，崩溃安全）。两模式互斥：content 全量覆写或新建（自动建父目录，≤500KB）；old_string+new_string 替换首个唯一匹配（文件须 UTF-8 且 ≤500KB）。只传 file_path 视为空内容写入，会清空原文件。路径支持绝对/相对/~ 展开。",
+    "en": "Write/create/precisely edit a local file. **Atomic write** (temp file + atomic rename, crash-safe). Two mutually exclusive modes: content = full overwrite/create (auto-makes parent dirs, ≤500KB); old_string+new_string = replace the first unique match (file must be UTF-8, ≤500KB). Passing only file_path writes empty content, truncating the file. Paths accept absolute/relative/~."
   },
   "tool_desc.run_shell": {
-    "zh": "执行 Shell 命令并返回输出。超时 30 秒。",
-    "en": "Execute a shell command and return output. Timeout 30s."
+    "zh": "执行 shell 命令，返回退出码与输出（stdout+stderr 合并）。超时默认 30s，可用 timeout 调低（1~30s，>30 无效）。rm -rf / mkfs / dd / fdisk / chmod 777 等高危命令被硬阻止。输出 >6000 字符仅留开头，用 head/tail/grep 取其余。在应用启动目录执行，相对路径按此解析（Windows=cmd.exe，Unix=sh）。",
+    "en": "Execute a shell command; returns exit code and output (stdout+stderr merged). Timeout defaults to 30s (lowerable via timeout, 1-30s; >30 ignored). Destructive commands (rm -rf, mkfs, dd, fdisk, chmod 777) are hard-blocked. Output over 6000 chars is head-truncated — use head/tail/grep for the rest. Runs in the app launch directory (cmd.exe on Windows, sh on Unix)."
   },
   "tool_desc.search_memory": {
-    "zh": "搜索 Aide 的记忆数据。",
-    "en": "Search Aide's memory data."
+    "zh": "搜索记忆与会话摘要：匹配 agent 记忆文件（偏好/工作流/长期记忆）+ 会话 timeline/总览/名称，TF-IDF 相关度+时间衰减排序，固定返回前 10 条、每条 200 字摘要（非全文）。支持同义词/模糊匹配。",
+    "en": "Search memories & session summaries: matches agent memory files (preferences/workflows/long-term) plus session timeline/overview/name. Ranked by TF-IDF relevance with recency decay; returns fixed top-10 200-char snippets (summaries only). Synonym/fuzzy matching."
   },
   "tool_desc.web": {
-    "zh": "联网搜索(action='search')或抓取 URL 内容(action='fetch')。",
-    "en": "Web search (action='search') or fetch URL content (action='fetch')."
+    "zh": "联网搜索或抓取网页转纯文本。search：DuckDuckGo，最多 10 条（默认 5），固定 15s 超时。fetch：仅 text/* 内容（HTML/纯文本；PDF/JSON 拒绝），阻断内网/本机 IP，5MB 下载/5 万字符上限（默认 3 万）；timeout、max_chars 仅 fetch 生效。失败返回描述性错误。",
+    "en": "Search the web (DuckDuckGo, up to 10 results, default 5, fixed 15s) or fetch a page as plain text. fetch: text/* only (HTML/plain; PDF/JSON rejected), blocks private/internal IPs, 5MB download & 50k char caps (default 30k); timeout/max_chars apply to fetch only. Failures return descriptive errors."
   },
   "tool_desc.search_in_files": {
-    "zh": "搜索文件内容（正则，类似grep）或列出目录（pattern留空）。支持 glob 过滤和递归。",
-    "en": "Search file contents (regex, like grep) or list directory (empty pattern). Supports glob and recursion."
+    "zh": "正则逐行搜索文件内容（默认不区分大小写）或列目录（pattern 留空）。搜索总是递归；glob 过滤为 fnmatch 风格（不支持 {..} 花括号，例 \"*.ts\"/\"**/*.py\"）。默认跳过 >1MB 文件及忽略目录（.git/node_modules/venv/dist/build）。上限：搜索 50 条/5000 文件，列表 200 项；截断会注明。输出 路径:行号:内容。",
+    "en": "Per-line regex content search (case-insensitive by default) or directory listing (empty pattern). Search is always recursive; glob filter is fnmatch style (no {..} braces; e.g. \"*.ts\", \"**/*.py\"). Skips >1MB files and ignored dirs (.git/node_modules/venv/dist/build). Limits: 50 results / 5000 files searched, 200 items listed; truncation noted. Output: path:line:content."
   },
   "tool_desc.search_chat": {
-    "zh": "搜索对话历史。不加 session_id 时全局搜索所有会话（语义+关键词），传入 session_id 时限定会话内搜索。",
-    "en": "Search chat history. Global semantic search across all sessions when no session_id; scoped keyword search within a session when session_id is given."
+    "zh": "搜索对话历史，结果只含每轮摘要（非全文）。不加 session_id 全局搜所有会话：字符二元组模糊关键词匹配（非语义）；加 session_id 限定单会话，子串+关键词匹配更精确。按相关度排序，默认 5 条、最多 20 条。",
+    "en": "Search chat history; returns per-turn summaries only (not full text). Without session_id: searches all sessions via character-bigram keyword matching (NOT semantic); with session_id: scopes to one session with substring+keyword matching (more precise). Sorted by relevance, default 5, max 20."
   },
   "tool.read_file.empty_path": {
     "zh": "错误：file_path 不能为空",
@@ -472,8 +472,8 @@
     "en": " (Linux/macOS: run manually in terminal if sudo required)"
   },
   "tool_desc.delegate": {
-    "zh": "把子任务委托给独立的子 agent 并行执行，只返回压缩结论，不污染主对话。最多同时 3 个、超出拒绝；编排前先 action=status 查可用配额，再派 ≤3 个并行子任务，更多则分批。",
-    "en": "Delegate subtasks to independent sub-agents that run in parallel and return condensed conclusions without polluting the main conversation. At most 3 run concurrently and extra calls are rejected; before organizing, run action=status to check the available quota, then dispatch ≤3 parallel subtasks, batching any more."
+    "zh": "把子任务派给独立子 agent 跑受限工具循环，只返回压缩结论（≤4000 字符），不污染主对话。默认仅只读工具（可用 tools 覆盖）。子 agent 默认 6 轮、180s 超时；同时最多 3 个、超出拒绝。派发前先 action=status 查配额，再按 ≤3 分批派发。",
+    "en": "Delegate a subtask to an independent sub-agent running a limited tool loop; returns a condensed conclusion (≤4000 chars), leaving the main conversation untouched. Default tools are read-only (overridable via tools). Each sub-agent: 6 turns default, 180s timeout; at most 3 run concurrently, excess rejected. Run action=status first, then batch ≤3."
   },
   "tool.delegate.empty_prompt": {
     "zh": "错误：prompt 不能为空",
@@ -510,5 +510,9 @@
   "mcp.tool_error": {
     "zh": "错误：MCP 工具 {tool} 执行失败: {msg}",
     "en": "Error: MCP tool {tool} failed: {msg}"
+  },
+  "tool.write_file.no_mode": {
+    "zh": "错误：必须提供 content（覆写/新建）或 old_string+new_string（编辑）之一；只传 file_path 会写空文件、清空原文件，已拒绝。",
+    "en": "Error: provide either content (overwrite/create) or old_string+new_string (edit); file_path alone would write an empty file and truncate the original — rejected."
   }
 }

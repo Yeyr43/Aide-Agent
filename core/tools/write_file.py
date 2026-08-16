@@ -46,8 +46,12 @@ async def execute(arguments: dict) -> str:
 
     if has_old and has_new:
         return await _edit_mode(file_path, arguments["old_string"], arguments["new_string"])
-    else:
-        return await _write_mode(file_path, arguments.get("content", ""))
+
+    if not has_content:
+        # 只传 file_path 无任何模式：拒绝而非静默写空文件（会清空原文件）
+        return t("tool.write_file.no_mode")
+
+    return await _write_mode(file_path, arguments["content"])
 
 
 # ── 覆写模式 ──────────────────────────────────────────────────────────────
@@ -132,11 +136,11 @@ schema = {
     "properties": {
         "file_path": {
             "type": "string",
-            "description": "要写入/编辑的文件路径（绝对路径或相对于当前工作目录的路径）",
+            "description": "要写入/编辑的文件路径（支持 ~ 展开，自动创建缺失的父目录）",
         },
         "content": {
             "type": "string",
-            "description": "覆写模式：写入的完整文件内容。与 old_string/new_string 互斥。",
+            "description": "覆写/新建模式：写入的完整内容（≤500KB，全量替换旧内容）。与 old_string/new_string 互斥，二选一必填。",
         },
         "old_string": {
             "type": "string",

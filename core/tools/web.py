@@ -275,7 +275,7 @@ schema = {
         },
         "timeout": {
             "type": "integer",
-            "description": "请求超时秒数（默认 15，最大 25）",
+            "description": "请求超时秒数，仅 action=fetch 生效（search 固定 15s）；默认 15，最大 25",
         },
         "max_chars": {
             "type": "integer",

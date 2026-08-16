@@ -150,7 +150,7 @@ schema = {
     "properties": {
         "query": {
             "type": "string",
-            "description": "搜索查询（自然语言或关键词）。例如：'Docker 部署'、'上次讨论的配置方案'",
+            "description": "搜索关键词（字符二元组模糊匹配，非语义理解）。例如：'Docker'、'配置方案'",
         },
         "top_k": {
             "type": "integer",

@@ -67,7 +67,7 @@ schema = {
     "properties": {
         "file_path": {
             "type": "string",
-            "description": "要读取的文件路径（绝对路径或相对于当前工作目录的路径）",
+            "description": "要读取的文本文件路径（支持 ~ 展开；仅文本文件，超 100KB 被截断）",
         },
     },
     "required": ["file_path"],

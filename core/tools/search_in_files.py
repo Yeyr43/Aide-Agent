@@ -296,7 +296,7 @@ schema = {
         },
         "glob": {
             "type": "string",
-            "description": "文件名过滤 glob，如 '*.py'、'*.{ts,tsx}'",
+            "description": "文件名过滤 glob（fnmatch 风格，不支持 {..} 花括号），如 '*.py'、'**/*.ts'",
         },
         "max_results": {
             "type": "integer",

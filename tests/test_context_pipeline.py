@@ -124,8 +124,10 @@ class TestAssembleSoulAndTools:
         )
 
         combined = system_msgs[0]["content"]
-        # Should still have the tools heading
-        assert "read_file" in combined or "工具" in combined
+        # Should still have the tools heading + 全部 8 个内置工具（回退清单与 BUILTIN_TOOLS 对齐）
+        for tool_name in ("read_file", "write_file", "run_shell", "search_in_files",
+                          "search_memory", "web", "search_chat", "delegate"):
+            assert tool_name in combined, f"回退 Tools Prompt 缺少 {tool_name}"
 
 
 class TestAssembleSessionLayers:

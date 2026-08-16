@@ -79,6 +79,7 @@ def build_tools_prompt(tool_descriptions: list[str] | None = None) -> str:
             t("tools.search_memory"),
             t("tools.web"),
             t("tools.search_chat"),
+            t("tools.delegate"),  # 与 BUILTIN_TOOLS 第 8 个工具对齐（曾漏配导致回退路径缺 delegate）
         ])
 
     return f"""{t("tools.heading")}
