@@ -168,10 +168,18 @@ async def _do_fetch(arguments: dict) -> str:
             urllib.request.HTTPSHandler(context=ctx),
         )
         with opener.open(req, timeout=timeout) as resp:
-            # 设置 socket 级别超时（每次 read 都受此约束，防止慢速服务器挂起）
+            # 设置 socket 级别超时（每次 read 都受此约束，防止慢速服务器挂起）。
+            # resp.fp 是 BufferedReader → .raw 是 SocketIO → ._sock 才是真正支持
+            # settimeout 的 SSLSocket；沿链解析，找不到就跳过。
             sock = getattr(resp.fp, 'raw', None) or getattr(resp.fp, '_sock', None)
+            while sock is not None and not hasattr(sock, 'settimeout'):
+                sock = (getattr(sock, '_sock', None)
+                        or getattr(sock, 'raw', None))
             if sock is not None:
-                sock.settimeout(timeout)
+                try:
+                    sock.settimeout(timeout)
+                except OSError:
+                    pass
             chunks: list[bytes] = []
             downloaded = 0
             while True:

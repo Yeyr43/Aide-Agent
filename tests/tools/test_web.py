@@ -125,3 +125,22 @@ class TestExtractCharset:
 
     def test_no_charset(self):
         assert _extract_charset("text/html") == ""
+
+    @pytest.mark.asyncio
+    async def test_fetch_resolves_real_socket_for_timeout(self):
+        """回归：resp.fp→raw(SocketIO)→_sock(SSLSocket) 沿链解析，
+        不能对 SocketIO 调 settimeout（曾 AttributeError 导致 web fetch 全挂）。"""
+        with patch("urllib.request.OpenerDirector.open") as mock_open:
+            mock_resp = MagicMock()
+            mock_resp.headers = {"Content-Type": "text/html; charset=utf-8"}
+            mock_resp.read.side_effect = [b"<p>ok</p>", b""]
+            # 模拟真实结构：raw 是无 settimeout 的 SocketIO-like，_sock 是真正的 socket
+            fake_socketio = MagicMock(spec=[])  # spec=[] → 无任何属性（模拟 SocketIO 缺 settimeout）
+            fake_sslsocket = MagicMock()
+            fake_socketio._sock = fake_sslsocket
+            mock_resp.fp.raw = fake_socketio
+            mock_open.return_value.__enter__.return_value = mock_resp
+
+            result = await execute({"action": "fetch", "url": "http://example.com"})
+            assert "ok" in result
+            fake_sslsocket.settimeout.assert_called()  # 超时设在真正的 socket 上
