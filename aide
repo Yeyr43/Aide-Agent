@@ -14,7 +14,7 @@ fi
 SCRIPT_DIR="$(dirname "$_RESOLVED")"
 PROJECT_ROOT=""
 
-if [[ -f "$SCRIPT_DIR/shell/tray_daemon.py" && -f "$SCRIPT_DIR/pyproject.toml" ]]; then
+if [[ -f "$SCRIPT_DIR/core/tray_daemon.py" && -f "$SCRIPT_DIR/pyproject.toml" ]]; then
     PROJECT_ROOT="$SCRIPT_DIR"
 elif [[ -f "$HOME/.aide/.project_path" ]]; then
     PROJECT_ROOT="$(cat "$HOME/.aide/.project_path")"
@@ -41,9 +41,9 @@ esac
 
 if [ "$_START_DAEMON" = true ]; then
     if ! pgrep -f "tray_daemon.py" > /dev/null 2>&1; then
-        nohup uv run python shell/tray_daemon.py > /dev/null 2>&1 &
+        nohup uv run python core/tray_daemon.py > /dev/null 2>&1 &
     fi
 fi
 
 # 2) Run TUI in current terminal
-exec uv run python shell/main.py
+exec uv run python core/main.py

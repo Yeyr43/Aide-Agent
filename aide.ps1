@@ -6,7 +6,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # Find project root
 $projectRoot = $null
-if ((Test-Path (Join-Path $ScriptDir "shell\tray_daemon.py")) -and
+if ((Test-Path (Join-Path $ScriptDir "core\tray_daemon.py")) -and
     (Test-Path (Join-Path $ScriptDir "pyproject.toml"))) {
     $projectRoot = $ScriptDir
 }
@@ -56,13 +56,13 @@ if (-not $daemonRunning) {
     $pythonHome = Split-Path -Parent (Get-Command python).Source
     $pythonw = Join-Path $pythonHome "pythonw.exe"
     if (-not (Test-Path $pythonw)) { $pythonw = (Get-Command python).Source }
-    Start-Process -WindowStyle Hidden -FilePath $pythonw -ArgumentList "shell/tray_daemon.py" -WorkingDirectory $projectRoot
+    Start-Process -WindowStyle Hidden -FilePath $pythonw -ArgumentList "core/tray_daemon.py" -WorkingDirectory $projectRoot
 }
 
 # 2) Run TUI in current terminal
 Push-Location $projectRoot
 try {
-    & uv run python shell/main.py
+    & uv run python core/main.py
 } finally {
     Pop-Location
 }

@@ -41,7 +41,7 @@ echo "[OK] uv: $(uv --version)"
 # Detect if running from a local Aide source tree
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 _IS_LOCAL_SOURCE=false
-if [ -f "$SCRIPT_DIR/shell/main.py" ] && [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
+if [ -f "$SCRIPT_DIR/core/main.py" ] && [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
     _IS_LOCAL_SOURCE=true
 fi
 

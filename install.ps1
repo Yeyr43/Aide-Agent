@@ -95,7 +95,7 @@ $batContent = @"
 @echo off
 title Aide Agent
 cd /d $InstallDir
-uv run python shell\main.py
+uv run python core\main.py
 "@
 [System.IO.File]::WriteAllText((Join-Path $AideBin "aide.bat"), $batContent, [System.Text.Encoding]::ASCII)
 Write-Host "[OK] Created aide.bat"
