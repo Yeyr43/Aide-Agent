@@ -36,8 +36,9 @@ BULLET_BODY = "#ffffff"       # 正文 · 白
 
 # 呼吸效果：进行中节点的 ● 在原色 ↔ 压暗色之间**渐变**（正弦插值，平滑呼吸）
 BREATH_TICK = 0.08             # 渐变更新间隔（秒）— 越小越平滑
-BREATH_CYCLE = 2.4             # 完整呼吸周期（秒）
-BREATH_DIM_MIN = 0.45          # 最暗亮度因子（与原色相乘）
+BREATH_CYCLE = 2.0             # 完整呼吸周期（秒）
+BREATH_DIM_MIN = 0.40          # 最暗亮度因子（与原色相乘，对比更明显）
+BREATH_START_PHASE = 1.5707963267948966  # π/2：从最亮相位启动，短暂节点也能看到先亮后暗
 
 
 def _scale_color(hex_color: str, factor: float) -> str:
@@ -195,7 +196,8 @@ class TreeNode(Static):
         """进入进行中状态：启动渐变定时器（原色↔压暗色平滑呼吸）。重复调用无操作。"""
         if self._breath_interval is not None:
             return
-        self._breath_phase = 0.0
+        # 从最亮相位启动：避免短暂节点停在"中亮度"看起来像没变色
+        self._breath_phase = BREATH_START_PHASE
         self._breath_interval = self.set_interval(BREATH_TICK, self._tick_breath)
         self._refresh()
 

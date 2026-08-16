@@ -316,8 +316,8 @@ class TestBreathing:
 
     def test_dim_color_darkens(self):
         from ui.textual_app.widgets.tree_nodes import _dim_color
-        assert _dim_color("#5cb85c") == "#295229"
-        assert _dim_color("#ffffff") == "#727272"
+        assert _dim_color("#5cb85c") == "#244924"   # ×0.40（BREATH_DIM_MIN）
+        assert _dim_color("#ffffff") == "#666666"
         assert _dim_color("not-a-color") == "not-a-color"  # 解析失败原样返回
 
     def test_bright_phase_uses_original_color(self):
@@ -344,11 +344,18 @@ class TestBreathing:
         from ui.textual_app.widgets.tree_nodes import _scale_color, BULLET_TOOL
         node = ToolNode("read_file", {"path": "x"})
         node._breath_interval = object()
-        node._breath_phase = 0.0  # sin=0 → 亮度因子 0.725
+        node._breath_phase = 0.0  # sin=0 → 亮度因子 0.70
         mid = node._active_bullet_color()
         assert mid != BULLET_TOOL
-        assert mid != _scale_color(BULLET_TOOL, 0.45)
-        assert mid == _scale_color(BULLET_TOOL, 0.725)
+        assert mid == _scale_color(BULLET_TOOL, 0.70)
+
+    def test_start_breathing_starts_bright(self):
+        """start 相位 = π/2 → 起始亮度 1.0（短暂节点也能看到先亮后暗）。"""
+        node = ToolNode("read_file", {"path": "x"})
+        node._breath_interval = object()  # 模拟呼吸中
+        node._breath_phase = 1.5707963267948966  # BREATH_START_PHASE
+        from ui.textual_app.widgets.tree_nodes import BULLET_TOOL
+        assert node._active_bullet_color() == BULLET_TOOL
 
     def test_not_breathing_uses_original(self):
         from ui.textual_app.widgets.tree_nodes import BULLET_TOOL
