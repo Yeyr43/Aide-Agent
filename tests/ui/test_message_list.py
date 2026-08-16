@@ -582,13 +582,13 @@ async def test_tool_node_breathes_while_running():
         ml.add_tool_start("read_file", {"path": "x"})
         node = ml._tool_fifo["read_file"][0]
         assert node._breath_interval is not None  # 进行中 → 呼吸定时器在跑
-        node._tick_breath()                       # 模拟一次 tick：亮→暗
-        assert node._breath_on is False
-        node._tick_breath()                       # 暗→亮
-        assert node._breath_on is True
+        node._tick_breath()                       # 模拟一次 tick：相位前进
+        assert node._breath_phase > 0
+        node._tick_breath()                       # 再 tick：相位继续前进
+        assert node._breath_phase > 0
         ml.add_tool_done("read_file", "content")
         assert node._breath_interval is None      # 完成 → 停呼吸
-        assert node._breath_on is False
+        assert node._breath_phase == 0.0
 
 
 @pytest.mark.asyncio

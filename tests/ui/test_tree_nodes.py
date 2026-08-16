@@ -321,18 +321,34 @@ class TestBreathing:
         assert _dim_color("not-a-color") == "not-a-color"  # 解析失败原样返回
 
     def test_bright_phase_uses_original_color(self):
+        """正弦峰值（相位 π/2）→ 亮度因子 1.0 → 原色。"""
+        import math
         node = ToolNode("read_file", {"path": "x"})
         node._breath_interval = object()  # 模拟呼吸中（不启动真实定时器）
-        node._breath_on = True            # 亮相位
+        node._breath_phase = math.pi / 2
         from ui.textual_app.widgets.tree_nodes import BULLET_TOOL
         assert node._active_bullet_color() == BULLET_TOOL
 
-    def test_dark_phase_dims_color(self):
+    def test_dark_phase_dims_to_min(self):
+        """正弦谷底（相位 3π/2）→ 亮度因子 0.45 → 最暗色。"""
+        import math
         from ui.textual_app.widgets.tree_nodes import _dim_color, BULLET_TOOL
         node = ToolNode("read_file", {"path": "x"})
         node._breath_interval = object()
-        node._breath_on = False           # 暗相位
+        node._breath_phase = 3 * math.pi / 2
         assert node._active_bullet_color() == _dim_color(BULLET_TOOL)
+
+    def test_gradient_interpolates_between_bright_and_dark(self):
+        """渐变：相位 0 应落在原色与最暗色之间（平滑插值而非硬开关）。"""
+        import math
+        from ui.textual_app.widgets.tree_nodes import _scale_color, BULLET_TOOL
+        node = ToolNode("read_file", {"path": "x"})
+        node._breath_interval = object()
+        node._breath_phase = 0.0  # sin=0 → 亮度因子 0.725
+        mid = node._active_bullet_color()
+        assert mid != BULLET_TOOL
+        assert mid != _scale_color(BULLET_TOOL, 0.45)
+        assert mid == _scale_color(BULLET_TOOL, 0.725)
 
     def test_not_breathing_uses_original(self):
         from ui.textual_app.widgets.tree_nodes import BULLET_TOOL

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import time
 
@@ -33,18 +34,26 @@ BULLET_ERROR = "#cc3333"      # 警告/报错 · 红
 BULLET_SYSTEM = "#d0b000"     # 系统信息 · 黄
 BULLET_BODY = "#ffffff"       # 正文 · 白
 
-# 呼吸效果：进行中节点的 ● 在原色 ↔ 压暗色之间缓慢切换（"缓慢开关"）
-BREATH_PERIOD = 1.1            # 半周期（秒）：亮 1.1s → 暗 1.1s
+# 呼吸效果：进行中节点的 ● 在原色 ↔ 压暗色之间**渐变**（正弦插值，平滑呼吸）
+BREATH_TICK = 0.08             # 渐变更新间隔（秒）— 越小越平滑
+BREATH_CYCLE = 2.4             # 完整呼吸周期（秒）
+BREATH_DIM_MIN = 0.45          # 最暗亮度因子（与原色相乘）
 
 
-def _dim_color(hex_color: str) -> str:
-    """把 #RRGGBB 压暗到约 45% 亮度（呼吸的"暗"相位）。解析失败原样返回。"""
+def _scale_color(hex_color: str, factor: float) -> str:
+    """把 #RRGGBB 的 RGB 各通道乘 factor（0..1）得到新色。解析失败原样返回。"""
     try:
         h = hex_color.lstrip("#")
         r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
-        return f"#{int(r * 0.45):02x}{int(g * 0.45):02x}{int(b * 0.45):02x}"
+        f = max(0.0, min(1.0, factor))
+        return f"#{int(r * f):02x}{int(g * f):02x}{int(b * f):02x}"
     except (ValueError, AttributeError):
         return hex_color
+
+
+def _dim_color(hex_color: str) -> str:
+    """把 #RRGGBB 压暗到最暗呼吸相位（兼容旧测试）。"""
+    return _scale_color(hex_color, BREATH_DIM_MIN)
 
 
 def should_separate(prev_kind: str | None, kind: str) -> bool:
@@ -70,14 +79,19 @@ def _format_args(arguments: dict) -> str:
     return s[:60] + ("..." if len(s) > 60 else "")
 
 
-def _guide_indented(text: str, indent: str = "  ", style: str = "") -> Text:
-    """多行内容渲染：每行加 │ 引导前缀，缩进到文本列（标签首列 +4）。"""
+def _guide_indented(text: str, indent: str = "  ", style: str = "", guide: bool = True) -> Text:
+    """多行内容渲染：每行缩进到文本列（标签首列 +4）。
+
+    guide=True 时每行加 │ 引导前缀（树形续行）；guide=False 时仅缩进
+    （与正文续行一致的纯缩进，避免运行中节点下方不断"长出"连接符）。
+    """
     t = Text()
     lines = text.split("\n")
     for i, line in enumerate(lines):
         if i:
             t.append("\n")
-        t.append("│ ", style=CONNECTOR_STYLE)
+        if guide:
+            t.append("│ ", style=CONNECTOR_STYLE)
         t.append(indent)
         t.append(line, style=style)
     return t
@@ -146,7 +160,7 @@ class TreeNode(Static):
         self._plain = plain_text
         self._last_click = 0.0
         self._connector = "│"  # 树连接符，由 TurnTree 设为 ├ / └
-        self._breath_on = False        # 呼吸"亮"相位（True=原色，False=压暗）
+        self._breath_phase = 0.0       # 呼吸正弦相位（0..2π，进行中才递增）
         self._breath_interval = None   # set_interval 定时器（进行中才存在）
 
     def set_connector(self, char: str) -> None:
@@ -163,25 +177,26 @@ class TreeNode(Static):
         t.append(label, style="")  # 文本列，一律正常色
         return t
 
-    # ── 呼吸效果（进行中节点 ● 缓慢开关）───────────────────────
+    # ── 呼吸效果（进行中节点 ● 渐变呼吸）───────────────────────
 
     def _bullet_color(self) -> str:
         """有效子弹色（子类可覆盖，如 ToolNode 错误时返回红）。"""
         return self._bullet_style
 
     def _active_bullet_color(self) -> str:
-        """渲染用子弹色：呼吸中且处于"暗"相位时压暗，否则有效色。"""
+        """渲染用子弹色：呼吸中按正弦相位在原色 ↔ 最暗色之间渐变，否则原色。"""
         color = self._bullet_color()
-        if self._breath_interval is not None and not self._breath_on:
-            return _dim_color(color)
-        return color
+        if self._breath_interval is None:
+            return color
+        s = (1 + math.sin(self._breath_phase)) / 2   # 0..1 平滑正弦
+        return _scale_color(color, BREATH_DIM_MIN + (1 - BREATH_DIM_MIN) * s)
 
     def start_breathing(self) -> None:
-        """进入进行中状态：启动慢速定时器交替亮/暗。重复调用无操作。"""
+        """进入进行中状态：启动渐变定时器（原色↔压暗色平滑呼吸）。重复调用无操作。"""
         if self._breath_interval is not None:
             return
-        self._breath_on = True
-        self._breath_interval = self.set_interval(BREATH_PERIOD, self._tick_breath)
+        self._breath_phase = 0.0
+        self._breath_interval = self.set_interval(BREATH_TICK, self._tick_breath)
         self._refresh()
 
     def stop_breathing(self) -> None:
@@ -189,13 +204,12 @@ class TreeNode(Static):
         if self._breath_interval is not None:
             self._breath_interval.stop()
             self._breath_interval = None
-        if not self._breath_on:
-            return
-        self._breath_on = False
-        self._refresh()
+            self._breath_phase = 0.0
+            self._refresh()
 
     def _tick_breath(self) -> None:
-        self._breath_on = not self._breath_on
+        self._breath_phase = (self._breath_phase
+                              + 2 * math.pi * BREATH_TICK / BREATH_CYCLE) % (2 * math.pi)
         self._refresh()
 
     def on_unmount(self) -> None:
@@ -272,7 +286,10 @@ class ThinkNode(TreeNode):
             t.append_text(self._label_line("think"))
             if self._thinking:
                 t.append("\n")
-                t.append_text(_guide_indented(self._thinking, style="italic #888888"))
+                # guide=False：思考续行仅缩进不显示 │ —— 运行中不再在下方"长出"连接符，
+                # 与正文续行的纯缩进对齐（col 4）
+                t.append_text(_guide_indented(
+                    self._thinking, indent="    ", style="italic #888888", guide=False))
             return t
         return self._label_line("think")
 
@@ -367,6 +384,8 @@ class BodyNode(TreeNode):
         self._finished = False
         self._stream_throttle = stream_throttle
         self._last_stream_render = 0.0  # 上次 Markdown 重解析时间（仅换行后更新）
+        self._md_cache_key: str | None = None   # 续行 markdown 缓存（呼吸每 80ms 刷新不重解析）
+        self._md_cache = None
 
     def append_chunk(self, chunk: str) -> None:
         self._buffer += chunk
@@ -413,12 +432,20 @@ class BodyNode(TreeNode):
         node_line = self._node_line_with_inline(first)
         if not sep:
             return node_line
-        safe_rest = rest.replace("<", "&lt;").replace(">", "&gt;")
-        try:
-            md = RichMarkdown(safe_rest, code_theme=self._code_theme)
-        except Exception:
-            md = Text(rest)
+        md = self._markdown_for(rest)
         return Group(node_line, Padding(md, (0, 0, 0, 4)))
+
+    def _markdown_for(self, rest: str):
+        """续行 RichMarkdown：按 rest 内容缓存，流式变化才重解析。
+        呼吸渐变每 80ms 刷新时直接复用缓存，避免高频重解析卡顿。"""
+        safe_rest = rest.replace("<", "&lt;").replace(">", "&gt;")
+        if self._md_cache_key != safe_rest:
+            self._md_cache_key = safe_rest
+            try:
+                self._md_cache = RichMarkdown(safe_rest, code_theme=self._code_theme)
+            except Exception:
+                self._md_cache = Text(safe_rest)
+        return self._md_cache
 
     def _node_line_with_inline(self, first: str) -> Text:
         """节点行：│ ● + 首行（行内 Markdown 样式）。
