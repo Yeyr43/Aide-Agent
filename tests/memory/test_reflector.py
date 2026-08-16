@@ -9,6 +9,7 @@ from core.memory.version import (
     _backup_prompt, _append_version_log, rollback_prompt,
     BACKUPS_DIR, AGENT_ROOT,
 )
+from core.memory.reflector import ReflectEngine
 
 
 class TestBackupPrompt:
@@ -111,3 +112,86 @@ class TestRollbackPrompt:
             success, msg = rollback_prompt("preferences", 0)
             assert not success
             assert "丢失" in msg or "lost" in msg.lower()
+
+
+class TestReflectDiff:
+    """回归测试：reflect() 的 key 归一化 + prompt 示例头格式。
+
+    audit 发现：_parse_reflection_output 返回无 .md 后缀的 key，而
+    _compute_diff / changes 用 .md key，导致 changes_detected 恒 True、
+    diff 算成"整删"；且 prompt 示例用 "### ## Preferences" 头，
+    split_sections 只认 "## " 前缀，LLM 照示例输出会静默丢失记忆更新。
+    """
+
+    @staticmethod
+    def _setup(agent_root: Path, session_dir: Path) -> None:
+        agent_root.mkdir()
+        (agent_root / "preferences.md").write_text("# 偏好\n\n- 用户喜欢简洁\n", encoding="utf-8")
+        (agent_root / "workflows.md").write_text("# 工作流\n\n- 用中文回复\n", encoding="utf-8")
+        (agent_root / "long_term_memory.md").write_text("# 长记忆\n", encoding="utf-8")
+        (session_dir / "messages").mkdir(parents=True)
+        (session_dir / "messages" / "turn_001.json").write_text(json.dumps({
+            "turn": 1,
+            "messages": [
+                {"role": "user", "content": "你好"},
+                {"role": "assistant", "content": "你好，有什么可以帮你？"},
+            ],
+        }), encoding="utf-8")
+        (session_dir / "meta.json").write_text(json.dumps({"last_reflected_turn": 0}), encoding="utf-8")
+
+    def test_no_change_returns_false_changes_and_empty_diff(self, tmp_path, monkeypatch):
+        agent_root = tmp_path / "agent"
+        session_dir = tmp_path / "sess"
+        self._setup(agent_root, session_dir)
+        engine = ReflectEngine(provider=object(), agent_root=agent_root,
+                               sessions_root=tmp_path)
+
+        no_change = (
+            "## Preferences\n(无变更)\n"
+            "## Workflows\n(无变更)\n"
+            "## Long-Term Memory\n(无变更)\n"
+        )
+        async def _fake(*a, **k): return no_change
+        monkeypatch.setattr(engine, "_call_llm_for_reflection", _fake)
+        result = self._run(engine, session_dir)
+        assert result is not None
+        assert result.changes_detected is False, "无变更时不应报告有变更"
+        assert result.diff == ""
+
+    def test_change_parsed_from_section_format(self, tmp_path, monkeypatch):
+        """LLM 按示例格式输出新增条目 → 能被解析进 proposed_files（防静默丢记忆）。"""
+        agent_root = tmp_path / "agent"
+        session_dir = tmp_path / "sess"
+        self._setup(agent_root, session_dir)
+        engine = ReflectEngine(provider=object(), agent_root=agent_root,
+                               sessions_root=tmp_path)
+
+        llm_out = (
+            "## Preferences\n"
+            "---\nid: pref_001\ncreated: 2026-08-16\n"
+            "---\n- 用户喜欢中文\n"
+            "## Workflows\n(无变更)\n"
+            "## Long-Term Memory\n(无变更)\n"
+        )
+        async def _fake2(*a, **k): return llm_out
+        monkeypatch.setattr(engine, "_call_llm_for_reflection", _fake2)
+        result = self._run(engine, session_dir)
+        assert result is not None
+        assert result.changes_detected is True
+        assert "用户喜欢中文" in result.proposed_files["preferences.md"]
+        assert "pref_001" in result.proposed_files["preferences.md"]
+        assert result.diff != ""
+
+    def test_system_prompt_uses_parseable_section_headers(self):
+        """prompt 示例头必须是 "## Preferences"（split_sections 可解析），不能是 "### ##"。"""
+        from core.memory.reflector import ReflectEngine
+        engine = ReflectEngine(provider=object())
+        prompt = engine._build_system_prompt()
+        assert "## Preferences" in prompt
+        assert "### ##" not in prompt
+        assert "## Workflows" in prompt
+
+    @staticmethod
+    def _run(engine, session_dir):
+        import asyncio
+        return asyncio.run(engine.reflect(session_dir, current_turn=1))

@@ -72,7 +72,10 @@ class ContextIngester:
         - 会话 ID（如 "20260701_120000"）→ 从 _sessions_root 解析路径
         - 完整路径（如 Path("/tmp/sessions/test")）→ 直接使用
 
-        此后 ingest() 写入该会话目录。
+        此后 ingest() 写入该会话目录。session_id 键统一归一化为**目录名**
+        （完整路径取 .name），与 SearchIndex rebuild/remove 使用的
+        session_dir.name 一致——否则 add 用完整路径、rebuild/删除用目录名，
+        删除会话后会残留索引条目，且 recall 时间衰减解析前 15 字符出错。
 
         Args:
             session_id: 会话 ID 或完整路径（str 或 Path）
@@ -81,18 +84,20 @@ class ContextIngester:
             session 目录路径
         """
         sid = str(session_id)
-        if self._session_dir is not None and self._session_id == sid:
+        is_path = "/" in sid or "\\" in sid
+        candidate = Path(sid) if is_path else self._sessions_root / sid
+        key = candidate.name
+
+        if self._session_dir is not None and self._session_id == key:
             return self._session_dir
 
-        self._session_id = sid
-        # 若传入的是完整路径则直接使用，否则从 _sessions_root 拼接
-        candidate = Path(sid) if "/" in sid or "\\" in sid else self._sessions_root / sid
+        self._session_id = key
         self._session_dir = candidate
 
         # messages/ 子目录若不存在则创建（兼容从旧版本恢复的会话）
         (self._session_dir / "messages").mkdir(parents=True, exist_ok=True)
 
-        logger.debug("ContextIngester bound to session %s", sid)
+        logger.debug("ContextIngester bound to session %s", key)
         return self._session_dir
 
     @property

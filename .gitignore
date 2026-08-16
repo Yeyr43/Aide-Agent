@@ -16,6 +16,11 @@ models/all-MiniLM-L6-v2/
 .DS_Store
 Thumbs.db
 
+# 覆盖率数据
+.coverage
+htmlcov/
+*.coverage
+
 # 开发工具配置
 .claude/
 .superpowers/

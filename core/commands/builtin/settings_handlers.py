@@ -122,6 +122,28 @@ async def handle_api(app: CommandContext, args: str) -> str:
             Config.save_settings(settings)
         return t("cmd.api.deleted", name=name)
 
+    # ── add <name> <provider> <model> <api_key> [base_url] ──
+    if sub == "add":
+        fields = args.strip().split()
+        if len(fields) < 5:
+            return t("cmd.api.add_usage")
+        name, provider, model, api_key = fields[1], fields[2], fields[3], fields[4]
+        base_url = fields[5] if len(fields) > 5 else ""
+        if Config.api_config_exists(name):
+            return t("cmd.api.exists", name=name)
+        cfg = {
+            "provider": provider,
+            "model": model,
+            "api_key": api_key,
+            "base_url": base_url,
+            "supports_vision": False,
+            "thinking": False,
+        }
+        Config.save_api_config(name, cfg)
+        if not Config.get_active_api_name():
+            Config.set_active_api_name(name)
+        return t("ui.api.saved", name=name, provider=provider, model=model)
+
     # ── edit <name> ──
     if sub == "edit":
         name = _resolve_edit_name(parts[1] if len(parts) > 1 else "")

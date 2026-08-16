@@ -93,13 +93,13 @@ async def handle_plugin(app, args: str) -> str:
     elif sub == "enable":
         if not rest:
             return "/plugin enable <id> — 启用已禁用的插件"
-        kernel._plugins.enable_plugin(rest)
+        await kernel._plugins.enable_plugin(rest)
         return f"✅ {rest} 已启用"
 
     elif sub == "disable":
         if not rest:
-            return "/plugin disable <id> — 禁用插件（不卸载）"
-        kernel._plugins.disable_plugin(rest)
+            return "/plugin disable <id> — 禁用插件（卸载其工具/命令）"
+        await kernel._plugins.disable_plugin(rest)
         return f"🚫 {rest} 已禁用"
 
     else:
@@ -122,10 +122,10 @@ async def handle_plugins_status(app, args: str) -> str:
     state_mgr = kernel._plugins.state_manager
 
     if sub == "enable" and rest:
-        kernel._plugins.enable_plugin(rest)
+        await kernel._plugins.enable_plugin(rest)
         return f"✅ {rest} 已启用"
     elif sub == "disable" and rest:
-        kernel._plugins.disable_plugin(rest)
+        await kernel._plugins.disable_plugin(rest)
         return f"🚫 {rest} 已禁用"
 
     # ── 加载所有已发现插件（未加载的） ──
@@ -175,8 +175,6 @@ async def handle_plugins_status(app, args: str) -> str:
         elif e.status.value == "disabled":
             lines.append(f"  - 状态: 已禁用（`/plugins enable {e.plugin_id}` 启用）")
 
-        if e.usage_count > 0:
-            lines.append(f"  - 使用次数: {e.usage_count}")
         lines.append("")
 
     # 用法提示

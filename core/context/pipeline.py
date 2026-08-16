@@ -206,7 +206,7 @@ class ContextPipeline:
 
         # Step 1: 收集所有候选片段
         fragments = await self._collect_fragments(
-            session_dir, older, recent, context_providers, tool_descriptions,
+            session_dir, user_msg, older, recent, context_providers, tool_descriptions,
         )
 
         # Step 2: 评分（内容相关性为主序）
@@ -233,6 +233,7 @@ class ContextPipeline:
     async def _collect_fragments(
         self,
         session_dir: Path | None,
+        user_msg: str,
         older: list[dict],
         recent: list[dict],
         context_providers: list | None,
@@ -255,10 +256,12 @@ class ContextPipeline:
         ))
 
         # 技能上下文（pinned per provider — 技能主动声明了相关性）
+        # 必须传真实 user_msg：provide() 内部按技能名/别名做相关度判定，
+        # 传空串会被 `if not user_msg: return ""` 守卫挡住，技能上下文永远注入不了。
         if context_providers:
             for provider in context_providers:
                 try:
-                    injection = await provider.provide("", session_dir)
+                    injection = await provider.provide(user_msg, session_dir)
                     if injection:
                         fragments.append(ContextFragment(
                             type="skill", content=injection,

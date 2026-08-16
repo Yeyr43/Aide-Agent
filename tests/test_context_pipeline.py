@@ -211,6 +211,23 @@ class TestAssembleContextProviders:
         assert "Skill content here" in combined
 
     @pytest.mark.asyncio
+    async def test_context_provider_receives_real_user_msg(self, tmp_path):
+        """回归：provide() 必须收到真实 user_msg（曾传空串导致技能上下文永不注入）。"""
+        agent_root = _make_agent_dir(tmp_path)
+        pipeline = ContextPipeline(agent_root=agent_root)
+
+        mock_provider = MagicMock()
+        mock_provider.provide = AsyncMock(return_value="## Skill: Test\ncontent")
+
+        await pipeline.assemble(
+            session_dir=None, user_msg="请使用 code-review 技能",
+            context_providers=[mock_provider],
+        )
+        call_args = mock_provider.provide.await_args
+        assert call_args is not None
+        assert call_args.args[0] == "请使用 code-review 技能"
+
+    @pytest.mark.asyncio
     async def test_context_provider_no_relevance_returns_empty(self, tmp_path):
         agent_root = _make_agent_dir(tmp_path)
         pipeline = ContextPipeline(agent_root=agent_root)

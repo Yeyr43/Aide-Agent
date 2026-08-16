@@ -306,8 +306,8 @@ def _tfidf_rank(query: str, candidates: list[dict], vocab: frozenset[str] | None
     df: dict[str, int] = {}
     for snippet in all_snippets:
         tokens, _ = _tokenize(snippet, vocab=vocab)
-        for t in tokens:
-            df[t] = df.get(t, 0) + 1
+        for tok in tokens:
+            df[tok] = df.get(tok, 0) + 1
 
     # TF-IDF 重新评分 + 与原始关键词分数混合
     for c in candidates:

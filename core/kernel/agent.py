@@ -37,7 +37,6 @@ class AgentKernel:
         self.config = ctx.config
         self.provider = ctx.provider
         self.tool_registry = ctx.tooling.tool_registry
-        self.command_registry = ctx.tooling.command_registry
         self._pipeline = ctx.session.context_pipeline
         self._ingester = ctx.session.ingester
         self._sessions = ctx.session.session_manager
@@ -45,7 +44,6 @@ class AgentKernel:
         self._feedback = ctx.memory.feedback_verifier
         self._auto_memory = ctx.memory.auto_memory
         self._plugins = ctx.tooling.plugin_host
-        self._slots = ctx.tooling.slot_registry
         self._fc_loop = FunctionCallingLoop(
             ctx.provider, ctx.tooling.tool_registry,
             max_turns=ctx.config.app.max_turns,

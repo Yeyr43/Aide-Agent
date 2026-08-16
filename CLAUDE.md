@@ -16,7 +16,7 @@ Aide Agent — 本地个人智能管家。核心不是"能做多少事"而是"�
 # 运行应用
 uv run python shell/main.py
 
-# 运行全部测试（1144 个）
+# 运行全部测试（1175 个）
 uv run pytest tests/ -q
 
 # 运行单个测试文件
@@ -81,6 +81,7 @@ core/
 ├── storage.py           # JSON 读写 + Write-Actor + JSONL 工具函数
 ├── resources.py         # is_bundled() / get_resource_path() — dev/bundle 双模式路径解析
 ├── errors.py            # 统一错误类型（AideError / ProviderError / ToolError / ConfigError / SessionError）
+├── launcher.py          # 应用启动工具 — 单实例锁、控制台装饰、托盘守护进程拉起（从 shell/main.py 提取）
 ├── kernel/              # Agent 内核（零 UI 依赖）
 │   ├── bootstrap.py     # AppBootstrap — 5-phase 组合根（_init_provider / _init_tooling / _init_storage_and_context / _init_plugins / _init_kernel）
 │   ├── context.py       # KernelContext — 依赖聚合（Memory/Tooling/Session 三个子 context）
@@ -91,7 +92,7 @@ core/
 │   ├── safety.py        # check_tool_safety() — 高危命令拦截（从 fc_loop 提取）
 │   ├── xml_tool_parser.py  # extract_xml_tool_calls() — XML fallback 解析（从 fc_loop 提取）
 │   └── protocols.py     # ExecutorUI Protocol + NullUI + ChatResult + TokenUsage
-├── llm_gateway/         # 4 个 LLM Provider
+├── llm_gateway/         # LLM 适配层：1 兼容基类 + 3 具体 Provider（OpenAI/Ollama/Anthropic）+ 图片/内容/tool_call 构建
 │   ├── provider.py      # AbstractProvider Protocol + StreamEvent 类型（TextDelta/ThinkingDelta/StreamEnd）
 │   ├── openai_compatible_provider.py  # OpenAI 兼容协议基类
 │   ├── anthropic_provider.py   # Anthropic Messages API（原生协议适配）
@@ -354,13 +355,13 @@ FeedbackStore 优先用 `entry_id`（来自 frontmatter）做 key，fallback 到
 **FormatDetector 优先级**：`.claude-plugin/plugin.json` > `SKILL.md`（含 name: frontmatter）> `aide.plugin.json`
 
 **三种加载路径**（`host.py:load()`）：
-1. **外部技能**（Claude Code / OpenClaw）→ `_load_external_skill()` — 适配器提取 skills → 注册 `//plugin:skill` 命令 + `skill_{plugin}_{skill}` 工具 + ContextProvider
+1. **外部技能**（Claude Code / OpenClaw）→ `_load_external_skill()` — 适配器提取 skills → 注册 `//plugin:skill` 命令 + `skill_{plugin}_{skill}` 工具 + ExternalSkillProvider
 2. **Aide native** → `_load_python_plugin()` — exec_module + register(api) + 注册 tools/commands/slots
-3. **Fallback**（旧格式、根目录 SKILL.md）→ `_load_skill()` 或 Python 路径
+3. **Fallback**（旧格式、根目录 SKILL.md）→ Python 路径（`_load_python_plugin()`）
 
 **安全预检**（`security.py`）：`load()` 时强制运行 `PluginPreflightCheck`（5 项检查：install 脚本白名单、HTTPS-only URL、POSIX 世界可写文件、JVM/glibc/.NET 注入检测、敏感路径访问）。blocked=True 拒绝加载。
 
-**状态管理**（`state.py`）：READY / NEEDS_SETUP / DISABLED 三态，持久化到 `~/.aide/config/plugin_states.json`。DISABLED 状态在 reload 时保留不覆盖。`/plugins` 命令显示状态面板。
+**状态管理**（`state.py`）：READY / NEEDS_SETUP / DISABLED 三态，持久化到 `~/.aide/config/plugin_states.json`。DISABLED 插件**加载前即拦截**（工具/命令不注册），`/plugin disable` 会真正卸载；`/plugin enable` 重新加载。`/plugins` 命令显示状态面板。
 
 **热重载**（`watcher.py`）：watchfiles 优先 + 2s polling fallback，500ms 防抖。按变更文件类型精确重载。
 
@@ -441,7 +442,7 @@ Python 插件可注册：工具、命令、生命周期钩子（`register_hook()
 | **P8** | 子 agent delegate 工具 / 声明式工具清单（definition.py）/ 编排判据（strategy_6 + subagent_system 完整性） |
 | **P8+ 优化批次** | 工具并发分级（只读并行/写串行/abort 兄弟）、记忆注入边界+新鲜度、自动记忆提取（/mem-auto）、上下文爆满兜底（trim_conversation_to_window） |
 
-1144 测试全部通过。
+1175 测试全部通过。
 
 ## Prompt 体系
 

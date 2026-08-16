@@ -15,7 +15,6 @@ import time
 
 from rich.console import Group
 from rich.markdown import Markdown as RichMarkdown
-from rich.markup import escape
 from rich.padding import Padding
 from rich.text import Text
 from textual.containers import Vertical

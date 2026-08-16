@@ -42,101 +42,13 @@ class PluginInfo:
         return self.manifest.name or self.manifest.id
 
 
-# ── 技能 ContextProvider ─────────────────────────────────────────────
-
-
-class SkillProvider:
-    """ContextProvider for skill-type plugins (SKILL.md format).
-
-    读取技能的所有 .md 文件，在用户消息与技能描述具有相关性时
-    注入到 system prompt 中。
-    """
-
-    def __init__(self, manifest: PluginManifest, skill_dir: Path) -> None:
-        self._manifest = manifest
-        self._content: dict[str, str] = {}
-        self._load_content(skill_dir)
-
-    def _load_content(self, skill_dir: Path) -> None:
-        """加载技能目录下所有 .md / .txt 文件。"""
-        for md_file in sorted(skill_dir.glob("*.md")):
-            try:
-                self._content[md_file.name] = md_file.read_text(encoding="utf-8")
-            except OSError:
-                pass
-        for txt_file in sorted(skill_dir.glob("*.txt")):
-            try:
-                self._content[txt_file.name] = txt_file.read_text(encoding="utf-8")
-            except OSError:
-                pass
-
-    async def provide(self, user_msg: str, session_dir) -> str:
-        """返回技能内容（在有基本相关性时）。
-
-        相关性判断：关键词匹配（技能名称/别名出现在消息中）
-        或 bigram Jaccard 相似度 >= 阈值。
-        """
-        if not user_msg or not self._content:
-            return ""
-
-        # ── 相关性检查 ──
-        if not self._is_relevant(user_msg):
-            return ""
-
-        # ── 组装注入内容 ──
-        parts: list[str] = []
-        # 注入 SKILL.md 主体内容（去除 frontmatter，统一使用 entries 解析器）
-        skill_md = self._content.get("SKILL.md", "")
-        if skill_md:
-            from core.memory.entries import _parse_simple_frontmatter
-            _, body = _parse_simple_frontmatter(skill_md)
-            parts.append(f"## 技能: {self._manifest.name}\n{body.strip()}")
-
-        # 附属 .md 文件
-        for fname, text in self._content.items():
-            if fname == "SKILL.md":
-                continue
-            parts.append(f"\n### {fname}\n{text.strip()}")
-
-        return "\n".join(parts)
-
-    def _is_relevant(self, user_msg: str) -> bool:
-        """检查用户消息是否与技能相关（关键词匹配）。
-
-        匹配规则：
-        1. 技能名称/别名出现在消息中（子串匹配，大小写不敏感）
-        2. 文件扩展名 + 中英文常见别名
-        """
-        msg_lower = user_msg.lower()
-        name = self._manifest.name.lower()
-
-        # 技能名 + 变体 + 中英文别名
-        variants: set[str] = {name, name.replace("-", ""), name.replace("-", " ")}
-
-        # 文件扩展名 + 常见中英文别名
-        alias_map: dict[str, list[str]] = {
-            "pptx": ["ppt", "幻灯片", "演示文稿", "演示", "slide", "presentation", "deck", "slides"],
-            "docx": ["doc", "文档", "word", "document", "文书", "报告"],
-            "xlsx": ["xls", "表格", "电子表格", "excel", "spreadsheet", "工作表"],
-            "pdf":  ["pdf", "文档"],
-        }
-        if name in alias_map:
-            variants.update(alias_map[name])
-
-        for variant in variants:
-            if variant in msg_lower:
-                return True
-
-        return False
-
-
 # ── P7: 外部技能 ContextProvider ────────────────────────────────────────
 
 
 class ExternalSkillProvider:
     """ContextProvider for external-format skills (Claude Code / OpenClaw).
 
-    与内置 SkillProvider 类似，但使用适配器提取的内容。
+    通过适配器提取技能内容，按技能名与用户消息的相关性注入 system prompt。
     """
 
     def __init__(self, name: str, description: str,
@@ -182,10 +94,12 @@ class PluginHost:
         self._command_registry = command_registry
         self._slot_registry = slot_registry or SlotRegistry()
         self._plugins: dict[str, PluginInfo] = {}
-        self._skill_providers: dict[str, SkillProvider] = {}
+        self._skill_providers: dict[str, ExternalSkillProvider] = {}
         self._format_detector = PluginFormatDetector()
         self._all_hooks: list[ExtractedHook] = []  # P7: 所有插件的 hooks 合集
-        self._state_mgr = PluginStateManager()      # P7: 插件状态管理器
+        # 显式传 config root：不传会回退到真实 ~/.aide/config/plugin_states.json，
+        # 测试（tmp_path 隔离的 Config）会污染真实用户配置，跨进程持久
+        self._state_mgr = PluginStateManager(config.aide_root / "config")  # P7: 插件状态管理器
 
     # ── 发现 ──
 
@@ -315,9 +229,6 @@ class PluginHost:
             logger.warning(f"插件 {plugin_id} 无有效 manifest")
             return None
 
-        # ── 技能类型：非 Python 入口，直接创建 SkillProvider ──
-        if manifest.kind == "skill":
-            return await self._load_skill(plugin_id, plugin_dir, manifest)
 
         # ── Python 插件类型：exec_module + register(api) ──
         return await self._load_python_plugin(plugin_id, plugin_dir, manifest)
@@ -338,6 +249,12 @@ class PluginHost:
                     return None
             except OSError:
                 pass
+
+        # DISABLED 插件不加载：必须在 exec_module / 注册工具命令之前拦截，
+        # 否则"已禁用"的插件仍会被注册、可被调用
+        if self._state_mgr.get(plugin_id).status == PluginStatus.DISABLED:
+            logger.info(f"插件 {plugin_id} 已禁用，跳过加载")
+            return None
 
         # 导入模块
         try:
@@ -395,94 +312,12 @@ class PluginHost:
 
         info = PluginInfo(manifest=manifest, loaded=True, api=api, module=module)
         self._plugins[plugin_id] = info
-        # P7: 自动验证依赖（保留已有 DISABLED 状态）
-        existing = self._state_mgr.get(plugin_id)
-        if existing.status == PluginStatus.DISABLED:
-            logger.info(f"插件 {plugin_id} 已禁用，跳过状态更新")
-        elif api._requirements:
+        # P7: 自动验证依赖（DISABLED 已在加载前拦截，走到这里不可能是 DISABLED）
+        if api._requirements:
             self._state_mgr.verify_requirements(plugin_id, api._requirements)
         else:
             self._state_mgr.set_status(plugin_id, PluginStatus.READY)
         logger.info(f"插件已加载: {plugin_id}")
-        return info
-
-    async def _load_skill(self, plugin_id: str, plugin_dir: Path,
-                          manifest: PluginManifest) -> PluginInfo | None:
-        """加载技能类型插件（SKILL.md 格式）。
-
-        技能无 Python 入口 — 读取 .md 文件，创建 SkillProvider，
-        注入到 ContextPipeline。
-        """
-        skill_provider = SkillProvider(manifest, plugin_dir)
-        if not skill_provider._content:
-            logger.warning(f"技能 {plugin_id} 无有效内容文件")
-            return None
-
-        api = PluginAPI(plugin_id)
-
-        skill_name = manifest.name or plugin_id
-
-        # ── 1. 注册 //<skill-name> 命令（命令面板可见）──
-        from core.commands import CommandDefinition
-
-        cmd_name = f"//{plugin_id}"
-
-        async def skill_info_handler(app, args: str) -> str:
-            """返回技能详情。"""
-            files = list(skill_provider._content.keys())
-            return (
-                f"## {skill_name}\n\n"
-                f"{manifest.description}\n\n"
-                f"**内容文件**：{', '.join(files)}\n"
-                f"**触发方式**：对话中自动激活 或 agent 调用 `skill_{plugin_id}` 工具。"
-            )
-
-        api.register_command(CommandDefinition(
-            name=cmd_name,
-            description=f"技能: {manifest.description[:50]}...",
-            handler=skill_info_handler,
-        ))
-        self._command_registry.register(api._commands[-1])
-
-        # ── 2. 注册 skill_<id> 工具（agent 可主动调用）──
-        from core.tools import ToolDefinition
-
-        tool_name = f"skill_{plugin_id}"
-        skill_content_snapshot = dict(skill_provider._content)
-
-        async def skill_tool_execute(arguments: dict) -> str:
-            """返回技能完整内容供 agent 参考。"""
-            parts: list[str] = []
-            skill_md = skill_content_snapshot.get("SKILL.md", "")
-            if skill_md:
-                import re as _re
-                body = _re.sub(r'^---.*?---\s*', '', skill_md, count=1, flags=_re.DOTALL)
-                parts.append(body.strip())
-            for fname, text in skill_content_snapshot.items():
-                if fname == "SKILL.md":
-                    continue
-                parts.append(f"\n### {fname}\n{text.strip()}")
-            return "\n\n".join(parts)
-
-        api.register_tool(ToolDefinition(
-            name=tool_name,
-            description=(
-                f"调用「{skill_name}」技能获取详细指导。"
-                f"当任务涉及 {manifest.description[:100]} 时使用此工具。"
-            ),
-            parameters={"type": "object", "properties": {}, "required": []},
-            execute=skill_tool_execute,
-        ))
-        self._tool_registry.register(api._tools[-1])
-
-        self._skill_providers[plugin_id] = skill_provider
-        info = PluginInfo(manifest=manifest, loaded=True, api=api, module=None)
-        self._plugins[plugin_id] = info
-        # P7: 保留 DISABLED 状态
-        existing = self._state_mgr.get(plugin_id)
-        if existing.status != PluginStatus.DISABLED:
-            self._state_mgr.set_status(plugin_id, PluginStatus.READY)
-        logger.info(f"技能已加载: {plugin_id} ({manifest.name}) — 命令 + 工具 + 上下文")
         return info
 
     async def _load_external_skill(
@@ -495,6 +330,11 @@ class PluginHost:
         """
         from core.tools import ToolDefinition
         from core.commands import CommandDefinition
+
+        # DISABLED 外部技能不加载（同样要早于工具/命令注册拦截）
+        if self._state_mgr.get(plugin_id).status == PluginStatus.DISABLED:
+            logger.info(f"外部技能 {plugin_id} 已禁用，跳过加载")
+            return None
 
         try:
             extracted_skills = await adapter.extract_skills()
@@ -563,8 +403,10 @@ class PluginHost:
             provider = ExternalSkillProvider(
                 ns_skill_name, skill_desc, skill_content, skill_refs,
             )
+            # 只登记到 _skill_providers（get_context_providers 会返回它）。
+            # 曾同时 append 到 api._context_providers → 同一 provider 被返回两次，
+            # 技能上下文被双份注入（此前被"传空 user_msg 注入失效"掩盖）。
             self._skill_providers[ns_skill_name] = provider
-            api._context_providers.append(provider)
 
         # ── P7: 提取命令（Claude Code commands/*.md）──
         try:
@@ -608,10 +450,8 @@ class PluginHost:
 
         info = PluginInfo(manifest=manifest, loaded=True, api=api, module=None)
         self._plugins[plugin_id] = info
-        # P7: 保留 DISABLED 状态
-        existing = self._state_mgr.get(plugin_id)
-        if existing.status != PluginStatus.DISABLED:
-            self._state_mgr.set_status(plugin_id, PluginStatus.READY)
+        # P7: DISABLED 已在加载前拦截，走到这里直接置 READY
+        self._state_mgr.set_status(plugin_id, PluginStatus.READY)
         logger.info(
             f"外部技能已加载: {plugin_id} — "
             f"{len(extracted_skills)} 技能, 格式={adapter.FINGERPRINT}"
@@ -688,12 +528,15 @@ class PluginHost:
         """P7: 插件状态管理器。"""
         return self._state_mgr
 
-    def enable_plugin(self, plugin_id: str) -> None:
-        """P7: 启用插件。"""
+    async def enable_plugin(self, plugin_id: str) -> None:
+        """P7: 启用插件 — 置 READY，未加载时重新加载。"""
         self._state_mgr.enable(plugin_id)
+        if plugin_id not in self._plugins:
+            await self.load(plugin_id)
 
-    def disable_plugin(self, plugin_id: str) -> None:
-        """P7: 禁用插件。"""
+    async def disable_plugin(self, plugin_id: str) -> None:
+        """P7: 禁用插件 — 置 DISABLED 并从内存卸载（工具/命令取消注册）。"""
+        await self.unload(plugin_id)  # 已加载则完整卸载；未加载则无操作
         self._state_mgr.disable(plugin_id)
 
     @property

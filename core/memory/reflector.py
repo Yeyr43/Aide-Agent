@@ -123,21 +123,27 @@ class ReflectEngine:
         # 6. 解析 LLM 输出
         parsed = self._parse_reflection_output(raw_response, current_memory)
 
-        # 7. 计算 diff
-        diff_text = self._compute_diff(current_memory, parsed)
+        # 6b. key 归一化：_parse_reflection_output 返回无 .md 后缀的 key
+        # （preferences/workflows/long_term_memory），而 current_memory / _compute_diff
+        # 使用 "preferences.md" 等。统一映射到 .md，否则 changes 恒 True、diff 算成整删。
+        norm: dict[str, str] = {"overview": parsed.get("overview", existing_overview)}
+        for k in ("preferences", "workflows", "long_term_memory"):
+            norm[k + ".md"] = parsed.get(k, current_memory.get(k + ".md", ""))
+
+        # 7. 计算 diff（两侧均用 .md key）
+        diff_text = self._compute_diff(current_memory, norm)
 
         changes = any(
-            parsed.get(k) != current_memory.get(k, "")
-            for k in set(list(current_memory.keys()) + list(parsed.keys()))
-            if k != "overview"
-        ) or parsed.get("overview", "") != existing_overview
+            norm.get(fname, "") != current_memory.get(fname, "")
+            for fname in ("preferences.md", "workflows.md", "long_term_memory.md")
+        ) or bool(norm["overview"]) and norm["overview"] != existing_overview
 
         return ReflectResult(
-            overview=parsed.get("overview", existing_overview),
+            overview=norm["overview"],
             proposed_files={
-                "preferences.md": parsed.get("preferences", current_memory.get("preferences.md", "")),
-                "workflows.md": parsed.get("workflows", current_memory.get("workflows.md", "")),
-                "long_term_memory.md": parsed.get("long_term_memory", current_memory.get("long_term_memory.md", "")),
+                "preferences.md": norm["preferences.md"],
+                "workflows.md": norm["workflows.md"],
+                "long_term_memory.md": norm["long_term_memory.md"],
             },
             current_files={
                 "preferences.md": current_memory.get("preferences.md", ""),
@@ -329,7 +335,10 @@ class ReflectEngine:
         for key, (prefix, label) in mem_types.items():
             section = MEMORY_SECTION_HEADERS[key]
             frontmatter_example += (
-                f"### {section}\n"
+                # section 本身已是 "## Preferences"（MEMORY_SECTION_HEADERS），
+                # 不要再叠 ### 前缀 —— split_sections 只认 "## " 开头的行，
+                # "### ## Preferences" 无法被解析，会导致 LLM 照示例输出时记忆更新被静默丢弃
+                f"{section}\n"
                 f"---\n"
                 f"id: {prefix}_001\n"
                 f"created: YYYY-MM-DD\n"

@@ -45,7 +45,6 @@ class PluginStateEntry:
     status: PluginStatus = PluginStatus.NEEDS_SETUP
     enabled: bool = True
     missing_requirements: list[str] = field(default_factory=list)
-    usage_count: int = 0
     last_verified: str = ""  # ISO timestamp
 
 
@@ -141,7 +140,6 @@ class PluginStateManager:
             status=PluginStatus(data.get("status", "needs_setup")),
             enabled=data.get("enabled", True),
             missing_requirements=data.get("missing_requirements", []),
-            usage_count=data.get("usage_count", 0),
             last_verified=data.get("last_verified", ""),
         )
 

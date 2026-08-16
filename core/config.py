@@ -51,7 +51,7 @@ DEFAULT_LLM = {
 
 DEFAULT_APP = {
     "locale": "zh",
-    "max_turns": 5,
+    "max_turns": 10,  # 与 AppConfig dataclass 默认一致（FC Loop max_turns）
     "full_text_turns": 3,
     "summary_turns": 15,
     "relevance_threshold": 0.15,

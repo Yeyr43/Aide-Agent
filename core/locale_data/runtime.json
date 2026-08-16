@@ -471,10 +471,6 @@
     "zh": "（Linux/macOS: 如需 sudo 请在终端手动执行）",
     "en": " (Linux/macOS: run manually in terminal if sudo required)"
   },
-  "tool.search_memory.more": {
-    "zh": "... 还有 {n} 条结果",
-    "en": "... {n} more results"
-  },
   "tool_desc.delegate": {
     "zh": "把子任务委托给独立的子 agent 并行执行，只返回压缩结论，不污染主对话。最多同时 3 个、超出拒绝；编排前先 action=status 查可用配额，再派 ≤3 个并行子任务，更多则分批。",
     "en": "Delegate subtasks to independent sub-agents that run in parallel and return condensed conclusions without polluting the main conversation. At most 3 run concurrently and extra calls are rejected; before organizing, run action=status to check the available quota, then dispatch ≤3 parallel subtasks, batching any more."
@@ -510,5 +506,9 @@
   "tool.delegate.subagent_system": {
     "zh": "你是 Aide 的子任务执行者。完整、彻底地完成委托给你的子任务，然后返回简洁准确的结论。\n\n关键要求：\n- 任务描述中列出的所有目标都必须处理完毕，绝不能只处理一部分就返回。\n- 若任务要求读取/搜索多个文件或目录，务必全部覆盖后再给结论，不要读一个就停。\n- 只有当任务范围全部覆盖时，才返回最终结论；结论保持简洁但必须完整。",
     "en": "You are Aide's sub-task executor. Complete the assigned subtask thoroughly, then return a concise, accurate conclusion.\n\nKey requirements:\n- Process every target listed in the task description — never return after covering only part of it.\n- If the task requires reading/searching multiple files or directories, cover all of them before concluding; don't stop after one.\n- Only return the final conclusion once the entire task scope is covered; keep it concise but complete."
+  },
+  "mcp.tool_error": {
+    "zh": "错误：MCP 工具 {tool} 执行失败: {msg}",
+    "en": "Error: MCP tool {tool} failed: {msg}"
   }
 }

@@ -11,17 +11,11 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 
 # ── YAML frontmatter 解析（复用 entries.py 的简化版）──────────────────
-
-_FRONTMATTER_RE = re.compile(
-    r'^---\s*\n(.*?)\n---',
-    re.DOTALL,
-)
 
 
 def _parse_frontmatter(text: str) -> dict[str, str]:

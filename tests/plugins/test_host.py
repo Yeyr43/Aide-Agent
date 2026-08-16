@@ -185,3 +185,54 @@ def register(api):
         result = asyncio.run(host.unload("cmd-plugin"))
         assert result is True
         assert host._command_registry.get("//cmd-plugin:demo-cmd") is None
+
+
+class TestPluginDisabled:
+    """回归：DISABLED 插件必须真正不加载/卸载（曾只在注册后改状态，'已禁用'仍可被调用）。"""
+
+    def _make_plugin(self, host, tmp_path, pid="demo") -> None:
+        plugin_dir = host._config.plugins_dir / pid
+        plugin_dir.mkdir()
+        (plugin_dir / "aide.plugin.json").write_text(json.dumps({
+            "id": pid, "name": pid, "entry": "main.py",
+        }))
+        (plugin_dir / "main.py").write_text(r'''
+from core.plugins.sdk import define_plugin
+from core.tools import ToolDefinition
+
+@define_plugin("demo")
+def register(api):
+    api.register_tool(ToolDefinition(
+        name="demo_hello",
+        description="Say hello",
+        parameters={"type": "object", "properties": {}},
+    ))
+''')
+
+    def test_disabled_plugin_not_loaded(self, host, tmp_path):
+        self._make_plugin(host, tmp_path)
+        host.state_manager.disable("demo")
+        info = asyncio.run(host.load("demo"))
+        assert info is None
+        assert not host.is_loaded("demo")
+        assert "demo_hello" not in host._tool_registry.list_names()
+
+    def test_disable_plugin_unloads_and_unregisters(self, host, tmp_path):
+        self._make_plugin(host, tmp_path)
+        info = asyncio.run(host.load("demo"))
+        assert info is not None
+        assert "demo_hello" in host._tool_registry.list_names()
+
+        asyncio.run(host.disable_plugin("demo"))
+        assert not host.is_loaded("demo")
+        assert "demo_hello" not in host._tool_registry.list_names()
+        assert host.state_manager.get("demo").status.value == "disabled"
+
+    def test_enable_plugin_reloads(self, host, tmp_path):
+        self._make_plugin(host, tmp_path)
+        asyncio.run(host.disable_plugin("demo"))
+        assert not host.is_loaded("demo")
+
+        asyncio.run(host.enable_plugin("demo"))
+        assert host.is_loaded("demo")
+        assert "demo_hello" in host._tool_registry.list_names()

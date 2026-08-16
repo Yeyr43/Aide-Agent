@@ -1,6 +1,6 @@
 """上下文相关性子系统的公开 API。
 
-实现已拆至 _tokenizer.py（分词/词汇/相似度）和 _overview.py（总览/切分）。
+实现已拆至 tokenizer.py（分词/词汇/相似度）和 overview.py（总览/切分）。
 本模块保留为 re-export 层，维持向后兼容。
 """
 

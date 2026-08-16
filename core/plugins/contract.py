@@ -115,7 +115,7 @@ class PluginSlot:
 class PluginAPI:
     """插件运行时 API — 在 register(api) 中暴露给插件。
 
-    P7: 新增 register_hook / requires / require_api_key / on_status_change。
+    P7: 新增 register_hook / requires / require_api_key。
     """
 
     def __init__(self, plugin_id: str) -> None:
@@ -129,7 +129,6 @@ class PluginAPI:
         self._shutdown_hooks: list[Callable] = []
         self._hooks: list[dict] = []           # P7: 插件注册的 hook 定义
         self._requirements: dict = {}          # P7: api_keys / system_packages
-        self._status_callbacks: list[Callable] = []  # P7: 状态变更回调
 
     def register_tool(self, tool: ToolDefinition) -> None:
         self._tools.append(tool)
@@ -165,10 +164,6 @@ class PluginAPI:
             "system_packages": system_packages or [],
             "python_packages": python_packages or [],
         }
-
-    def on_status_change(self, callback: Callable[[str, str], None]) -> None:
-        """P7: 注册状态变更回调。callback(old_status, new_status)。"""
-        self._status_callbacks.append(callback)
 
     def provide_slot(self, slot_name: str) -> None:
         self._provided_slots.append(slot_name)

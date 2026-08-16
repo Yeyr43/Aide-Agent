@@ -144,8 +144,8 @@
     "en": "View memory capture status: pending / confirmed entry counts"
   },
   "cmd.memory.title": {
-    "zh": "## 记忆捕获状态",
-    "en": "## Memory Capture Status"
+    "zh": "## 记忆条目",
+    "en": "## Memory Entries"
   },
   "cmd.memory.read_error": {
     "zh": "读取失败",
@@ -168,8 +168,8 @@
     "en": "📊 {total} confirmed — use `/profile` to view."
   },
   "cmd.memory.hint": {
-    "zh": "\n提示：记忆在对话中自动截获，截获规则见 `core/memory/capture.py`。",
-    "en": "\nTip: Memories are captured automatically during conversations. See `core/memory/capture.py` for capture rules."
+    "zh": "\n提示：记忆由 /reflect 手动生成；开启 /mem-auto 后每轮对话会自动提取新条目。",
+    "en": "\nTip: Memories are generated via /reflect; with /mem-auto on, new entries are extracted after every turn."
   },
   "cmd.tools.desc": {
     "zh": "列出所有可用工具（内置 + 插件 + MCP）",
@@ -454,5 +454,13 @@
   "cmd.think.desc": {
     "zh": "/think — 让 AI 先思考分析，暂不调用工具",
     "en": "/think — Ask AI to think and analyze first before using tools"
+  },
+  "cmd.api.add_usage": {
+    "zh": "⚠️ 用法：`/api add <名称> <provider> <model> <api_key> [base_url]`",
+    "en": "⚠️ Usage: `/api add <name> <provider> <model> <api_key> [base_url]`"
+  },
+  "cmd.api.exists": {
+    "zh": "❌ API 配置已存在：`{name}`（用 /api edit {name} 修改）",
+    "en": "❌ API config already exists: `{name}` (use /api edit {name})"
   }
 }

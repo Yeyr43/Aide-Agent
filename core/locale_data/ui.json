@@ -207,10 +207,6 @@
     "zh": "✅ 会话已删除。",
     "en": "✅ Session deleted."
   },
-  "ui.bridge.tool_error": {
-    "zh": "工具 [{name}] 执行失败: {error}",
-    "en": "Tool [{name}] execution failed: {error}"
-  },
   "ui.bridge.max_turns": {
     "zh": "已达到最大工具调用轮次 (5)。任务可能需要你手动介入。",
     "en": "Maximum tool call turns reached (5). The task may need your manual intervention."

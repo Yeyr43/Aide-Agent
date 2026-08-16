@@ -499,10 +499,24 @@ class MCPAdapter:
             self._breaker.on_failure(server_name)
             return t("mcp.error_response", msg=response.error_message)
 
+        # 传输层成功（熔断不计业务错误——服务端还活着，只是工具执行失败）
         self._breaker.on_success(server_name)
 
         result = response.result
         content = result.get("content", []) if isinstance(result, dict) else []
+
+        # MCP CallToolResult 工具级失败：JSON-RPC 层成功但 result.isError=true
+        # （如 filesystem 服务端找不到文件）。不能把失败内容当成功结果喂给 LLM。
+        if isinstance(result, dict) and result.get("isError"):
+            err_text = ""
+            if isinstance(content, str):
+                err_text = content
+            elif isinstance(content, list):
+                err_text = "\n".join(
+                    b.get("text", "") for b in content
+                    if isinstance(b, dict) and b.get("text")
+                )
+            return t("mcp.tool_error", tool=tool_name, msg=err_text or "(无错误信息)")
 
         if isinstance(content, str):
             return content
@@ -558,8 +572,8 @@ class MCPAdapter:
                 mapping = self._tool_mapping.get(tool.name, (name, tool.name))
                 original_name = mapping[1]
 
-                def _make_execute(s: str, t: str):
-                    async def _execute(args: dict, _s=s, _t=t) -> str:
+                def _make_execute(server: str, tool: str):
+                    async def _execute(args: dict, _s=server, _t=tool) -> str:
                         return await self.call_tool(_s, _t, args)
                     return _execute
 

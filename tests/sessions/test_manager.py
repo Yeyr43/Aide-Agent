@@ -158,3 +158,25 @@ class TestRollback:
         mgr = SessionManager(tmp_path / "sessions")
         with pytest.raises(ValueError, match="不存在"):
             mgr.rollback(session_dir, 1)
+
+    def test_rollback_syncs_search_index_and_markers(self, tmp_path):
+        """回归：回滚后内存搜索索引移除被删轮次、meta 反思/自动记忆 marker 封顶。"""
+        from core.search.index import SearchIndex
+        session_dir = tmp_path / "sessions" / "20260703_test"
+        _make_turn_files(session_dir, 5)
+        (session_dir / "meta.json").write_text(json.dumps({
+            "last_reflected_turn": 5, "last_auto_memory_turn": 5,
+        }), encoding="utf-8")
+
+        index = SearchIndex(tmp_path / "idx")
+        for t in range(1, 6):
+            index.add("20260703_test", t, f"turn {t}")
+
+        mgr = SessionManager(tmp_path / "sessions", search_index=index)
+        mgr.rollback(session_dir, 3)
+
+        remaining = sorted(e["turn"] for e in index._entries)
+        assert remaining == [1, 2, 3], remaining
+        meta = json.loads((session_dir / "meta.json").read_text(encoding="utf-8"))
+        assert meta["last_reflected_turn"] == 3
+        assert meta["last_auto_memory_turn"] == 3

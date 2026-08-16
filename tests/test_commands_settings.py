@@ -10,6 +10,7 @@ from core.commands.builtin.settings_handlers import (
     _parse_ctx,
     handle_language,
     handle_model,
+    handle_api,
 )
 
 
@@ -164,3 +165,44 @@ class TestHandleModel:
             result = await handle_model(app, "")  # no args = list
             assert isinstance(result, str)
             assert "openai" in result
+
+
+class TestHandleApiAdd:
+    """回归：/api add 子命令必须真正创建配置（曾只落在 list_empty 提示自指）。"""
+
+    async def test_add_creates_config(self):
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.api_config_exists.return_value = False
+            mock_cfg.get_active_api_name.return_value = ""
+            mock_cfg.save_api_config = MagicMock()
+            mock_cfg.set_active_api_name = MagicMock()
+            result = await handle_api(MagicMock(), "add deepseek deepseek deepseek-chat sk-xxx")
+            assert "deepseek" in result
+            name, cfg = mock_cfg.save_api_config.call_args[0]
+            assert name == "deepseek"
+            assert cfg["model"] == "deepseek-chat"
+            assert cfg["api_key"] == "sk-xxx"
+            assert cfg["base_url"] == ""
+            mock_cfg.set_active_api_name.assert_called_once_with("deepseek")
+
+    async def test_add_with_base_url_keeps_existing_active(self):
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.api_config_exists.return_value = False
+            mock_cfg.get_active_api_name.return_value = "existing"
+            mock_cfg.save_api_config = MagicMock()
+            mock_cfg.set_active_api_name = MagicMock()
+            await handle_api(MagicMock(), "add myapi openai gpt-4o key https://api.openai.com/v1")
+            _, cfg = mock_cfg.save_api_config.call_args[0]
+            assert cfg["base_url"] == "https://api.openai.com/v1"
+            mock_cfg.set_active_api_name.assert_not_called()
+
+    async def test_add_missing_args_shows_usage(self):
+        with patch("core.commands.builtin.settings_handlers.Config"):
+            result = await handle_api(MagicMock(), "add onlyname")
+            assert "用法" in result
+
+    async def test_add_existing_name_rejects(self):
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.api_config_exists.return_value = True
+            result = await handle_api(MagicMock(), "add myapi openai gpt-4o key")
+            assert "已存在" in result

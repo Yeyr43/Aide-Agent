@@ -323,3 +323,41 @@ class TestMCPToolExecutionBinding:
         assert result == "done"
         assert called_with["tool"] == "read_file"
         assert called_with["args"] == {"path": "/tmp/x"}
+
+
+class TestMCPCallToolIsError:
+    """回归：MCP CallToolResult 工具级失败（isError=true）必须反馈给 LLM，
+    不能把失败内容当成功结果喂回。"""
+
+    @staticmethod
+    def _adapter_with_transport(response) -> MCPAdapter:
+        from core.mcp.adapter import MCPAdapter
+
+        adapter = MCPAdapter()
+
+        class MockResponse:
+            is_error = response.get("is_error", False)
+            error_message = response.get("error_message", "")
+            result = response.get("result", {})
+
+        class MockTransport:
+            async def send_request(self, request, timeout=None):
+                return MockResponse()
+
+        adapter._transports["srv"] = MockTransport()
+        return adapter
+
+    async def test_iserror_surfaces_to_llm(self):
+        adapter = self._adapter_with_transport({
+            "result": {"isError": True, "content": [{"type": "text", "text": "file not found"}]},
+        })
+        result = await adapter.call_tool("srv", "read_file", {"path": "/nope"})
+        assert "执行失败" in result, result
+        assert "file not found" in result
+
+    async def test_success_still_returns_content(self):
+        adapter = self._adapter_with_transport({
+            "result": {"content": [{"type": "text", "text": "ok content"}]},
+        })
+        result = await adapter.call_tool("srv", "t", {})
+        assert result == "ok content"

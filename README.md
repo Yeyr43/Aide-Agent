@@ -85,13 +85,15 @@ uv run python shell/main.py
 
 ## 特性
 
-- **终端原生 TUI** — Textual 全栈框架，纯暗主题 (`#0c0c0c`)，键盘驱动
-- **多模型** — OpenAI 兼容 API / Ollama 本地 / 自定义 base URL
-- **优先级队列上下文** — 收集 → 评分 → 打包，Soul/工具/技能/记忆/总览/窗口上下文按相关性与 token 预算注入
-- **记忆系统** — 手动 `/reflect` 结构化记忆 + 会话总览；`/mem-auto` 可选自动提取（默认关）
-- **插件系统** — Python 插件 + Markdown 技能，三格式兼容自动发现加载
-- **MCP 协议** — stdio + HTTP Transport，熔断 + 自动重连
-- **语义搜索** — 词级 TF-IDF + bigram Jaccard + 同义词扩展，时间衰减加权
+- **终端原生 TUI** — Textual 全栈框架，纯暗主题 (`#0c0c0c`)，键盘驱动；每回合以树形展示思考/工具/正文，正文实时 Markdown 渲染
+- **多模型** — OpenAI 兼容 API / Ollama 本地 / Anthropic，可自定义 base URL 接入任意兼容端点
+- **工具系统** — 8 个内置工具（文件读写 / Shell / 全局搜索 / 记忆检索 / 网页抓取）+ 子 agent 委派 + 只读并行执行 / 写串行 + 高危命令拦截
+- **优先级队列上下文** — 收集 → 评分 → 打包，Soul/工具/技能/记忆/总览/历史窗口按相关性与 token 预算注入；记忆注入带边界与新鲜度标注，超窗口自动丢弃最老轮次兜底
+- **记忆系统** — 手动 `/reflect` 生成结构化记忆 + 会话总览 + 反馈闭环（L1 语言 / L2 长度校验）；`/mem-auto` 可选每轮自动提取（默认关）
+- **插件系统** — Python 插件 + Claude Code / OpenClaw / Aide 三格式技能，自动发现加载；9 类生命周期 Hook + 5 项安全预检 + 热重载
+- **MCP 协议** — stdio + HTTP Transport，熔断 + 自动重连，工具级错误正确反馈给模型
+- **语义搜索** — 词级 TF-IDF + bigram Jaccard + 同义词扩展，时间衰减加权，跨会话全文检索
+- **本地隐私** — 所有对话与记忆存于本地 `~/.aide/`，零云端依赖，备份即复制文件夹
 - **跨平台** — Windows / macOS / Linux
 
 ## 平台支持
@@ -105,6 +107,16 @@ uv run python shell/main.py
 ## 技术栈
 
 Python 3.13+ · Textual 0.80+ · Pydantic 2 · pystray · Pygments · httpx · ddgs
+
+## 开发
+
+```bash
+uv sync                     # 安装依赖
+uv run python shell/main.py # 启动应用
+uv run pytest tests/ -q     # 运行全部测试（1175 个）
+```
+
+架构与设计文档见 [CLAUDE.md](CLAUDE.md)（核心模块职责、关键模式、已知陷阱）与 [CONTEXT.md](CONTEXT.md)（设计演变与批判性收敛记录）。
 
 ## 开源协议
 

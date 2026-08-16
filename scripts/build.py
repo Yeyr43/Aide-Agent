@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -126,8 +125,6 @@ def copy_launchers() -> None:
 
 def _write_install_scripts(dist_dir: Path) -> None:
     """生成二进制分发的安装/卸载脚本。"""
-    import platform
-
     # Windows: PowerShell 安装脚本
     ps1 = dist_dir / "install.ps1"
     ps1.write_text(r'''# Aide Agent 安装脚本（二进制分发版）

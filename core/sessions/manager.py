@@ -155,6 +155,31 @@ class SessionManager:
         from core.context.overview import restore_overview_from_checkpoint
         restore_overview_from_checkpoint(session_dir, target_turn)
 
+        # 4. 同步内存搜索索引：删除该会话全部条目，从截断后的 timeline 重放
+        #    （曾不更新 → 被回滚掉的轮次仍可被搜索命中）
+        if self._search_index is not None:
+            sid = session_dir.name
+            self._search_index.remove_session(sid)
+            try:
+                from core.storage import read_jsonl
+                for tl in read_jsonl(session_dir / "timeline.json"):
+                    summary = tl.get("summary", "")
+                    if summary:
+                        self._search_index.add(sid, tl.get("turn", 0), summary)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # 5. 封顶 meta.json 的反思/自动记忆标记：
+        #    回滚后 marker 大于 target_turn 会导致 /reflect 与自动记忆跳过已删除的轮次
+        meta = read_session_meta(session_dir)
+        markers = {
+            m: target_turn
+            for m in ("last_reflected_turn", "last_auto_memory_turn")
+            if meta.get(m, 0) > target_turn
+        }
+        if markers:
+            update_session_meta(session_dir, **markers)
+
         return target_turn
 
     @staticmethod
