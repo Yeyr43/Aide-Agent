@@ -2,7 +2,10 @@
 
 组装上下文 → LLM 决定（tool_call 或 reply）→ 并行调工具 → 结果喂回 → 循环。
 
-硬编码 max_turns=5，达到上限后自动给 LLM 一次纯文本回复机会。
+循环轮数上限 MAX_LOOP_TURNS（30，宽松——允许"测试所有工具"这类多工具任务跑完）；
+每个工具的"单次调用"可尝试 max_turns 次（默认 5）——同一（工具, 参数）反复失败
+超过上限即停止重试该调用，防止工具卡死无限循环。
+
 工具错误不作为阻断信号，全部喂回 LLM 让其自行降级。
 
 P4: XML fallback 解析 + 工具结果截断 + 超时保护 + 并行执行 + 无阻断循环。
@@ -11,6 +14,7 @@ P3: 工具执行段（分组/超时/截断/安全）拆至 tool_executor.py，�
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 
@@ -22,7 +26,8 @@ from core.errors import ProviderError
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_TURNS = 10
+DEFAULT_MAX_TURNS = 10     # 单工具调用可尝试的次数上限（每个 (工具, 参数) 独立计数）
+MAX_LOOP_TURNS = 30        # 循环总轮数上限（多工具任务需要较多轮）
 
 
 def _sanitize_messages(messages: list[dict],
@@ -87,7 +92,9 @@ class FunctionCallingLoop:
                  hook_runner: object | None = None) -> None:
         self.provider = provider
         self.registry = tool_registry
-        self.max_turns = max_turns
+        # max_turns = 单工具调用可尝试次数（每个 (工具, 参数) 独立计数），非循环总轮数
+        self.max_tool_attempts = max_turns
+        self._tool_attempts: dict[tuple[str, str], int] = {}  # (工具名, 参数JSON) → 尝试次数
         self.supports_vision: bool = getattr(provider, 'supports_vision', False)
         # P3: 工具执行器 — 只读并行/写串行/失败 abort 兄弟 + 超时 + 截断 + 安全
         self._tools_executor = ToolExecutor(tool_registry, hook_runner=hook_runner)
@@ -109,11 +116,12 @@ class FunctionCallingLoop:
         """
         self._tools_executor.reset()
         self._thinking_buffer = ""  # 新一轮开始时重置
+        self._tool_attempts = {}    # 每轮用户消息独立计数（工具尝试上限按次重置）
         tools_schema = self.registry.get_schemas()
         final: StreamEnd | None = None
         turn = 0
 
-        for turn in range(1, self.max_turns + 1):
+        for turn in range(1, MAX_LOOP_TURNS + 1):
             result = await self._call_llm(messages, tools_schema, ui)
             if result is None:
                 # LLM 调用失败 → 终止循环（非工具错误，是 Provider 层故障）
@@ -147,7 +155,7 @@ class FunctionCallingLoop:
                     # Anthropic 原生 stop_reason="max_tokens"；OpenAI 兼容系（DeepSeek/
                     # Ollama）为 finish_reason="length"（经 provider.py 透传），两者都要兼容
                     if (final.native_stop_reason in ("max_tokens", "length")
-                            and turn < self.max_turns):
+                            and turn < MAX_LOOP_TURNS):
                         messages.append({"role": "user", "content": "(continue)"})
                         continue
                     break
@@ -167,11 +175,40 @@ class FunctionCallingLoop:
                         "tool_calls": final.tool_calls,
                     })
 
-            tool_results = await self._execute_tools(final.tool_calls, ui)
+            # ── 单工具调用尝试上限：同一 (工具, 参数) 反复失败超过上限 → 停止重试 ──
+            # （不同工具 / 不同参数互不影响，多工具任务可一直跑；只防单个调用卡死）
+            filtered_calls: list[dict] = []
+            over_limit_ids: set[str] = set()
+            for tc in final.tool_calls:
+                key = self._tool_attempt_key(tc)
+                n = self._tool_attempts.get(key, 0) + 1
+                self._tool_attempts[key] = n
+                if n > self.max_tool_attempts:
+                    over_limit_ids.add(tc.get("id", ""))
+                else:
+                    filtered_calls.append(tc)
+
+            tool_results = (
+                await self._execute_tools(filtered_calls, ui) if filtered_calls else []
+            )
+
+            # 重组：按 final.tool_calls 顺序，超限调用返回"已达上限"错误喂回 LLM
+            reordered: list[dict] = []
+            ri = 0
+            for tc in final.tool_calls:
+                if tc.get("id", "") in over_limit_ids:
+                    fn = tc.get("function") or {}
+                    reordered.append({"content": (
+                        f"⚠️ 工具 {fn.get('name', '?')} 已尝试 {self.max_tool_attempts} 次仍未成功，"
+                        "已停止重试。请换一种方式或向用户说明。"
+                    )})
+                else:
+                    reordered.append(tool_results[ri])
+                    ri += 1
 
             # 所有工具结果（含错误）都作为 tool 消息喂给 LLM，
-            # 让 LLM 自己决定降级策略。MAX_TURNS 自然终止。
-            for tc, tool_result in zip(final.tool_calls, tool_results):
+            # 让 LLM 自己决定降级策略。MAX_LOOP_TURNS 自然终止。
+            for tc, tool_result in zip(final.tool_calls, reordered):
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.get("id", ""),
@@ -179,7 +216,7 @@ class FunctionCallingLoop:
                 })
 
         # ── 循环结束检查 ──────────────────────────────────────────
-        if turn >= self.max_turns and final and final.tool_calls:
+        if turn >= MAX_LOOP_TURNS and final and final.tool_calls:
             result = await self._call_llm(messages, [], ui)
             if result and not result.stream_end.tool_calls:
                 messages.append({
@@ -285,8 +322,8 @@ class FunctionCallingLoop:
                 f"[XML] found at pos {xml_start}, clean={len(clean)}chars, "
                 f"native_tools={native_has}"
             )
-            if clean:
-                ui.on_replace_streamed_text(clean)
+            # 即使 clean 为空（XML 在最开头）也要替换：清掉流式阶段已显示的 XML 乱码
+            ui.on_replace_streamed_text(clean)
             if not event.tool_calls:
                 xml_calls = self._extract_xml_tool_calls(response_text)
                 if xml_calls:
@@ -298,3 +335,13 @@ class FunctionCallingLoop:
     def _extract_xml_tool_calls(text: str) -> list[dict]:
         """从文本中提取 XML 工具调用。委托给 core.kernel.xml_tool_parser。"""
         return extract_xml_tool_calls(text)
+
+    @staticmethod
+    def _tool_attempt_key(tc: dict) -> tuple[str, str]:
+        """同一调用的身份：工具名 + 参数（用于单工具尝试上限计数）。"""
+        fn = tc.get("function") or {}
+        name = fn.get("name", "?")
+        args = fn.get("arguments", {})
+        args_json = (json.dumps(args, sort_keys=True, ensure_ascii=False)
+                     if isinstance(args, (dict, list)) else str(args))
+        return (name, args_json)

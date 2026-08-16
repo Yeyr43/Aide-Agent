@@ -463,3 +463,63 @@ class TestXmlFallbackContentClean:
         assert json.loads(tool_msgs[0]["tool_calls"][0]["function"]["arguments"])["msg"] == "hi"
         # 显示替换被调用（正文节点不残留 XML）
         ui.on_replace_streamed_text.assert_called()
+
+
+class TestToolAttemptLimit:
+    """回归：max_turns 语义改为"单工具调用可尝试次数"——同一 (工具, 参数) 反复失败
+    超限即停止重试；不同工具/参数互不影响（多工具任务不再被 5 轮卡死）。"""
+
+    @pytest.mark.asyncio
+    async def test_same_tool_failing_rejected_after_limit(self):
+        from core.llm_gateway import TextDelta, StreamEnd
+        from core.tools import ToolDefinition
+
+        registry = ToolRegistry()
+
+        async def flaky(args):
+            return "错误：总是失败"
+        registry.register(ToolDefinition(
+            name="flaky", description="", parameters={"type": "object", "properties": {}},
+            execute=flaky,
+        ))
+
+        provider = AsyncMock()
+        call = [0]
+        async def _mock_chat(messages, tools):
+            call[0] += 1
+            if call[0] <= 5:
+                yield StreamEnd(finish_reason="tool_calls", tool_calls=[{
+                    "id": f"c{call[0]}", "type": "function",
+                    "function": {"name": "flaky", "arguments": "{}"},
+                }])
+            else:
+                yield TextDelta(content="放弃")
+                yield StreamEnd(finish_reason="stop", tool_calls=[])
+        provider.chat_with_tools = _mock_chat
+
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, registry, max_turns=3)  # 单工具尝试上限 3
+        messages = await loop.run([{"role": "user", "content": "go"}], ui=ui)
+
+        tool_msgs = [m for m in messages if m.get("role") == "tool"]
+        rejections = [m for m in tool_msgs if "已停止重试" in m["content"]]
+        assert rejections, "超限后应有'已停止重试'消息"
+        assert "已尝试 3 次" in rejections[0]["content"]
+        # flaky 实际执行了 3 次（第 4 次起被拒绝）
+        executed = [m for m in tool_msgs if "总是失败" in m["content"]]
+        assert len(executed) == 3
+
+    def test_xml_at_start_always_replaces_streamed_text(self):
+        """XML 在最开头（clean 为空）也必须替换流式显示的 XML 乱码。"""
+        from core.llm_gateway import StreamEnd
+        from core.tools import ToolDefinition
+        from core.tools import ToolRegistry
+
+        loop = FunctionCallingLoop(None, ToolRegistry())
+        ui = MagicMock()
+        event = StreamEnd(finish_reason="stop", tool_calls=[])
+        text = '<tool_call><function=echo><parameter=msg>hi</parameter></function></tool_call>'
+        clean = loop._try_xml_fallback(text, event, ui)
+        ui.on_replace_streamed_text.assert_called_once_with("")
+        assert clean == ""
+        assert event.tool_calls

@@ -86,7 +86,7 @@ class TestUIBridgeToolEvents:
         bridge.on_max_turns()
         msg_list.add_system_notice.assert_called_once()
         call_arg = msg_list.add_system_notice.call_args[0][0]
-        assert "5" in call_arg  # max turns
+        assert "30" in call_arg  # 循环轮数上限
 
 
 class TestUIBridgeStreamingReplace:

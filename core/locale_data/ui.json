@@ -208,8 +208,8 @@
     "en": "✅ Session deleted."
   },
   "ui.bridge.max_turns": {
-    "zh": "已达到最大工具调用轮次 (5)。任务可能需要你手动介入。",
-    "en": "Maximum tool call turns reached (5). The task may need your manual intervention."
+    "zh": "已达到最大工具调用轮次 (30)，可能是模型反复调用工具。单个工具反复失败会单独提示并停止重试；任务可能需要你手动介入。",
+    "en": "Maximum tool call rounds reached (30) — likely the model kept calling tools. A single tool that keeps failing is stopped and reported separately; the task may need your manual intervention."
   },
   "ui.widget.no_match": {
     "zh": " 无匹配命令",

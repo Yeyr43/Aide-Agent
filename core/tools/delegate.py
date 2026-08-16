@@ -55,7 +55,7 @@ async def execute(arguments: dict, ctx=None) -> str:
             "action": str       — "run"=委托子任务（默认），"status"=查询子 agent 队列情况
             "prompt": str       — 要委托给子 agent 的任务描述（action=run 时需要）
             "tools": list[str]  — 允许子 agent 使用的工具名（可选，默认只读类）
-            "max_turns": int    — 子 agent 最大轮数（可选，默认 6，最大 10）
+            "max_turns": int    — 子 agent 单工具调用可尝试次数（可选，默认 6，最大 10；循环总轮数由内核 30 封顶）
         }
         ctx: ToolContext（由 ToolRegistry 自动注入，含 provider/tool_registry/hook_runner）
 
