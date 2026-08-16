@@ -1,6 +1,7 @@
 """测试 FunctionCallingLoop — 结果截断、超时保护、并行执行。"""
 
 import asyncio
+import json
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
@@ -414,3 +415,51 @@ class TestXMLFallback:
     def test_parse_args_already_dict(self):
         result = ToolExecutor._parse_args({"key": "value"})
         assert result == {"key": "value"}
+
+
+class TestXmlFallbackContentClean:
+    """回归：XML <tool_call> 派生的 tool_calls，落盘 assistant 消息必须剥离 XML
+    （曾用完整 response_text 含 <tool_call> 乱码，再次渲染时正文残留 XML）。"""
+
+    @pytest.mark.asyncio
+    async def test_xml_tool_call_content_is_clean(self):
+        from core.llm_gateway import TextDelta, StreamEnd
+        from core.tools import ToolDefinition
+
+        registry = ToolRegistry()
+
+        async def echo(args):
+            return "ok"
+        registry.register(ToolDefinition(
+            name="echo", description="Echo", parameters={"type": "object", "properties": {}},
+            execute=echo,
+        ))
+
+        provider = AsyncMock()
+        call = [0]
+        async def _mock_chat(messages, tools):
+            call[0] += 1
+            if call[0] == 1:
+                yield TextDelta(content="开始执行。")
+                yield TextDelta(content="\n<tool_call><function=echo><parameter=msg>hi</parameter></function></tool_call>")
+            else:
+                yield TextDelta(content="完成")
+            yield StreamEnd(finish_reason="stop", tool_calls=[])
+
+        provider.chat_with_tools = _mock_chat
+
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, registry, max_turns=1)
+
+        messages = await loop.run([{"role": "user", "content": "go"}], ui=ui)
+
+        # 带 tool_calls 的 assistant 消息：content 必须干净（无 <tool_call>），tool_calls 正确
+        tool_msgs = [m for m in messages if m.get("tool_calls")]
+        assert len(tool_msgs) == 1
+        assert "<tool_call>" not in tool_msgs[0]["content"], tool_msgs[0]["content"]
+        assert "<function=" not in tool_msgs[0]["content"]
+        assert "开始执行" in tool_msgs[0]["content"]
+        assert tool_msgs[0]["tool_calls"][0]["function"]["name"] == "echo"
+        assert json.loads(tool_msgs[0]["tool_calls"][0]["function"]["arguments"])["msg"] == "hi"
+        # 显示替换被调用（正文节点不残留 XML）
+        ui.on_replace_streamed_text.assert_called()

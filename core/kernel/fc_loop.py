@@ -69,6 +69,7 @@ class _TurnResult:
     """单轮 LLM 调用的结果。"""
     stream_end: StreamEnd
     response_text: str
+    clean_text: str | None = None  # XML 工具调用剥离后的正文（供落盘用，避免 XML 乱码残留）
 
 
 # ── Function Calling 循环 ─────────────────────────────────────────
@@ -128,6 +129,9 @@ class FunctionCallingLoop:
                     final.tool_calls = xml_calls
                     xml_start = find_xml_start(result.response_text)
                     text_content = result.response_text[:xml_start].strip() if xml_start > 0 else None
+                    # 流式阶段正文节点已把 XML 显示出来 → 替换为剥离 XML 的干净文本
+                    # （否则正文残留 <tool_call> 乱码；且 _turn_ai_text 也会带上）
+                    ui.on_replace_streamed_text(text_content or "")
                     messages.append({
                         "role": "assistant",
                         "content": text_content or "",
@@ -152,9 +156,14 @@ class FunctionCallingLoop:
             if final.tool_calls:
                 # 原生 tool_calls 路径：追加 assistant 消息
                 if not xml_calls:
+                    # XML fallback 派生的 tool_calls：content 用剥离 XML 的干净文本，
+                    # 否则 <tool_call> 乱码会落盘并在再次渲染时显示
+                    content = (result.clean_text
+                               if result.clean_text is not None
+                               else (result.response_text or ""))
                     messages.append({
                         "role": "assistant",
-                        "content": result.response_text or "",
+                        "content": content,
                         "tool_calls": final.tool_calls,
                     })
 
@@ -227,9 +236,10 @@ class FunctionCallingLoop:
                         else:
                             ui.on_text_token(event.content)
                 elif isinstance(event, StreamEnd):
-                    self._try_xml_fallback(response_text, event, ui)
+                    clean_text = self._try_xml_fallback(response_text, event, ui)
                     ui.on_text_done()
-                    return _TurnResult(stream_end=event, response_text=response_text)
+                    return _TurnResult(stream_end=event, response_text=response_text,
+                                       clean_text=clean_text)
         except TypeError as e:
             logger.exception("LLM 流处理类型错误")
             ui.on_tool_error("LLM", f"类型错误(可能是 pycache 过期): {e}")
@@ -261,8 +271,12 @@ class FunctionCallingLoop:
 
     def _try_xml_fallback(
         self, response_text: str, event: StreamEnd, ui: ExecutorUI,
-    ) -> StreamEnd:
-        """从文本中剥离 XML（<invoke> 或 <tool_call>）并作为 tool_calls fallback。"""
+    ) -> str | None:
+        """从文本中剥离 XML（<invoke> 或 <tool_call>）并作为 tool_calls fallback。
+
+        Returns:
+            剥离 XML 后的正文文本（有 XML 时），否则 None
+        """
         xml_start = find_xml_start(response_text)
         if xml_start >= 0:
             clean = response_text[:xml_start].strip()
@@ -277,7 +291,8 @@ class FunctionCallingLoop:
                 xml_calls = self._extract_xml_tool_calls(response_text)
                 if xml_calls:
                     event.tool_calls = xml_calls
-        return event
+            return clean
+        return None
 
     @staticmethod
     def _extract_xml_tool_calls(text: str) -> list[dict]:
