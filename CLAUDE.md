@@ -14,7 +14,7 @@ Aide Agent — 本地个人智能管家。核心不是"能做多少事"而是"�
 
 ```bash
 # 运行应用
-uv run python shell/main.py
+uv run python core/main.py
 
 # 运行全部测试（1175 个）
 uv run pytest tests/ -q
@@ -29,8 +29,7 @@ uv run pytest tests/test_commands.py::test_route_command -q
 uv sync
 
 # 构建独立分发包
-uv run python scripts/build.py       # 完整构建（下载模型 + PyInstaller）
-uv run python scripts/build.py --no-model  # 跳过模型下载
+uv run python core/build.py
 ```
 
 ## 平台特定依赖
@@ -58,8 +57,8 @@ pystray 依赖系统 GTK/AppIndicator 包：
 
 平台验证：
 ```bash
-bash scripts/verify_linux.sh   # Linux
-bash scripts/verify_macos.sh   # macOS
+bash core/verify_linux.sh   # Linux
+bash core/verify_macos.sh   # macOS
 ```
 
 ## 技术栈
@@ -81,7 +80,10 @@ core/
 ├── storage.py           # JSON 读写 + Write-Actor + JSONL 工具函数
 ├── resources.py         # is_bundled() / get_resource_path() — dev/bundle 双模式路径解析
 ├── errors.py            # 统一错误类型（AideError / ProviderError / ToolError / ConfigError / SessionError）
-├── launcher.py          # 应用启动工具 — 单实例锁、控制台装饰、托盘守护进程拉起（从 shell/main.py 提取）
+├── launcher.py          # 应用启动工具 — 单实例锁、控制台装饰、托盘守护进程拉起
+├── main.py              # 应用入口 + 烟雾测试（uv run python core/main.py）
+├── tray_daemon.py       # 系统托盘后台守护进程
+├── build.py             # 独立分发包构建（PyInstaller 打包 + 验证 + 安装脚本）
 ├── kernel/              # Agent 内核（零 UI 依赖）
 │   ├── bootstrap.py     # AppBootstrap — 5-phase 组合根（_init_provider / _init_tooling / _init_storage_and_context / _init_plugins / _init_kernel）
 │   ├── context.py       # KernelContext — 依赖聚合（Memory/Tooling/Session 三个子 context）
@@ -155,9 +157,7 @@ ui/
 │   ├── screens/         # home / onboarding / api_config
 │   └── widgets/         # message_list（回合树管理器）/ tree_nodes（树节点组件）/ input_box / command_palette / status_bar
 
-shell/
-├── main.py              # 应用入口 + 烟雾测试
-└── tray_daemon.py       # 系统托盘后台守护进程
+平台验证脚本：`core/verify_linux.sh` / `core/verify_macos.sh`
 ```
 
 **配置路径**：`~/.aide/config/settings.json`

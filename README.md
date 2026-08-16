@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/Yeyr43/Aide-Agent/main/install.sh |
 git clone https://github.com/Yeyr43/Aide-Agent.git
 cd Aide-Agent
 uv sync
-uv run python shell/main.py
+uv run python core/main.py
 ```
 
 ## 使用
@@ -112,7 +112,7 @@ Python 3.13+ · Textual 0.80+ · Pydantic 2 · pystray · Pygments · httpx · d
 
 ```bash
 uv sync                     # 安装依赖
-uv run python shell/main.py # 启动应用
+uv run python core/main.py # 启动应用
 uv run pytest tests/ -q     # 运行全部测试（1175 个）
 ```
 

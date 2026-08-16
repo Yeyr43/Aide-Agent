@@ -1,7 +1,7 @@
 """Aide Agent 入口脚本 — 单实例运行。
 
 用法:
-    uv run python shell/main.py
+    uv run python core/main.py
     aide
 
 第二次运行 aide 时，不会启动新实例，而是激活已有窗口。
@@ -10,12 +10,20 @@
 import sys
 from pathlib import Path
 
-# 确保项目根目录在 Python path 中（仅开发模式，PyInstaller bundle 中跳过）
-from core.resources import is_bundled
-if not is_bundled():
-    _project_root = Path(__file__).parent.parent
+# 开发模式路径处理（PyInstaller bundle 中 sys.frozen 已设，跳过）：
+# 1) 把脚本所在目录（core/）从 sys.path 移除——否则 `import locale` 会解析到
+#    core/locale.py 遮蔽标准库 locale，textual 等依赖 stdlib locale 的模块
+#    相对导入直接崩溃；
+# 2) 注入项目根目录，使 `python core/main.py` 脱离 uv 也能运行。
+if not getattr(sys, "frozen", False):
+    _here = Path(__file__).resolve().parent
+    if str(_here) in sys.path:
+        sys.path.remove(str(_here))
+    _project_root = _here.parent
     if str(_project_root) not in sys.path:
         sys.path.insert(0, str(_project_root))
+
+from core.resources import is_bundled
 
 from core.setup import aide_dir, ensure_aide_root
 from core.launcher import (

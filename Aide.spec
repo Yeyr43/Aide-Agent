@@ -3,7 +3,7 @@
 
 构建:
     uv run python -m PyInstaller Aide.spec --noconfirm
-    或: uv run python scripts/build.py
+    或: uv run python core/build.py
 """
 
 import sys
@@ -94,7 +94,7 @@ excludes = [
 
 # ── PyInstaller Analysis ──
 a = Analysis(
-    ["shell/main.py"],
+    ["core/main.py"],
     pathex=[],
     binaries=[],
     datas=datas,

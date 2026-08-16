@@ -1,15 +1,24 @@
 """Aide 独立分发构建脚本。
 
 用法:
-    uv run python scripts/build.py  # PyInstaller 构建 + 产物验证 + 启动器/安装脚本
+    uv run python core/build.py  # PyInstaller 构建 + 产物验证 + 启动器/安装脚本
 """
 
 from __future__ import annotations
 
-import argparse
-import subprocess
 import sys
 from pathlib import Path
+
+# 脚本位于 core/ 包内：把脚本目录从 sys.path 移除，避免 core/locale.py
+# 遮蔽标准库 locale（subprocess/argparse 等 stdlib 依赖 locale，会导致 ImportError）。
+# 必须在任何会间接 import locale 的 stdlib 模块之前执行。
+if not getattr(sys, "frozen", False):
+    _here = Path(__file__).resolve().parent
+    if str(_here) in sys.path:
+        sys.path.remove(str(_here))
+
+import argparse
+import subprocess
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 DIST_DIR = PROJECT_ROOT / "dist"

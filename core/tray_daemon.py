@@ -65,8 +65,8 @@ class TrayDaemon:
             return [str(exe)]
         # Source mode
         if IS_WINDOWS:
-            return ["cmd", "/c", "title Aide Agent && uv run python shell/main.py"]
-        return ["uv", "run", "python", "shell/main.py"]
+            return ["cmd", "/c", "title Aide Agent && uv run python core/main.py"]
+        return ["uv", "run", "python", "core/main.py"]
 
     def _spawn_tui(self) -> None:
         if self._tui_process is not None and self._tui_process.poll() is None:

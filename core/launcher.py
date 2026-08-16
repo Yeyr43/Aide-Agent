@@ -1,6 +1,6 @@
 """应用启动工具 — 单实例锁、守护进程、控制台装饰。
 
-从 shell/main.py 提取，独立可测试。
+从入口脚本（core/main.py）提取，独立可测试。
 """
 
 from __future__ import annotations
