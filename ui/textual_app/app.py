@@ -42,7 +42,7 @@ class AideApp(App):
 
     BINDINGS = [
         ("escape", "go_home", t("app.return_home")),
-        ("ctrl+q", "noop", "Ctrl+Q disabled"),
+        ("ctrl+q", "cancel_agent", t("app.cancel_agent")),
     ]
 
     CSS_PATH = "app.tcss"
@@ -95,6 +95,9 @@ class AideApp(App):
         self._session = SessionContext()
         self._restored_turns: list[dict] = []  # 已有会话恢复用的按轮记录
         self._last_usage: TokenUsage | None = None  # 来自 ChatResult 的 token 用量
+        # Ctrl+Q 终止用的在途 worker 引用（chat / reflect）
+        self._chat_worker = None
+        self._reflect_worker = None
 
         # ── 状态栏 + 冷启动引导 ──
         status_bar = self.query_one("#status-bar", StatusBar)
@@ -230,7 +233,7 @@ class AideApp(App):
         msg_list.add_user_message(text or "", file_paths=images)
         self._session.conversation.append({"role": "user", "content": content})
         input_box.disabled = True
-        self.chat_worker()
+        self._chat_worker = self.chat_worker()
 
     def _restore_session(self, session_id: str) -> None:
         """恢复已有会话的对话状态。
@@ -310,7 +313,7 @@ class AideApp(App):
             return
 
         input_box.disabled = True
-        self.chat_worker()
+        self._chat_worker = self.chat_worker()
 
     # ── Worker: 对话 ─────────────────────────────────────────────────
 
@@ -468,7 +471,24 @@ class AideApp(App):
         """判断当前是否已在首页。"""
         return any(isinstance(s, HomeScreen) for s in self.screen_stack)
 
-    @staticmethod
-    def action_noop() -> None:
-        """空操作（禁用 Ctrl+Q 退出）。"""
-        pass
+    def action_cancel_agent(self) -> None:
+        """Ctrl+Q：强制终止当前 agent 工作（对话/反思），不退出 Aide。
+
+        worker.cancel() 抛出 asyncio.CancelledError（BaseException），
+        不被 chat_worker 的 except Exception 吞掉，finally 正常恢复输入框。
+        """
+        worker = None
+        for w in (self._chat_worker, self._reflect_worker):
+            if w is not None and w.is_running:
+                worker = w
+                break
+        if worker is None:
+            return  # 无进行中任务，忽略按键
+
+        worker.cancel()
+
+        # 收尾 UI：冻结部分流式内容 + 系统提示
+        msg_list = self.query_one("#messages", MessageList)
+        if msg_list.has_pending():
+            msg_list.finish_ai_message()
+        msg_list.add_system_notice(t("app.agent_cancelled"))

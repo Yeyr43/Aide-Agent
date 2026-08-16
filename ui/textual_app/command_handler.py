@@ -102,7 +102,7 @@ class CommandHandler:
         input_box.placeholder = f"*{label}...*"
         input_box.add_class("maintenance")
         self._app._session.is_maintenance = True
-        self._app.reflect_worker()
+        self._app._reflect_worker = self._app.reflect_worker()
 
     def _start_think(self, msg_list: MessageList) -> None:
         """进入思考模式 — 注入提示并触发 LLM 响应。"""
@@ -129,7 +129,7 @@ class CommandHandler:
                     app.query_one("#session-label", Static).update(f" {info.name}")
                 app._session.conversation.append({"role": "user", "content": think_prompt})
                 app._session.last_user_text = think_prompt
-                app.chat_worker()
+                app._chat_worker = app.chat_worker()
             except Exception:
                 # kernel 未初始化等异常：恢复输入框，避免永久禁用
                 input_box.disabled = False

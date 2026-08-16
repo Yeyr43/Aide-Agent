@@ -262,5 +262,13 @@
   "cmd.think.prompt": {
     "zh": "请先思考和分析这个问题，列出关键考虑因素和可能的方案，暂不调用工具。",
     "en": "Please think through this problem first. Outline key considerations and possible approaches. Do not call tools yet."
+  },
+  "app.cancel_agent": {
+    "zh": "Ctrl+Q 终止任务",
+    "en": "Ctrl+Q Stop Task"
+  },
+  "app.agent_cancelled": {
+    "zh": "⏹ 已终止当前任务",
+    "en": "⏹ Task stopped"
   }
 }
