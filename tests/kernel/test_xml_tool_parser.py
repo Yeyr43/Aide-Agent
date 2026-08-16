@@ -106,3 +106,50 @@ class TestTryParseXml:
         clean, calls = try_parse_xml(text)
         assert clean == "First call:"
         assert len(calls) == 2
+
+
+class TestToolCallFormat:
+    """回归：Claude Code/OpenClaw 风格 <tool_call><function=> 方言必须被解析
+    （曾漏解析 → 模型输出整块 XML 当正文显示成乱码）。"""
+
+    def test_tool_call_format(self):
+        text = (
+            '<tool_call>\n'
+            '<function=run_shell>\n'
+            '<parameter=command>type "C:/Users/Administrator/Desktop/test/read.txt"</parameter>\n'
+            '</function>\n'
+            '</tool_call>'
+        )
+        calls = extract_xml_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0]["function"]["name"] == "run_shell"
+        args = json.loads(calls[0]["function"]["arguments"])
+        assert args["command"] == 'type "C:/Users/Administrator/Desktop/test/read.txt"'
+
+    def test_tool_call_with_leading_text(self):
+        """XML 块前有正文时：try_parse_xml 分离出正文 + 工具调用。"""
+        text = '我来执行。\n<tool_call>\n<function=read_file>\n<parameter=file_path>src/main.py</parameter>\n</function>\n</tool_call>'
+        clean, calls = try_parse_xml(text)
+        assert "我来执行" in clean
+        assert len(calls) == 1
+        assert calls[0]["function"]["name"] == "read_file"
+        assert json.loads(calls[0]["function"]["arguments"])["file_path"] == "src/main.py"
+
+    def test_find_xml_start_detects_tool_call(self):
+        from core.kernel.xml_tool_parser import find_xml_start
+        assert find_xml_start('<tool_call>') == 0
+        assert find_xml_start('前言<invoke name="x">') == 2
+        # 混合文本取最早出现的标记
+        assert find_xml_start('ab<tool_call>cd<invoke name="x">') == 2
+        assert find_xml_start('ab<invoke name="x">cd<tool_call>') == 2
+        assert find_xml_start('纯文本') == -1
+
+    def test_mixed_invoke_and_toolcall_both_parsed(self):
+        text = (
+            '<invoke name="search_chat"><parameter name="query">a</parameter></invoke>'
+            '<tool_call><function=web><parameter=action>search</parameter></function></tool_call>'
+        )
+        calls = extract_xml_tool_calls(text)
+        assert len(calls) == 2
+        assert calls[0]["function"]["name"] == "search_chat"
+        assert calls[1]["function"]["name"] == "web"

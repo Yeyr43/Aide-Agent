@@ -1,10 +1,13 @@
 """XML 工具调用解析 — fallback for 不支持原生 function calling 的模型。
 
-兼容 Claude/Anthropic 格式的 XML invoke 语法：
-  <invoke name="tool_name">
-    <parameter name="arg1">value1</parameter>
-    <parameter name="arg2">value2</parameter>
-  </invoke>
+兼容两种 XML 方言：
+1. <invoke name="tool_name"><parameter name="arg1">value1</parameter></invoke>
+2. Claude Code/OpenClaw 风格：
+     <tool_call>
+       <function=run_shell>
+         <parameter=command>...</parameter>
+       </function>
+     </tool_call>
 
 解析结果是标准化工具调用列表，格式与原生 function calling 一致。
 """
@@ -20,19 +23,45 @@ _XML_INVOKE_RE = re.compile(
     r'<invoke\s+name="(\w+)"[^>]*>(.*?)</invoke>',
     re.DOTALL,
 )
+_XML_TOOLCALL_RE = re.compile(
+    r'<tool_call[^>]*>(.*?)</tool_call>',
+    re.DOTALL,
+)
+_XML_FUNCTION_RE = re.compile(
+    r'<function\b(?:=|\s+name=)["\']?(\w+)["\']?[^>]*>',
+    re.DOTALL,
+)
+# 参数名：<parameter name="x"> 或 <parameter=x> 两种写法都兼容
 _XML_PARAM_RE = re.compile(
-    r'<parameter\s+name="(\w+)"[^>]*>(.*?)</parameter>',
+    r'<parameter(?:\s+name=|=)["\']?(\w+)["\']?[^>]*>(.*?)</parameter>',
     re.DOTALL,
 )
 
 
 # ── 提取 ──────────────────────────────────────────────────────────────
 
+def find_xml_start(text: str) -> int:
+    """最早出现的 XML 工具调用标记位置（<invoke 或 <tool_call），无则 -1。"""
+    positions = [p for p in (text.find("<invoke"), text.find("<tool_call")) if p >= 0]
+    return min(positions) if positions else -1
+
+
+def _iter_xml_blocks(text: str):
+    """迭代所有 XML 工具块，产出 (params_block, tool_name)。兼容两种方言。"""
+    for m in _XML_INVOKE_RE.finditer(text):
+        yield m.group(2), m.group(1)
+    for m in _XML_TOOLCALL_RE.finditer(text):
+        block = m.group(1)
+        fm = _XML_FUNCTION_RE.search(block)
+        if fm:
+            yield block, fm.group(1)
+
+
 def extract_xml_tool_calls(text: str) -> list[dict]:
-    """从文本中提取 XML 格式的工具调用。
+    """从文本中提取 XML 格式的工具调用（兼容 <invoke> 与 <tool_call> 两种方言）。
 
     Args:
-        text: LLM 原始输出文本（可能含 <invoke> XML 块）
+        text: LLM 原始输出文本（可能含 XML 工具调用块）
 
     Returns:
         标准化的 tool_calls 列表，格式与 OpenAI function calling 一致：
@@ -40,10 +69,7 @@ def extract_xml_tool_calls(text: str) -> list[dict]:
           "function": {"name": "...", "arguments": "{...}"}}]
     """
     calls: list[dict] = []
-    for i, match in enumerate(_XML_INVOKE_RE.finditer(text)):
-        tool_name = match.group(1)
-        params_block = match.group(2)
-
+    for i, (params_block, tool_name) in enumerate(_iter_xml_blocks(text)):
         args: dict[str, str] = {}
         for pm in _XML_PARAM_RE.finditer(params_block):
             args[pm.group(1)] = pm.group(2).strip()
@@ -71,7 +97,7 @@ def try_parse_xml(text: str) -> tuple[str, list[dict]]:
         clean_text: 剥离 XML 后的纯文本（可能为空）
         tool_calls: 标准化的 tool_calls 列表（可能为空）
     """
-    xml_start = text.find("<invoke")
+    xml_start = find_xml_start(text)
     if xml_start < 0:
         return text, []
 

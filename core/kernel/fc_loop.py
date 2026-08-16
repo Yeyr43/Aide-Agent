@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from .protocols import ExecutorUI
 from .tool_executor import ToolExecutor
-from .xml_tool_parser import extract_xml_tool_calls
+from .xml_tool_parser import extract_xml_tool_calls, find_xml_start
 from core.llm_gateway import TextDelta, ThinkingDelta, StreamEnd
 from core.errors import ProviderError
 
@@ -126,7 +126,7 @@ class FunctionCallingLoop:
                 xml_calls = self._extract_xml_tool_calls(result.response_text)
                 if xml_calls:
                     final.tool_calls = xml_calls
-                    xml_start = result.response_text.find("<invoke")
+                    xml_start = find_xml_start(result.response_text)
                     text_content = result.response_text[:xml_start].strip() if xml_start > 0 else None
                     messages.append({
                         "role": "assistant",
@@ -262,8 +262,8 @@ class FunctionCallingLoop:
     def _try_xml_fallback(
         self, response_text: str, event: StreamEnd, ui: ExecutorUI,
     ) -> StreamEnd:
-        """从文本中剥离 <invoke> XML 并作为 tool_calls fallback。"""
-        xml_start = response_text.find("<invoke")
+        """从文本中剥离 XML（<invoke> 或 <tool_call>）并作为 tool_calls fallback。"""
+        xml_start = find_xml_start(response_text)
         if xml_start >= 0:
             clean = response_text[:xml_start].strip()
             native_has = bool(event.tool_calls)
