@@ -280,7 +280,10 @@ class TestEnsureDaemon:
         monkeypatch.setattr("core.launcher.IS_WINDOWS", True)
         script = tmp_path / "tray_daemon.py"
         script.write_text("")
-        with patch("subprocess.Popen") as mp:
+        # DETACHED_PROCESS 是 Windows 专属常量，POSIX 不存在 → patch 注入
+        with patch("subprocess.DETACHED_PROCESS", 0x00000008, create=True), \
+             patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True), \
+             patch("subprocess.Popen") as mp:
             ensure_daemon(tmp_path / "daemon.pid", script)
         mp.assert_called_once()
         cmd, kwargs = mp.call_args.args[0], mp.call_args.kwargs
@@ -289,8 +292,7 @@ class TestEnsureDaemon:
         expected = str(pythonw) if pythonw.exists() else sys.executable
         assert cmd[0] == expected
         assert cmd[1] == str(script)
-        assert kwargs.get("creationflags") == (
-            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+        assert kwargs.get("creationflags") == (0x00000008 | 0x00000200)
 
     def test_daemon_posix_spawns_detached(self, tmp_path, monkeypatch):
         """非 Windows：start_new_session + DEVNULL 重定向。"""
@@ -312,13 +314,16 @@ class TestEnsureDaemon:
         lock_path.write_text("not-a-pid")
         script = tmp_path / "tray_daemon.py"
         script.write_text("")
-        with patch("subprocess.Popen") as mp:
+        with patch("subprocess.DETACHED_PROCESS", 0x00000008, create=True), \
+             patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True), \
+             patch("subprocess.Popen") as mp:
             ensure_daemon(lock_path, script)
         mp.assert_called_once()
 
 
 class TestBringToFront:
-    """窗口激活（仅 Windows）。"""
+    """窗口激活（仅 Windows — ctypes.WINFUNCTYPE 在 POSIX 不存在）。"""
+    pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Win32 窗口 API")
 
     @staticmethod
     def _windows_fake_ctypes() -> MagicMock:

@@ -66,7 +66,10 @@ def _is_aide_process(handle: int) -> bool:
     size = ctypes.c_ulong(len(buf))
     if not ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
         return True
-    return Path(buf.value).stem.lower() in _AIDE_IMAGE_NAMES
+    # 手动解析 basename：Windows 反斜杠路径在 POSIX 上 Path.stem 不识别 \ 分隔
+    base = buf.value.replace("\\", "/").rsplit("/", 1)[-1]
+    stem = base.rsplit(".", 1)[0].lower()
+    return stem in _AIDE_IMAGE_NAMES
 
 
 def acquire_instance_lock(lock_file: Path) -> bool:

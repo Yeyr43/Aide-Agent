@@ -475,7 +475,9 @@ class TestLoadSafetyAndFallback:
     async def test_stat_oserror_continues(self, host, tmp_path, monkeypatch):
         _write_python_plugin(host, "stat-p", _BASIC_PLUGIN)
         monkeypatch.setattr("sys.platform", "linux")
-        with patch("pathlib.Path.stat", side_effect=OSError("boom")):
+        # exists 显式 True：否则 POSIX 上 exists() 内部也调 stat → 误判入口不存在
+        with patch("pathlib.Path.exists", return_value=True), \
+             patch("pathlib.Path.stat", side_effect=OSError("boom")):
             info = await host.load("stat-p")
         assert info is not None
 

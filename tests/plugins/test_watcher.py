@@ -254,10 +254,15 @@ class TestStartStop:
         await w.stop()
 
     async def test_detect_changed_files_stat_oserror(self, tmp_path):
-        """文件 stat 抛 OSError → 忽略。"""
+        """文件 stat 抛 OSError → 忽略。
+
+        显式 mock exists=True（否则 POSIX 上 exists() 内部吞掉 OSError，
+        永远走不进 stat 分支，测试失效）。
+        """
         d = _make_plugin_dir(tmp_path, files={"SKILL.md": "x"})
         w = PluginWatcher(tmp_path, MagicMock())
-        with patch("pathlib.Path.stat", side_effect=OSError):
+        with patch("pathlib.Path.exists", return_value=True), \
+             patch("pathlib.Path.stat", side_effect=OSError):
             assert w._detect_changed_files(d) == set()
 
     async def test_stop_without_start_is_noop(self, tmp_path):
