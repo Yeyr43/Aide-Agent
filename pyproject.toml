@@ -1,6 +1,6 @@
 [project]
 name = "aide"
-version = "1.0.0"
+version = "1.0.1"
 description = "Aide Agent — local personal AI assistant"
 requires-python = ">=3.13"
 dependencies = [
