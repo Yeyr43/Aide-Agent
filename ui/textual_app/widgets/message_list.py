@@ -392,13 +392,10 @@ class MessageList(StickyPinMixin, VerticalScroll):
         覆盖 Textual 的 reactive watcher（super() 保留滚动条位置更新）。
         滚动走 reflow_visible 快速路径只重绘几何变化的组件；dock 固定头几何
         不变 → 每次滚动都显式重绘固定头所在行，避免内容在它下方滚动时残留/重叠。
-
-        锚点更新用去抖（_schedule_sticky_update）：长对话滑动会快速跨过多个
-        消息边界，即时跟随会让钉住的输入消息框在滑动中连续变为前一条（鬼畜）。
         """
         super().watch_scroll_y(old_value, new_value)
         self._pinned = new_value >= self.max_scroll_y - 0.5
-        self._schedule_sticky_update()
+        self._update_sticky_pin()
         if self._pinned_msg is not None:
             # 钉住期间每次滚动整体重绘消息区（同 ScrollView 模式）：固定头几何不变，
             # 快速路径不会重绘它所在行，树滚动穿越边界时局部刷新会残留/重叠/错位
