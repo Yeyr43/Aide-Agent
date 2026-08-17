@@ -149,7 +149,7 @@ class TestCheckPermissions:
         assert not any(w.category == "permissions" for w in result.warnings)
 
     async def test_skipped_on_windows(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("os.name", "nt")
+        monkeypatch.setattr("core.plugins.security.IS_WINDOWS", True)
         d = tmp_path / "plug"
         _write(d, "script.sh", "echo hi")
         with patch("pathlib.Path.stat", return_value=self._stat_result(0o100777)):
