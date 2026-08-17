@@ -449,7 +449,7 @@ async def test_sticky_releases_when_message_fits():
         max_pinned = ml.max_scroll_y
 
         ml.scroll_home(animate=False)
-        await pilot.pause(0.1)
+        await pilot.pause(0.3)  # 等锚点去抖（150ms）结算
         assert ml._pinned_msg is None
         msg = app.query(".user-message")[-1]
         assert msg.styles.display == "block"  # 恢复显示
@@ -483,12 +483,12 @@ async def test_sticky_switches_between_messages():
         tree1 = ml._msg_trees[0]
         t1_top = tree1.virtual_region_with_margin.y
         ml.scroll_to(y=t1_top + 5, animate=False)
-        await pilot.pause(0.1)
+        await pilot.pause(0.3)  # 等锚点去抖结算
         assert ml._pinned_msg is msg1
 
         # 滚到顶部：无钉住（第一问可正常显示）
         ml.scroll_home(animate=False)
-        await pilot.pause(0.1)
+        await pilot.pause(0.3)  # 等锚点去抖结算
         assert ml._pinned_msg is None
 
 
@@ -524,17 +524,17 @@ async def test_sticky_no_flicker_across_boundary():
 
         # msg2 顶刚露回视口 2px（死区内）→ 仍保持钉住，不切回 msg1
         ml.scroll_to(y=top2 - 2, animate=False)
-        await pilot.pause(0.1)
+        await pilot.pause(0.3)  # 等锚点去抖结算
         assert ml._pinned_msg is msg2, "死区内滚动不应切回旧消息"
 
         # 反向再滚一点（msg2 又滑出 1px）→ 仍钉住 msg2，无来回切换
         ml.scroll_to(y=top2 + 1, animate=False)
-        await pilot.pause(0.1)
+        await pilot.pause(0.3)  # 等锚点去抖结算
         assert ml._pinned_msg is msg2
 
         # 越过死区（msg2 明显回到视口）→ 释放并切到 msg1
         ml.scroll_to(y=top2 - db - 2, animate=False)
-        await pilot.pause(0.1)
+        await pilot.pause(0.3)  # 等锚点去抖结算
         assert ml._pinned_msg is msg1
 
 
@@ -672,25 +672,25 @@ async def test_sticky_anchor_survives_tree_hidden_behind_header():
 
         # 回顶 → 无钉住，读取未钉住几何
         ml.scroll_home(animate=False)
-        await pilot.pause(0.1)
+        await pilot.pause(0.3)  # 等锚点去抖结算
         assert ml._pinned_msg is None
         H1 = m1.virtual_region_with_margin.height
         t1b = t1.virtual_region_with_margin.bottom
 
         # 树尾可见 → M1 钉住
         ml.scroll_to(y=m1.virtual_region.y + 1, animate=False)
-        await pilot.pause(0.1)
+        await pilot.pause(0.3)  # 等锚点去抖结算
         assert ml._pinned_msg is m1, "树尾可见时应钉住 M1"
 
         # 树尾进入标题波段（完全遮挡）→ M1 仍保持钉住（锚点不因树被遮而丢失）
         ml.scroll_to(y=t1b - H1, animate=False)
-        await pilot.pause(0.1)
+        await pilot.pause(0.3)  # 等锚点去抖结算
         assert ml._pinned_msg is m1, "树被标题遮挡时 M1 应保持锚点（不释放）"
 
         # 继续滚到 M2 顶滑出 → 锚点切换到 M2
         m2_top = m2.virtual_region.y
         ml.scroll_to(y=m2_top + 1, animate=False)
-        await pilot.pause(0.1)
+        await pilot.pause(0.3)  # 等锚点去抖结算
         assert ml._pinned_msg is m2, "M2 顶滑出时锚点应切到 M2"
 
 
@@ -771,5 +771,5 @@ async def test_long_dialog_anchor_stays_pinned():
 
         # 回顶 → 无钉住（消息可正常显示）
         ml.scroll_home(animate=False)
-        await pilot.pause(0.1)
+        await pilot.pause(0.3)  # 等锚点去抖结算
         assert ml._pinned_msg is None

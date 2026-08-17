@@ -11,6 +11,7 @@ display:none 移除的占位 == 固定头 dock 间距（等高 + 同 margin）�
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from textual.events import Resize
@@ -23,12 +24,50 @@ if TYPE_CHECKING:
 # 供 type hint 使用；运行时构造 header 在方法内惰性导入（避免与 message_list 循环导入）
 _TurnTree = TurnTree
 
+# 锚点去抖：滚动停止 STICKY_SETTLE_MS 后才重算锚点。
+# 长对话滑动会快速跨过多个消息边界，即时跟随会让钉住的输入消息框在滑动中
+# 连续变为前一条（鬼畜）；去抖后滑动中锚点保持，停下才更新。
+STICKY_SETTLE_MS = 0.1
+
+
+def _consume_task_exception(task: asyncio.Task) -> None:
+    """消费去抖任务的异常（防止 unhandled exception 告警）。"""
+    if not task.cancelled():
+        task.exception()
+
 
 class StickyPinMixin:
     """用户消息钉顶（几何 sticky）mixin — 锚点语义见各方法 docstring。
 
     锚点判定用 virtual_region；被钉消息 display:none 后其坐标异常，勿在读它判定。
     """
+
+    # ── 滚动去抖（锚点滑动中保持，停止后更新）────────────────────────
+
+    def _schedule_sticky_update(self) -> None:
+        """滚动驱动的锚点更新去抖：连续滚动时取消前一次，停止 STICKY_SETTLE_MS 后重算。
+
+        供 watch_scroll_y 调用；on_resize / restore 用立即 _update_sticky_pin。
+        """
+        if self._sticky_settle_task is not None and not self._sticky_settle_task.done():
+            self._sticky_settle_task.cancel()
+        self._sticky_settle_task = asyncio.create_task(self._sticky_settle())
+        self._sticky_settle_task.add_done_callback(_consume_task_exception)
+
+    async def _sticky_settle(self) -> None:
+        """滚动停止后的锚点重算。"""
+        await asyncio.sleep(STICKY_SETTLE_MS)
+        self._update_sticky_pin()
+
+    def _cancel_settle(self) -> None:
+        """取消挂起的去抖任务（clear/卸载时）。"""
+        if self._sticky_settle_task is not None and not self._sticky_settle_task.done():
+            self._sticky_settle_task.cancel()
+        self._sticky_settle_task = None
+
+    def on_unmount(self) -> None:
+        """组件卸载时取消挂起的锚点去抖任务。"""
+        self._cancel_settle()
 
     def _init_pin_state(self) -> None:
         """初始化钉顶状态（宿主 __init__ 末尾调用）。"""
@@ -41,6 +80,7 @@ class StickyPinMixin:
         self._pinned_orig_display = ""  # 钉住前消息的 display 值（释放时恢复）
         self._sticky_header: MessageWidget | None = None  # dock:top 固定头（钉顶时显示消息副本）
         self._pin_disabled = False  # restore/clear 期间暂停钉顶判定
+        self._sticky_settle_task: asyncio.Task | None = None  # 滚动去抖任务（滑动中锚点保持）
 
     def on_mount(self) -> None:
         """创建钉顶固定头（dock:top，初始隐藏，不参与流式布局）。"""
