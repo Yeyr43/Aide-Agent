@@ -493,6 +493,52 @@ async def test_sticky_switches_between_messages():
 
 
 @pytest.mark.asyncio
+async def test_sticky_no_flicker_across_boundary():
+    """滚动在消息顶边界抖动 → 锚点不来回切（防鬼畜）。
+
+    回归：钉住 msg2 后滚动使其顶刚露回视口几 px（死区内），原逻辑立即释放
+    并切回 msg1；再滚回来又切回 msg2 → 顶部钉住的输入消息框鬼畜。
+    修复：深层消息释放要求 msg_top 回到视口内 ≥ 死区；且钉住状态下锚点只
+    向前跟随（不切回旧消息）。
+    """
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        ml.add_user_message("第一问")
+        paras1 = "\n\n".join(f"第一轮第{i}段：内容。" for i in range(30))
+        ml.add_ai_chunk(paras1)
+        ml.finish_ai_message()
+        await pilot.pause(0.1)
+        ml.add_user_message("第二问")
+        paras2 = "\n\n".join(f"第二轮第{i}段：内容。" for i in range(30))
+        ml.add_ai_chunk(paras2)
+        ml.finish_ai_message()
+        await pilot.pause(0.2)
+
+        msgs = app.query(".user-message")
+        msg1, msg2 = msgs[-2], msgs[-1]
+        assert ml._pinned_msg is msg2
+
+        top2 = ml._pinned_msg_top
+        db = ml._sticky_deadband(ml._pinned_msg_height)
+
+        # msg2 顶刚露回视口 2px（死区内）→ 仍保持钉住，不切回 msg1
+        ml.scroll_to(y=top2 - 2, animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is msg2, "死区内滚动不应切回旧消息"
+
+        # 反向再滚一点（msg2 又滑出 1px）→ 仍钉住 msg2，无来回切换
+        ml.scroll_to(y=top2 + 1, animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is msg2
+
+        # 越过死区（msg2 明显回到视口）→ 释放并切到 msg1
+        ml.scroll_to(y=top2 - db - 2, animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is msg1
+
+
+@pytest.mark.asyncio
 async def test_sticky_tall_message_scrolls_naturally():
     """消息 ≥ 一屏：钉住会盖住回复（违背"消息树正常显示"）→ 跳过，自然滚动。"""
     app = ScrollLayoutTestApp()

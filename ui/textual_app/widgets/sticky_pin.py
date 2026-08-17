@@ -62,9 +62,16 @@ class StickyPinMixin:
             if self._pinned_should_release():
                 self._release_sticky()
             else:
-                # 锚点跟随：滚动使下一消息顶滑出 → 切换到下一消息
-                new_target = self._active_sticky_target()
-                if new_target is not None and new_target[0] is not self._pinned_msg:
+                # 锚点跟随（仅向前）：只切到比当前更新的消息；向后（回旧消息）
+                # 只由 release 触发。滚动在消息顶边界小幅抖动（滚轮/触控板反馈）
+                # 时，旧消息的 release 被死区抑制 → 不会出现"释放→切回→再释放"
+                # 的来回振荡（防鬼畜）。
+                try:
+                    start = self._user_msgs.index(self._pinned_msg) + 1
+                except ValueError:
+                    start = len(self._user_msgs)
+                new_target = self._active_sticky_target(start_index=start)
+                if new_target is not None:
                     self._release_sticky()
                     self._engage_sticky(*new_target)
                 return
@@ -73,7 +80,7 @@ class StickyPinMixin:
             msg, tree, msg_top = target
             self._engage_sticky(msg, tree, msg_top)
 
-    def _active_sticky_target(self) -> tuple[MessageWidget, _TurnTree, float] | None:
+    def _active_sticky_target(self, start_index: int = 0) -> tuple[MessageWidget, _TurnTree, float] | None:
         """找到当前应钉住的消息：(msg, tree, msg_top)。
 
         锚点语义：上方最近的消息顶已滑出窗口顶（msg_top < scroll_y），且消息
@@ -82,13 +89,17 @@ class StickyPinMixin:
 
         不依赖树的几何——多回合短树滚动到"树间隙"（上方树已整体滑过）时，
         原逻辑因要求"树尾仍可见"而永远不钉，长对话滚动时顶部失去消息锚点。
+
+        start_index > 0 时只考虑该下标起（更）新的消息——钉住状态下锚点只向前
+        跟随，向后（回旧消息）由 _pinned_should_release 负责（防边界抖动鬼畜）。
         """
         sy = self.scroll_y
         h = self.size.height
         if h <= 0:
             return None
         candidate = None
-        for i, msg in enumerate(self._user_msgs):
+        for i in range(start_index, len(self._user_msgs)):
+            msg = self._user_msgs[i]
             if not msg.is_mounted:
                 continue
             try:
@@ -109,12 +120,35 @@ class StickyPinMixin:
             candidate = (msg, tree, msg_top)  # 上方最近滑出的消息
         return candidate
 
+    @staticmethod
+    def _sticky_deadband(height: float) -> float:
+        """钉顶死区（px）：消息高的一半、下限 10 上限 60。
+
+        滚动在消息顶边界小幅抖动（滚轮/触控板反馈）时，不释放/切换锚点，
+        避免钉住的输入消息框在相邻消息间来回切换（鬼畜）。
+        """
+        return max(10.0, min(height * 0.5, 60.0))
+
     def _pinned_should_release(self) -> bool:
-        """当前钉住是否应解除：消息可正常显示（顶回到视口）或消息 ≥ 一屏。"""
+        """当前钉住是否应解除：消息顶回到视口内一段距离（死区），或消息 ≥ 一屏。
+
+        死区抑制边界振荡：钉住时 msg_top < sy（已滑出），若滚动只把 msg_top 带回
+        视口边缘（sy ≈ msg_top）就立即释放，紧接着锚点会切回旧消息又释放，形成
+        鬼畜。深层消息要求 msg_top 回到视口内 ≥ 死区才释放。
+
+        近顶消息特例：首条消息 msg_top 只比 0 大几 px，其自然释放点 sy ≈ msg_top
+        落在死区窗口内，永远到不了 sy + 死区 → 改用紧条件 msg_top >= sy（否则
+        scroll_home 永不释放）。
+        """
         sy = self.scroll_y
         h = self.size.height
-        if self._pinned_msg_top >= sy:
-            return True  # 消息顶回到视口 → 正常显示
+        db = self._sticky_deadband(self._pinned_msg_height)
+        if self._pinned_msg_top <= db:
+            # 消息顶距内容顶部 < 死区（首条/靠顶消息）→ 顶回到视口即释放
+            if self._pinned_msg_top >= sy:
+                return True
+        elif self._pinned_msg_top >= sy + db:
+            return True  # 消息顶回到视口内一段距离 → 正常显示
         if self._pinned_msg_height >= h:
             return True  # 窗口缩小后消息 ≥ 一屏 → 钉住会盖住回复，释放
         return False
