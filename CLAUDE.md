@@ -8,15 +8,13 @@ Aide Agent — 本地个人智能管家。核心不是"能做多少事"而是"�
 
 **关键原则**：用户可控、本地隐私、边界清晰、渐进演化。所有数据本地存储，备份即复制文件夹。
 
-设计背景和完整推导见 [CONTEXT.md](CONTEXT.md) — 包含设计演变、批判性收敛记录、已移除功能及原因。
-
 ## 常用命令
 
 ```bash
 # 运行应用
 uv run python core/main.py
 
-# 运行全部测试（1175 个）
+# 运行全部测试（1765 个）
 uv run pytest tests/ -q
 
 # 运行单个测试文件
@@ -80,9 +78,9 @@ core/
 ├── storage.py           # JSON 读写 + Write-Actor + JSONL 工具函数
 ├── resources.py         # is_bundled() / get_resource_path() — dev/bundle 双模式路径解析
 ├── errors.py            # 统一错误类型（AideError / ProviderError / ToolError / ConfigError / SessionError）
-├── launcher.py          # 应用启动工具 — 单实例锁、控制台装饰、托盘守护进程拉起
-├── main.py              # 应用入口 + 烟雾测试（uv run python core/main.py）
-├── tray_daemon.py       # 系统托盘后台守护进程
+├── launcher.py          # 应用启动工具 — 单实例锁（Windows 校验 PID 映像名防复用）、窗口激活、控制台装饰、托盘守护进程拉起
+├── main.py              # 应用入口 + 烟雾测试（uv run python core/main.py；`--no-daemon` 跳过托盘便于调试）
+├── tray_daemon.py       # 系统托盘后台守护进程（强杀 TUI 后清理 aide.pid 实例锁）
 ├── build.py             # 独立分发包构建（PyInstaller 打包 + 验证 + 安装脚本）
 ├── kernel/              # Agent 内核（零 UI 依赖）
 │   ├── bootstrap.py     # AppBootstrap — 5-phase 组合根（_init_provider / _init_tooling / _init_storage_and_context / _init_plugins / _init_kernel）
@@ -193,7 +191,7 @@ Phase 4 内：`PluginHost.load()` → 安全预检（PluginPreflightCheck）→ 
 
 ### 工具层 DI（ToolContext）
 
-工具不再通过模块级单例获取共享服务。`ToolRegistry.tool_context` 持有 `ToolContext`（search_index / sessions_root / agent_root / current_session_id / provider / tool_registry / hook_runner），`execute()` 时自动注入：
+工具不再通过模块级单例获取共享服务。`ToolRegistry.tool_context` 持有 `ToolContext`（search_index / sessions_root / agent_root / current_session_id / provider / tool_registry / hook_runner / plugin_host），`execute()` 时自动注入：
 
 ```python
 # 工具签名兼容新旧：
@@ -218,6 +216,14 @@ async def execute(arguments: dict, ctx=None) -> str:
 - **队列查询**：`action=status` 返回当前队列情况（上限/运行中/可用配额），主 agent 编排前先查、再派发（二次确认）
 - **编排判据在 `tools.strategy_6`**（Tools Prompt 使用策略段落，`prompts.json`），而非 delegate 工具描述——工具描述是被动的，模型不会主动看；策略段落才是主 agent 的决策上下文。判据：可拆多独立子任务/需大量扫描→委派；单一小任务/强依赖/需看中间结果→直接做
 - **SubagentStop hook**：子 agent 结束时触发，补全 9 事件里最后一个埋点
+
+### plugin 管理工具
+
+`plugin`（`core/tools/plugin_manager.py`）是第 9 个内置工具，让 LLM 在对话中自行管理插件：
+- `action=list` — 列出已装插件 + 加载状态 + 插件目录
+- `action=install` — 从**用户提供的本地目录或 zip** 复制到 `~/.aide/plugins` → 自动加载；zip 解压做路径逃逸校验；识别无效插件目录并报错
+- `action=load|unload` — 管理加载状态
+- 依赖 `ToolContext.plugin_host`（bootstrap Phase 4 后注入）。**不主动拉取任何来源**（install 的 path 由用户提供）；有副作用（写文件），按并发规则归入串行组，不加入子 agent 只读白名单
 
 ### Chat 中间件框架
 
@@ -267,7 +273,10 @@ think（灰，流式展开→结束折叠）/ tool（绿，精简单行，双击
 - 正文实时 Markdown：首行与节点同行（`│ ● 正文…`）做**行内 Markdown**（`_render_inline_markdown()` 转加粗/代码/斜体/删除线/链接，复用 `markdown.*` 主题样式与正文一致，未闭合定界保持字面量）；换行后的正文 RichMarkdown 流式渲染，`append_chunk` 节流重解析（未换行逐 token；换行后 80ms，>32K 250ms，>128K 500ms），`finish()`/连接符变更强制立即渲染，后续行缩进到文本列（col 4）
 - 节点交互：左键双击折叠/展开（可折叠节点），右键复制内容
 - 列布局：`│`(col 0) → `●`(col 2) → 文本(col 4)；CSS 用 `.tree-node` / `.tree-guide` margin `0 0 0 9` 对齐
+- **长单行竖线**：无显式换行的长正文在终端视觉 wrap 时，续行也要带 `│`（`_PrefixedLines(skip_first=True)`：首行保留 `├ ●`，wrap 续行补前缀），否则树左框断开
 - 用户消息保留气泡框（`MessageWidget`），与树之间空一行
+
+**sticky 钉顶锚点**（`message_list.py`）：长对话滚动时，**上方最近的消息顶滑出窗口顶即钉住**（固定头 `dock:top` 显示消息副本，流内消息 `display:none`），作为上下文锚点——**不依赖树几何**（多回合短树滚动到树间隙也能钉住）。滚动使下一消息顶滑出时锚点**跟随切换**；消息顶回到视口或消息 ≥ 一屏时释放。钉住的几何判定用 `virtual_region`，被钉消息 `display:none` 后其坐标会异常（勿在读它判定）。
 
 ## 会话存储结构
 
@@ -361,7 +370,11 @@ FeedbackStore 优先用 `entry_id`（来自 frontmatter）做 key，fallback 到
 
 **安全预检**（`security.py`）：`load()` 时强制运行 `PluginPreflightCheck`（5 项检查：install 脚本白名单、HTTPS-only URL、POSIX 世界可写文件、JVM/glibc/.NET 注入检测、敏感路径访问）。blocked=True 拒绝加载。
 
-**状态管理**（`state.py`）：READY / NEEDS_SETUP / DISABLED 三态，持久化到 `~/.aide/config/plugin_states.json`。DISABLED 插件**加载前即拦截**（工具/命令不注册），`/plugin disable` 会真正卸载；`/plugin enable` 重新加载。`/plugins` 命令显示状态面板。
+**状态管理**（`state.py`）：READY / NEEDS_SETUP / DISABLED 三态，持久化到 `~/.aide/config/plugin_states.json`。DISABLED 插件**加载前即拦截**（工具/命令不注册），`disable` 会真正卸载；`enable` 重新加载。
+
+**统一命令 `/plugins`**（原 `/plugin` 与 `/plugins` 合并，`plugin_commands.py`）：无参数 = 加载全部 + 三态状态面板（含插件目录）；`/plugins load|unload|reload <id>` 管理加载；`/plugins enable|disable <id>` 开关。非子命令参数（如 `list`/`discover`）按刷新处理。
+
+**`command` 字段**（SKILL.md frontmatter 或 `aide.plugin.json`）：CLI 型技能声明对应可执行命令（如 `agent-browser`）。声明后 `//plugin:skill` 与 skill 工具输出附"可执行命令：`<command>`（用 run_shell 调用）"提示——**提示型不直通执行**，由 LLM 用 `run_shell` 实际运行。详见 `docs/plugins.md`。
 
 **热重载**（`watcher.py`）：watchfiles 优先 + 2s polling fallback，500ms 防抖。按变更文件类型精确重载。
 
@@ -426,6 +439,12 @@ Python 插件可注册：工具、命令、生命周期钩子（`register_hook()
 - 结果按原 tool_calls 顺序重组（`zip(final.tool_calls, tool_results)` 依赖顺序）
 - 注意：`ToolRegistry.execute` 经 `async_retry` 把工具异常**吞成错误字符串**返回（不向上抛），所以"失败"指超时/高危阻止等 `ToolExecutor._run_one` 层判定，非 execute 抛异常
 
+### run_shell 超时（进程树 kill）
+
+`run_shell` 用 `asyncio.create_subprocess_shell`（原生异步子进程，非 `to_thread`），超时**kill 进程树**：
+- Windows：`taskkill /T /F` + `CREATE_NEW_PROCESS_GROUP`；POSIX：`killpg` + `start_new_session`
+- `timeout` 参数（1~60s）真正生效——外层 `ToolExecutor` 对 run_shell 的超时 = 内部 timeout + 2s 缓冲（`_run_shell_tool_timeout`），保证内部先超时 kill，外层只兜底（避免 wait_for 取消掐掉 kill 逻辑导致进程后台残留）
+
 ## CI/CD
 
 [`.github/workflows/build.yml`](.github/workflows/build.yml) — tag `v*` 触发三平台构建：
@@ -442,7 +461,7 @@ Python 插件可注册：工具、命令、生命周期钩子（`register_hook()
 | **P8** | 子 agent delegate 工具 / 声明式工具清单（definition.py）/ 编排判据（strategy_6 + subagent_system 完整性） |
 | **P8+ 优化批次** | 工具并发分级（只读并行/写串行/abort 兄弟）、记忆注入边界+新鲜度、自动记忆提取（/mem-auto）、上下文爆满兜底（trim_conversation_to_window） |
 
-1175 测试全部通过。
+1765 测试全部通过。
 
 ## Prompt 体系
 
