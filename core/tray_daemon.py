@@ -103,15 +103,23 @@ class TrayDaemon:
             )
 
     def _kill_tui(self) -> None:
-        if self._tui_process is None or self._tui_process.poll() is not None:
-            self._tui_process = None
-            return
-        try:
-            self._tui_process.terminate()
-            self._tui_process.wait(timeout=5)
-        except (subprocess.TimeoutExpired, OSError):
-            self._tui_process.kill()
+        killed = False
+        if self._tui_process is not None and self._tui_process.poll() is None:
+            try:
+                self._tui_process.terminate()
+                self._tui_process.wait(timeout=5)
+            except (subprocess.TimeoutExpired, OSError):
+                self._tui_process.kill()
+            killed = True
         self._tui_process = None
+        if killed:
+            # TUI 被强杀，atexit 无法清理实例锁 → 托盘负责删除，
+            # 否则残留 aide.pid 的 PID 被复用后会误报 "Aide is already running"
+            try:
+                from core.setup import aide_dir
+                (aide_dir() / "aide.pid").unlink(missing_ok=True)
+            except OSError:
+                pass
 
     # ── 托盘菜单 ────────────────────────────────────────────────────────
 
