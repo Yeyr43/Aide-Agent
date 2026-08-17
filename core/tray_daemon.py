@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,16 +15,19 @@ from pathlib import Path
 # 1) 移除脚本目录（core/）——否则 `import locale` 解析到 core/locale.py 遮蔽
 #    stdlib locale，subprocess 等 stdlib 导入崩溃；
 # 2) 注入项目根目录，使 core.* 导入可用。
+# 比较用 os.path.normcase：Windows 上 Path.resolve() 返回磁盘实际大小写，
+# 而 sys.path[0] 保留启动时传参大小写，直接字符串比较会失配导致 core/ 未移除、
+# `import locale` 崩（pythonw 以相对/小写路径拉起时必现）。
 if not getattr(sys, "frozen", False):
     _here = Path(__file__).resolve().parent
-    if str(_here) in sys.path:
-        sys.path.remove(str(_here))
+    _here_norm = os.path.normcase(str(_here))
+    sys.path[:] = [p for p in sys.path if os.path.normcase(str(p)) != _here_norm]
     _project_root = _here.parent
-    if str(_project_root) not in sys.path:
+    _root_norm = os.path.normcase(str(_project_root))
+    if not any(os.path.normcase(str(p)) == _root_norm for p in sys.path):
         sys.path.insert(0, str(_project_root))
 
 import atexit
-import os
 import subprocess
 
 from PIL import Image

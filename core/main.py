@@ -1,12 +1,14 @@
 """Aide Agent 入口脚本 — 单实例运行。
 
 用法:
-    uv run python core/main.py
+    uv run python core/main.py            # 启动 TUI + 托盘守护
+    uv run python core/main.py --no-daemon  # 仅 TUI，不拉托盘守护（调试用）
     aide
 
 第二次运行 aide 时，不会启动新实例，而是激活已有窗口。
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,12 +17,16 @@ from pathlib import Path
 #    core/locale.py 遮蔽标准库 locale，textual 等依赖 stdlib locale 的模块
 #    相对导入直接崩溃；
 # 2) 注入项目根目录，使 `python core/main.py` 脱离 uv 也能运行。
+# 比较用 os.path.normcase：Windows 上 Path.resolve() 返回磁盘实际大小写
+# （盘符大写），而 sys.path[0] 保留启动时传参大小写（Git Bash 等小写），
+# 字符串直接比较会失配导致 core/ 没被移除、`import locale` 崩。
 if not getattr(sys, "frozen", False):
     _here = Path(__file__).resolve().parent
-    if str(_here) in sys.path:
-        sys.path.remove(str(_here))
+    _here_norm = os.path.normcase(str(_here))
+    sys.path[:] = [p for p in sys.path if os.path.normcase(str(p)) != _here_norm]
     _project_root = _here.parent
-    if str(_project_root) not in sys.path:
+    _root_norm = os.path.normcase(str(_project_root))
+    if not any(os.path.normcase(str(p)) == _root_norm for p in sys.path):
         sys.path.insert(0, str(_project_root))
 
 from core.resources import is_bundled
@@ -117,16 +123,21 @@ def main() -> None:
         _smoke_test()
         return  # unreachable, _smoke_test calls sys.exit
 
+    no_daemon = "--no-daemon" in sys.argv
+
     ensure_aide_root()
 
     if not acquire_instance_lock(_LOCK_FILE):
-        print("Aide is already running. Activated existing window.")
+        print("Aide is already running.")
         return
 
     decorate_console(Path(__file__).parent.parent / "Aide.ico")
 
-    daemon_script = Path(__file__).parent / "tray_daemon.py"
-    ensure_daemon(_DAEMON_LOCK, daemon_script)
+    if not no_daemon:
+        daemon_script = Path(__file__).parent / "tray_daemon.py"
+        ensure_daemon(_DAEMON_LOCK, daemon_script)
+    else:
+        print("(--no-daemon) tray daemon skipped — run 'aide' for tray support.")
 
     from ui.textual_app.app import AideApp
     app = AideApp()
