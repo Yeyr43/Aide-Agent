@@ -475,9 +475,17 @@ class TestLoadSafetyAndFallback:
     async def test_stat_oserror_continues(self, host, tmp_path, monkeypatch):
         _write_python_plugin(host, "stat-p", _BASIC_PLUGIN)
         monkeypatch.setattr("sys.platform", "linux")
-        # exists 显式 True：否则 POSIX 上 exists() 内部也调 stat → 误判入口不存在
-        with patch("pathlib.Path.exists", return_value=True), \
-             patch("pathlib.Path.stat", side_effect=OSError("boom")):
+        # 只对入口文件 stat 抛错（触发世界可写检查的 except OSError 分支），
+        # 其它 Path 操作保持真实——全局 patch 会波及 load 流程的 exists/is_file
+        entry = host._config.plugins_dir / "stat-p" / "main.py"
+        real_stat = Path.stat
+
+        def fake_stat(self, *a, **k):
+            if self == entry:
+                raise OSError("boom")
+            return real_stat(self, *a, **k)
+
+        with patch("pathlib.Path.stat", fake_stat):
             info = await host.load("stat-p")
         assert info is not None
 
