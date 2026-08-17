@@ -523,3 +523,68 @@ class TestToolAttemptLimit:
         ui.on_replace_streamed_text.assert_called_once_with("")
         assert clean == ""
         assert event.tool_calls
+
+
+class TestPerCallThinkingPersistence:
+    """回归：思考需逐条落盘（assistant 消息带 _thinking），恢复时插回工具调用间。
+
+    曾只存聚合 thinking 字段，恢复时所有思考叠成一个顶部节点，
+    工具调用间的思考丢失位置（"工具调用间的思考无法加载"）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_assistant_messages_carry_per_call_thinking(self):
+        """FC 循环每次 LLM 调用：assistant 消息带 _thinking，且互不合并。"""
+        from core.llm_gateway import TextDelta, ThinkingDelta, StreamEnd
+        from core.tools import ToolDefinition
+        from core.tools import ToolRegistry
+
+        registry = ToolRegistry()
+        async def echo(args):
+            return "ok"
+        registry.register(ToolDefinition(
+            name="echo", description="Echo", parameters={"type": "object", "properties": {}},
+            execute=echo,
+        ))
+
+        provider = AsyncMock()
+        call = [0]
+        async def _mock_chat(messages, tools):
+            call[0] += 1
+            if call[0] == 1:
+                yield ThinkingDelta(content="先想一下")
+                yield StreamEnd(finish_reason="tool_calls", tool_calls=[{
+                    "id": "c1", "type": "function",
+                    "function": {"name": "echo", "arguments": "{}"},
+                }])
+            else:
+                yield ThinkingDelta(content="再总结")
+                yield TextDelta(content="完成")
+                yield StreamEnd(finish_reason="stop", tool_calls=[])
+        provider.chat_with_tools = _mock_chat
+
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, registry, max_turns=1)
+        messages = await loop.run([{"role": "user", "content": "go"}], ui=ui)
+
+        assistant_msgs = [m for m in messages if m.get("role") == "assistant"]
+        assert len(assistant_msgs) == 2
+        assert assistant_msgs[0].get("_thinking") == "先想一下"
+        assert assistant_msgs[1].get("_thinking") == "再总结"
+        # 逐条落盘，互不合并
+        assert "先想一下" not in assistant_msgs[1]["_thinking"]
+
+    def test_sanitize_messages_strips_thinking(self):
+        """_thinking 仅内部落盘用，不得泄漏到 LLM API 请求。"""
+        from core.kernel.fc_loop import _sanitize_messages
+
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "text", "tool_calls": [],
+             "_thinking": "secret thinking"},
+        ]
+        clean = _sanitize_messages(messages)
+        for m in clean:
+            assert "_thinking" not in m, "内部思考键泄漏到 LLM 上下文"
+        # 原列表不受影响（_thinking 仍留作落盘）
+        assert messages[1]["_thinking"] == "secret thinking"

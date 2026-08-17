@@ -349,26 +349,48 @@ class MessageList(VerticalScroll):
                         self.add_user_message(text or "", file_paths=file_paths)
                     break
 
-            # 2) 思考节点（若落盘了）
+            # 2) 思考节点：优先逐条（assistant 消息带 _thinking，插回工具调用间）；
+            #    旧格式（仅聚合 thinking）回退到顶部一个节点
+            has_per_msg_thinking = any(
+                isinstance(m.get("_thinking"), str) and m["_thinking"].strip()
+                for m in msgs if m.get("role") == "assistant"
+            )
             tree = self._ensure_turn()
-            if thinking:
+            if not has_per_msg_thinking and thinking:
                 node = ThinkNode()
                 tree.add_node(node, "think")
                 node.append_chunk(thinking)
                 node.finish()
 
-            # 3) 工具 / 正文节点
+            # 3) 工具 / 正文节点（逐条思考插入到对应 assistant 消息前）
             pending_tools: list[ToolNode] = []
             for msg in msgs:
                 role = msg.get("role", "")
-                if role == "assistant" and msg.get("tool_calls"):
-                    for tc in msg["tool_calls"]:
-                        fn = tc.get("function") or {}
-                        name = fn.get("name", "tool")
-                        args = _parse_tool_args(fn.get("arguments"))
-                        node = ToolNode(name, args, code_theme=self._code_theme)
-                        tree.add_node(node, "tool")
-                        pending_tools.append(node)
+                if role == "assistant":
+                    if has_per_msg_thinking:
+                        th = (msg.get("_thinking") or "").strip()
+                        if th:
+                            tn = ThinkNode()
+                            tree.add_node(tn, "think")
+                            tn.append_chunk(th)
+                            tn.finish()
+                    if msg.get("tool_calls"):
+                        for tc in msg["tool_calls"]:
+                            fn = tc.get("function") or {}
+                            name = fn.get("name", "tool")
+                            args = _parse_tool_args(fn.get("arguments"))
+                            node = ToolNode(name, args, code_theme=self._code_theme)
+                            tree.add_node(node, "tool")
+                            pending_tools.append(node)
+                    elif msg.get("content"):
+                        text, _ = _parse_multimodal_content(msg["content"])
+                        if text:
+                            # 清理旧数据残留的 XML 工具块（修复前未提取的 <tool_call>/<invoke> 落盘了）
+                            from core.kernel.xml_tool_parser import strip_xml_tool_blocks
+                            text = strip_xml_tool_blocks(text)
+                            body = BodyNode(code_theme=self._code_theme)
+                            body.set_finished_text(text)
+                            tree.add_node(body, "body")
                 elif role == "tool" and pending_tools:
                     node = pending_tools.pop(0)
                     content = str(msg.get("content", ""))
@@ -376,15 +398,6 @@ class MessageList(VerticalScroll):
                         node.set_error(content)
                     else:
                         node.set_result(content)
-                elif role == "assistant" and msg.get("content"):
-                    text, _ = _parse_multimodal_content(msg["content"])
-                    if text:
-                        # 清理旧数据残留的 XML 工具块（修复前未提取的 <tool_call>/<invoke> 落盘了）
-                        from core.kernel.xml_tool_parser import strip_xml_tool_blocks
-                        text = strip_xml_tool_blocks(text)
-                        body = BodyNode(code_theme=self._code_theme)
-                        body.set_finished_text(text)
-                        tree.add_node(body, "body")
 
             # 每轮结束关闭状态（下一轮 / 用户新消息时重建树）
             self._close_turn()

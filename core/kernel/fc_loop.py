@@ -47,11 +47,16 @@ def _sanitize_messages(messages: list[dict],
     if supports_vision:
         # 视觉模型：深拷贝，防止 Provider 转换时修改原始 conversation
         import copy
-        return copy.deepcopy(messages)
+        return [
+            {k: v for k, v in m.items() if k != "_thinking"}
+            for m in copy.deepcopy(messages)
+        ]
 
     sanitized: list[dict] = []
     for msg in messages:
         content = msg.get("content")
+        # 剥离内部键 _thinking（逐条落盘用，不进 LLM 上下文/API 请求）
+        clean = {k: v for k, v in msg.items() if k != "_thinking"}
         if isinstance(content, list):
             text_parts = [
                 p.get("text", "") for p in content
@@ -63,9 +68,9 @@ def _sanitize_messages(messages: list[dict],
             txt = " ".join(text_parts)
             if has_image:
                 txt = f"{txt}\n[图片]" if txt else "[图片]"
-            sanitized.append({**msg, "content": txt})
+            sanitized.append({**clean, "content": txt})
         else:
-            sanitized.append(msg)
+            sanitized.append(clean)
     return sanitized
 
 
@@ -75,6 +80,7 @@ class _TurnResult:
     stream_end: StreamEnd
     response_text: str
     clean_text: str | None = None  # XML 工具调用剥离后的正文（供落盘用，避免 XML 乱码残留）
+    thinking: str = ""  # 本次调用的思考内容（逐条落盘，恢复时插回工具调用间）
 
 
 # ── Function Calling 循环 ─────────────────────────────────────────
@@ -144,12 +150,14 @@ class FunctionCallingLoop:
                         "role": "assistant",
                         "content": text_content or "",
                         "tool_calls": final.tool_calls,
+                        "_thinking": result.thinking,  # 逐条落盘，恢复时插回工具调用间
                     })
                     # 跳过下方通用的 messages.append，直接进入工具执行
                 else:
                     messages.append({
                         "role": "assistant",
                         "content": result.response_text,
+                        "_thinking": result.thinking,  # 逐条落盘，恢复时插回工具调用间
                     })
                     # P6: 若模型因 max_tokens 被截断，自动续写
                     # Anthropic 原生 stop_reason="max_tokens"；OpenAI 兼容系（DeepSeek/
@@ -173,6 +181,7 @@ class FunctionCallingLoop:
                         "role": "assistant",
                         "content": content,
                         "tool_calls": final.tool_calls,
+                        "_thinking": result.thinking,  # 逐条落盘，恢复时插回工具调用间
                     })
 
             # ── 单工具调用尝试上限：同一 (工具, 参数) 反复失败超过上限 → 停止重试 ──
@@ -222,6 +231,7 @@ class FunctionCallingLoop:
                 messages.append({
                     "role": "assistant",
                     "content": result.response_text,
+                    "_thinking": result.thinking,  # 逐条落盘，恢复时插回工具调用间
                 })
             else:
                 ui.on_max_turns()
@@ -257,6 +267,7 @@ class FunctionCallingLoop:
         """调用 LLM 流式接口，返回 _TurnResult 或 None（异常）。"""
         response_text = ""
         _in_xml = False
+        call_thinking = ""  # 本次调用独立计数（逐条落盘；_thinking_buffer 是整轮累计）
 
         try:
             async for event in self.provider.chat_with_tools(
@@ -264,6 +275,7 @@ class FunctionCallingLoop:
             ):
                 if isinstance(event, ThinkingDelta):
                     self._thinking_buffer += event.content
+                    call_thinking += event.content
                     ui.on_thinking_token(event.content)
                 elif isinstance(event, TextDelta):
                     response_text += event.content
@@ -276,7 +288,7 @@ class FunctionCallingLoop:
                     clean_text = self._try_xml_fallback(response_text, event, ui)
                     ui.on_text_done()
                     return _TurnResult(stream_end=event, response_text=response_text,
-                                       clean_text=clean_text)
+                                       clean_text=clean_text, thinking=call_thinking)
         except TypeError as e:
             logger.exception("LLM 流处理类型错误")
             ui.on_tool_error("LLM", f"类型错误(可能是 pycache 过期): {e}")

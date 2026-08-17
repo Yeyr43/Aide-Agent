@@ -178,6 +178,75 @@ async def test_restore_rebuilds_tree_details():
 
 
 @pytest.mark.asyncio
+async def test_restore_interleaves_per_call_thinking():
+    """逐条 _thinking 恢复：思考节点插回工具调用间，不再全并到顶部。
+
+    回归：thinking 曾整体存为聚合字段，恢复时所有思考叠成一个顶部节点，
+    工具调用间的思考丢失位置（"工具调用间的思考无法加载"）。
+    """
+    app = MessageListTestApp()
+    turns = [
+        {
+            "turn": 1,
+            "thinking": "整体聚合（新格式应忽略，用逐条）",
+            "messages": [
+                {"role": "user", "content": "跑一下"},
+                {"role": "assistant", "content": "", "_thinking": "先看目录",
+                 "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "search_in_files",
+                                  "arguments": '{"query": "TODO"}'}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "a.py: TODO"},
+                {"role": "assistant", "content": "找到了。", "_thinking": "总结结果"},
+            ],
+        },
+    ]
+    async with app.run_test():
+        ml = app.ml
+        ml.restore_conversation(turns)
+        nodes = [w for w in app.query(".tree-node")]
+        # think(先看目录) → tool → think(总结结果) → body
+        assert [type(w).__name__ for w in nodes] == [
+            "ThinkNode", "ToolNode", "ThinkNode", "BodyNode",
+        ]
+        # 逐条思考内容恢复到位（不再是聚合整体）
+        thinks = [n for n in nodes if type(n).__name__ == "ThinkNode"]
+        assert thinks[0]._thinking == "先看目录"
+        assert thinks[1]._thinking == "总结结果"
+        assert "先看目录" not in thinks[1]._thinking
+
+
+@pytest.mark.asyncio
+async def test_restore_old_format_aggregate_thinking_at_top():
+    """旧格式（无逐条 _thinking）：聚合 thinking 回退到顶部一个节点。"""
+    app = MessageListTestApp()
+    turns = [
+        {
+            "turn": 1,
+            "thinking": "聚合思考",
+            "messages": [
+                {"role": "user", "content": "跑一下"},
+                {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "search_in_files",
+                                  "arguments": '{"query": "TODO"}'}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "a.py: TODO"},
+                {"role": "assistant", "content": "找到了。"},
+            ],
+        },
+    ]
+    async with app.run_test():
+        ml = app.ml
+        ml.restore_conversation(turns)
+        nodes = [w for w in app.query(".tree-node")]
+        assert [type(w).__name__ for w in nodes] == [
+            "ThinkNode", "ToolNode", "BodyNode",
+        ]
+        think = nodes[0]
+        assert think._thinking == "聚合思考"
+
+
+@pytest.mark.asyncio
 async def test_restore_marks_tool_error_red():
     """恢复时工具错误结果应标记为错误态（红 ●）。"""
     app = MessageListTestApp()
