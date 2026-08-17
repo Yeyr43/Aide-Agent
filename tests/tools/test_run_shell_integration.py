@@ -210,3 +210,67 @@ def test_shell_hint_is_nonempty():
     hint = _shell_hint()
     assert isinstance(hint, str)
     assert len(hint) > 10
+
+
+class TestRunShellTimeout:
+    """回归：外层 wait_for 超时不泄漏命令进程 — 超时必须 kill 进程树。"""
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_message(self):
+        result = await execute({
+            "command": 'python -c "import time; time.sleep(5)"',
+            "timeout": 1,
+        })
+        assert "超时" in result
+        assert "1" in result  # 超时秒数
+
+    @pytest.mark.asyncio
+    async def test_timeout_kills_process_tree(self, tmp_path):
+        """超时后命令进程（含写文件副作用）必须被杀，不能后台残留。"""
+        marker = tmp_path / "done.txt"
+        # sleep 30 秒后写文件 —— 若超时 kill 未生效，进程会在后台继续并在 30s 内写文件
+        cmd = (
+            "python -c \"import time; "
+            f"time.sleep(30); open(r'{marker}', 'w').close()\""
+        )
+        result = await execute({"command": cmd, "timeout": 1})
+        assert "超时" in result
+        # 等 2s（超过 sleep 前的写文件窗口）——进程应已被 kill，文件不会被写
+        import asyncio
+        await asyncio.sleep(2)
+        assert not marker.exists(), "超时后命令进程仍在后台运行（进程树未被 kill）"
+
+    @pytest.mark.asyncio
+    async def test_timeout_parameter_takes_effect(self):
+        """传 timeout=5 的短命令正常完成（不被外层硬超时误杀）。"""
+        result = await execute({
+            "command": 'python -c "import time; time.sleep(1)"',
+            "timeout": 5,
+        })
+        assert "超时" not in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_timeout_uses_default(self):
+        result = await execute({"command": "echo ok", "timeout": "abc"})
+        assert "超时" not in result
+        assert "ok" in result
+
+
+class TestToolTimeoutCoordinator:
+    """tool_executor 的 run_shell 外层超时协调（内部 timeout + 2s 缓冲）。"""
+
+    def test_default_is_32(self):
+        from core.kernel.tool_executor import _run_shell_tool_timeout
+        assert _run_shell_tool_timeout({}) == 32.0
+
+    def test_custom_timeout_adds_buffer(self):
+        from core.kernel.tool_executor import _run_shell_tool_timeout
+        assert _run_shell_tool_timeout({"timeout": 5}) == 7.0
+
+    def test_clamped_at_max(self):
+        from core.kernel.tool_executor import _run_shell_tool_timeout
+        assert _run_shell_tool_timeout({"timeout": 100}) == 62.0
+
+    def test_invalid_falls_back(self):
+        from core.kernel.tool_executor import _run_shell_tool_timeout
+        assert _run_shell_tool_timeout({"timeout": "x"}) == 32.0

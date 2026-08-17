@@ -20,6 +20,19 @@ logger = logging.getLogger(__name__)
 TOOL_TIMEOUT = 30.0            # 单个工具执行超时（秒）
 MCP_TOOL_TIMEOUT = 120.0       # MCP 工具超时（需匹配 transport.CALL_TIMEOUT）
 DELEGATE_TOOL_TIMEOUT = 180.0  # delegate 子 agent 跑多轮 LLM，需要更长超时
+_RUN_SHELL_MAX_TIMEOUT = 60.0  # run_shell 的 timeout 参数上限（与 run_shell.MAX_TIMEOUT 一致）
+
+
+def _run_shell_tool_timeout(arguments: dict) -> float:
+    """run_shell 外层超时 = 内部 timeout 参数 + 2s 缓冲。
+
+    缓冲保证 run_shell 内部先超时并 kill 进程树，外层只是兜底——
+    若外层先到，wait_for 取消会掐掉 execute 内部的取消处理，命令进程后台残留。
+    """
+    timeout = arguments.get("timeout", 30.0)
+    if not isinstance(timeout, (int, float)) or timeout <= 0:
+        timeout = 30.0
+    return min(float(timeout), _RUN_SHELL_MAX_TIMEOUT) + 2.0
 TOOL_RESULT_MAX_CHARS = 8000   # 工具结果最大字符数（超出截断）
 MAX_WEB_CALLS = 3              # 单次 FC 循环中 web 工具总调用上限
 
@@ -191,9 +204,12 @@ class ToolExecutor:
 
         # MCP 工具使用更长的超时（匹配 MCP CALL_TIMEOUT=120s）
         # delegate 子 agent 跑多轮 LLM，需要更长的超时
+        # run_shell 外层 = 内部 timeout + 2s 缓冲：让 run_shell 内部先超时并 kill 进程树，
+        # 否则外层 wait_for 取消会掐掉 execute 的取消处理，命令进程残留后台
         tool_timeout = (
             MCP_TOOL_TIMEOUT if tool_name.startswith("mcp_")
             else DELEGATE_TOOL_TIMEOUT if tool_name == "delegate"
+            else _run_shell_tool_timeout(arguments) if tool_name == "run_shell"
             else TOOL_TIMEOUT
         )
 

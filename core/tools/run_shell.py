@@ -4,7 +4,8 @@
 Windows 用系统 shell（cmd.exe），macOS/Linux 用 sh。
 
 输出策略：重复行压缩 → 保留开头给模型看结构 → 元信息告知总量让模型自行精准查询。
-实现：subprocess.run + asyncio.to_thread（线程池），避免 Textual asyncio 事件循环兼容问题。
+实现：asyncio.create_subprocess_shell（原生异步子进程），超时时 kill 进程树——
+避免 to_thread 的 subprocess.run 在外层 wait_for 取消后线程仍跑、命令进程后台残留。
 """
 
 import asyncio
@@ -83,8 +84,74 @@ def _shell_hint() -> str:
     return t(key)
 
 
+async def _run_shell_process(command: str, timeout: float,
+                             encoding: str) -> tuple[int, str] | None:
+    """原生异步执行 shell 命令，超时 kill 进程树。
+
+    Returns:
+        (exit_code, output) — 成功/正常结束
+        None — 超时（进程树已被 kill）
+    """
+    kwargs = dict(
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    if IS_WINDOWS:
+        # CREATE_NEW_PROCESS_GROUP：taskkill /T 才能杀整棵进程树
+        kwargs["creationflags"] = _subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True  # 独立进程组，超时 killpg
+
+    proc = await asyncio.create_subprocess_shell(command, **kwargs)
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        await _kill_process_tree(proc)
+        return None
+
+    output = (
+        (stdout or b"").decode(encoding, errors="replace")
+        + (stderr or b"").decode(encoding, errors="replace")
+    ).strip()
+    return (proc.returncode or 0, output)
+
+
+async def _kill_process_tree(proc) -> None:
+    """超时后强制终止整棵进程树（shell 及其子进程）。"""
+    if IS_WINDOWS:
+        try:
+            await asyncio.to_thread(
+                _subprocess.run,
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True, timeout=5,
+            )
+        except Exception:
+            pass
+    else:
+        try:
+            import os as _os
+            import signal
+            _os.killpg(_os.getpgid(proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+    try:
+        await proc.wait()
+    except Exception:
+        pass
+
+
 async def execute(arguments: dict) -> str:
-    """异步执行 shell 命令（subprocess.run → asyncio.to_thread）。
+    """异步执行 shell 命令（asyncio.create_subprocess_shell）。
 
     Args:
         arguments: {"command": str, "timeout": int (可选)}
@@ -109,26 +176,15 @@ async def execute(arguments: dict) -> str:
         encoding = "utf-8"
 
     try:
-        result = await asyncio.to_thread(
-            _subprocess.run,
-            command,
-            shell=True,
-            stdin=_subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            encoding=encoding,
-            errors="replace",
-            timeout=timeout,
-        )
-        output = (result.stdout + result.stderr).strip()
-
-    except _subprocess.TimeoutExpired:
-        return t("tool.run_shell.timeout", timeout=timeout, command=command)
+        result = await _run_shell_process(command, timeout, encoding)
     except Exception as e:
         logger.warning("run_shell exception: %s", e, exc_info=True)
         return t("tool.run_shell.failed", e=e)
 
-    exit_code = result.returncode
+    if result is None:
+        return t("tool.run_shell.timeout", timeout=timeout, command=command)
+
+    exit_code, output = result
 
     # ── 重复行压缩 ──
     output = _compress_repeats(output)

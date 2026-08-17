@@ -417,29 +417,32 @@ class MessageList(VerticalScroll):
             if self._pinned_should_release():
                 self._release_sticky()
             else:
-                return  # 保持当前钉顶（幂等，避免改 DOM）
+                # 锚点跟随：滚动使下一消息顶滑出 → 切换到下一消息
+                new_target = self._active_sticky_target()
+                if new_target is not None and new_target[0] is not self._pinned_msg:
+                    self._release_sticky()
+                    self._engage_sticky(*new_target)
+                return
         target = self._active_sticky_target()
         if target is not None:
             msg, tree, msg_top = target
             self._engage_sticky(msg, tree, msg_top)
 
     def _active_sticky_target(self) -> tuple[MessageWidget, TurnTree, float] | None:
-        """几何判定当前应钉住的消息：(msg, tree, msg_top)。
+        """找到当前应钉住的消息：(msg, tree, msg_top)。
 
-        用户规格：消息树正常显示；仅当消息顶滑出窗口顶、但消息树仍在窗口中时
-        把消息钉在顶部；直至消息树被钉住的标题完全遮挡（视觉消失）或消息可
-        正常显示时解除。
-        - 消息顶滑出：气泡盒顶（不含边距）< scroll_y
-        - 树仍可见：树底 > scroll_y + 消息占位（钉住后固定头波段），且树顶 < scroll_y + 视口高
-        - 可正常显示：气泡盒顶回到视口（>= scroll_y）
-        - 不区分消息是否足一屏：规则对全部消息一致。但消息 ≥ 一屏时钉住会
-          盖住整窗、回复完全不可见（违背"消息树正常显示"），故跳过让其自然滚动。
-        取文档序最顶部的满足消息；遇到消息顶在视口内即停（其后消息更不可能钉）。
+        锚点语义：上方最近的消息顶已滑出窗口顶（msg_top < scroll_y），且消息
+        不足一屏 → 钉住该消息作为上下文锚点（固定头显示消息副本，用户始终
+        知道当前滚动位置属于哪条消息）。
+
+        不依赖树的几何——多回合短树滚动到"树间隙"（上方树已整体滑过）时，
+        原逻辑因要求"树尾仍可见"而永远不钉，长对话滚动时顶部失去消息锚点。
         """
         sy = self.scroll_y
         h = self.size.height
         if h <= 0:
             return None
+        candidate = None
         for i, msg in enumerate(self._user_msgs):
             if not msg.is_mounted:
                 continue
@@ -452,44 +455,23 @@ class MessageList(VerticalScroll):
                 continue  # 尚未布局
             msg_top = float(box.y)  # 气泡盒顶（不含上边距）
             if msg_top >= sy:
-                return None  # 消息已可正常显示 → 其后消息更不可能钉住
+                break  # 其后消息顶更大，未滑出
             if region.height >= h:
                 continue  # 消息 ≥ 一屏：钉住会盖住回复，跳过
             tree = self._msg_trees[i] if i < len(self._msg_trees) else None
             if tree is None or not tree.is_mounted:
                 continue
-            try:
-                t = tree.virtual_region_with_margin
-            except Exception:
-                continue
-            if not t.size:
-                continue
-            # 树需延伸到"若钉住则固定头占据的波段"之下（树尾仍可见），否则钉住会把树整个盖住
-            if t.bottom > sy + region.height and t.y < sy + h:
-                return (msg, tree, msg_top)
-        return None
+            candidate = (msg, tree, msg_top)  # 上方最近滑出的消息
+        return candidate
 
     def _pinned_should_release(self) -> bool:
-        """当前钉住是否应解除：消息可正常显示 / 树已被标题完全遮挡 / 树仍在窗口下方。"""
+        """当前钉住是否应解除：消息可正常显示（顶回到视口）或消息 ≥ 一屏。"""
         sy = self.scroll_y
         h = self.size.height
         if self._pinned_msg_top >= sy:
             return True  # 消息顶回到视口 → 正常显示
         if self._pinned_msg_height >= h:
             return True  # 窗口缩小后消息 ≥ 一屏 → 钉住会盖住回复，释放
-        tree = self._pinned_tree
-        if tree is None or not tree.is_mounted:
-            return True
-        try:
-            t = tree.virtual_region_with_margin
-        except Exception:
-            return True
-        if not t.size:
-            return True
-        if t.bottom <= sy + self._pinned_msg_height:
-            return True  # 树已完全被钉住的标题遮挡（视觉消失）→ 释放，避免与下一消息框冲突
-        if t.y >= sy + h:
-            return True  # 树仍在窗口下方（消息高于视口等边界）
         return False
 
     def _engage_sticky(self, msg: MessageWidget, tree: TurnTree, msg_top: float) -> None:

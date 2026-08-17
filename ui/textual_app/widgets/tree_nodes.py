@@ -106,11 +106,16 @@ class _PrefixedLines:
     用于正文 RichMarkdown 尾部：非末节点时续行也要带 │，否则正文换行会
     打断树左边框（断链）。guide 由调用方按节点连接符决定——末节点（└）
     传纯缩进（Padding），非末节点（├）传本包装。
+
+    skip_first：首行不加前缀——用于"长单行正文"在终端按宽度视觉 wrap 时，
+    首行已是 `├ ● 正文…`（自带连接符），仅 wrap 产生的续行需要补 │。
     """
 
-    def __init__(self, renderable, prefix: str = "│   ", prefix_style: str = CONNECTOR_STYLE) -> None:
+    def __init__(self, renderable, prefix: str = "│   ", prefix_style: str = CONNECTOR_STYLE,
+                 skip_first: bool = False) -> None:
         self._inner = renderable
         self._prefix = prefix
+        self._skip_first = skip_first
         # Segment 不解析字符串样式（Text 会解析）；Textual 样式缓存合并时
         # 字符串会导致 AttributeError，这里预解析为 Style 对象
         from rich.style import Style
@@ -123,8 +128,9 @@ class _PrefixedLines:
         for line in Segment.split_lines(inner_segments):
             if not first:
                 yield Segment("\n")
+            if not (first and self._skip_first):
+                yield Segment(self._prefix, self._prefix_style)
             first = False
-            yield Segment(self._prefix, self._prefix_style)
             yield from line
 
     def __rich_measure__(self, console, options):
@@ -476,6 +482,10 @@ class BodyNode(TreeNode):
         first, sep, rest = self._buffer.partition("\n")
         node_line = self._node_line_with_inline(first)
         if not sep:
+            # 无显式换行的长单行：终端按宽度视觉 wrap，续行也要带 │，
+            # 否则左框断开。首行已有 `├ ●`，wrap 续行才补前缀。
+            if self._connector == "├":
+                return _PrefixedLines(node_line, skip_first=True)
             return node_line
         md = self._markdown_for(rest)
         # 非末节点（├）：续行带 │ 引导线，正文换行不打断树左边框（修断链）；

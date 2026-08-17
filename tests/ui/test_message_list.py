@@ -601,11 +601,11 @@ async def test_spacing_message_tree_compact():
 
 
 @pytest.mark.asyncio
-async def test_sticky_releases_when_tree_hidden_behind_header():
-    """消息树被钉住标题完全遮挡（视觉消失）→ 钉住释放，不与下一消息框冲突。
+async def test_sticky_anchor_survives_tree_hidden_behind_header():
+    """锚点语义：树被钉住标题遮挡不释放——保持锚点，滚动到下一消息顶滑出才切换。
 
-    回归诊断：树被标题遮挡后几何上仍在窗口中，旧逻辑钉住不释放 → 与下一消息框并排冲突。
-    修复：树尾进入标题波段（t.bottom <= sy + 消息占位高）即释放。
+    回归：旧语义"树被遮即释放"导致多回合短树滚动到树间隙时没有消息锚点，
+    长对话滚动时顶部丢失上下文（sticky 无法钉住）。锚点跟随滚动切换。
     """
     app = ScrollLayoutTestApp()
     async with app.run_test(size=(100, 30)) as pilot:
@@ -636,10 +636,16 @@ async def test_sticky_releases_when_tree_hidden_behind_header():
         await pilot.pause(0.1)
         assert ml._pinned_msg is m1, "树尾可见时应钉住 M1"
 
-        # 树尾进入标题波段（完全遮挡）→ M1 释放
+        # 树尾进入标题波段（完全遮挡）→ M1 仍保持钉住（锚点不因树被遮而丢失）
         ml.scroll_to(y=t1b - H1, animate=False)
         await pilot.pause(0.1)
-        assert ml._pinned_msg is None, "树被标题完全遮挡时 M1 应释放（无钉住）"
+        assert ml._pinned_msg is m1, "树被标题遮挡时 M1 应保持锚点（不释放）"
+
+        # 继续滚到 M2 顶滑出 → 锚点切换到 M2
+        m2_top = m2.virtual_region.y
+        ml.scroll_to(y=m2_top + 1, animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is m2, "M2 顶滑出时锚点应切到 M2"
 
 
 @pytest.mark.asyncio
@@ -687,3 +693,37 @@ async def test_think_and_body_breathing_lifecycle():
         assert body._breath_interval is not None
         ml.finish_ai_message()                   # 正文收尾 → 停呼吸
         assert body._breath_interval is None
+
+
+async def test_long_dialog_anchor_stays_pinned():
+    """回归：长对话多回合短树，滚动到树间隙时仍保持消息锚点。
+
+    旧语义要求"树尾仍可见"才钉，多回合短树滚动到树间隙（上方树已滑过）时
+    永远不钉 → 长对话顶部丢失消息锚点。新语义：消息顶滑出即钉，滚动跟随切换。
+    """
+    app = ScrollLayoutTestApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        ml = app.query_one("#messages", MessageList)
+        for i in range(8):
+            ml.add_user_message(f"问题{i}")
+            ml.add_thinking_chunk(f"思考{i}内容" * 5)
+            ml.add_ai_chunk(f"回答{i}内容" * 10)
+            ml.finish_ai_message()
+        await pilot.pause(0.4)
+        assert ml.max_scroll_y > ml.size.height  # 长对话可滚动
+
+        # 滚动到中段 → 保持消息锚点
+        ml.scroll_to(y=ml.max_scroll_y * 0.5, animate=False)
+        await pilot.pause(0.2)
+        assert ml._pinned_msg is not None, "长对话中段滚动应保持消息锚点"
+        assert ml._sticky_header.styles.display == "block"
+
+        # 继续滚动 → 锚点仍保持（跟随切换）
+        ml.scroll_to(y=ml.max_scroll_y * 0.8, animate=False)
+        await pilot.pause(0.2)
+        assert ml._pinned_msg is not None, "继续滚动锚点不应丢失"
+
+        # 回顶 → 无钉住（消息可正常显示）
+        ml.scroll_home(animate=False)
+        await pilot.pause(0.1)
+        assert ml._pinned_msg is None
