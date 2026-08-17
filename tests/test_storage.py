@@ -3,6 +3,7 @@
 import json
 import pytest
 import asyncio
+from unittest.mock import patch
 from pathlib import Path
 
 from core.storage import JsonStore
@@ -179,3 +180,33 @@ class TestJsonStoreWrite:
                 assert data == {"n": i}
         finally:
             await store.close()
+
+
+class TestAtomicWriteOSError:
+    """atomic_write 的 os.replace 失败 → 清理临时文件 + 抛错。"""
+
+    def test_atomic_write_json_replace_failure(self, tmp_path):
+        from core.storage import atomic_write_json
+        path = tmp_path / "data.json"
+        with patch("core.storage.os.replace", side_effect=OSError("disk full")):
+            with pytest.raises(OSError):
+                atomic_write_json(path, {"a": 1})
+        assert not list(tmp_path.glob(".tmp_*")), "临时文件应被清理"
+
+    def test_atomic_write_text_replace_failure(self, tmp_path):
+        from core.storage import atomic_write_text
+        path = tmp_path / "data.txt"
+        with patch("core.storage.os.replace", side_effect=OSError("disk full")):
+            with pytest.raises(OSError):
+                atomic_write_text(path, "content")
+        assert not list(tmp_path.glob(".tmp_*")), "临时文件应被清理"
+
+    def test_atomic_write_json_unlink_failure_swallowed(self, tmp_path):
+        """临时文件清理失败 → 不二次抛错，只重新抛原 OSError。"""
+        from core.storage import atomic_write_json
+        path = tmp_path / "data.json"
+        real_unlink = __import__("os").unlink
+        with patch("core.storage.os.replace", side_effect=OSError("disk full")), \
+             patch("core.storage.os.unlink", side_effect=OSError("cleanup failed")):
+            with pytest.raises(OSError):
+                atomic_write_json(path, {"a": 1})

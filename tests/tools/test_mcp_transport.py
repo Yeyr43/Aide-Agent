@@ -15,6 +15,7 @@ from core.mcp.protocol import (
     JSONRPCRequest,
     JSONRPCResponse,
     make_initialize_request,
+    make_initialized_notification,
     make_tools_list_request,
     make_tools_call_request,
 )
@@ -255,3 +256,336 @@ class TestJSONRPCResponseParsing:
         resp = parse_response(raw)
         assert resp.is_error
         assert "Method not found" in resp.error_message
+
+
+# ── StdioTransport 子进程握手 & 读取循环 ─────────────────────────────
+
+
+class _FakeStream:
+    """Async 流：返回预置行，耗尽后阻塞（keep_alive）或立即 EOF。"""
+
+    def __init__(self, lines, keep_alive=True):
+        self._lines = [ln.encode() if isinstance(ln, str) else ln for ln in lines]
+        self._i = 0
+        self._keep_alive = keep_alive
+
+    async def readline(self):
+        if self._i < len(self._lines):
+            line = self._lines[self._i]
+            self._i += 1
+            return line
+        if self._keep_alive:
+            await asyncio.sleep(3600)
+            return b""
+        return b""
+
+
+class _BadStream:
+    async def readline(self):
+        raise RuntimeError("io exploded")
+
+
+class _FakeProc:
+    def __init__(self, stream=None, wait_exc=None):
+        self.stdin = MagicMock()
+        self.stdout = stream or _FakeStream([])
+        self.stderr = MagicMock()
+        self.returncode = None
+        self._wait_exc = wait_exc
+        self.terminated = False
+        self.killed = False
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = -15
+
+    async def wait(self):
+        if self._wait_exc:
+            raise self._wait_exc
+        return 0
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+
+class TestStdioTransportConnect:
+    @pytest.mark.asyncio
+    async def test_connect_success(self):
+        init_resp = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05"}})
+        proc = _FakeProc(_FakeStream([init_resp]))
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            transport = StdioTransport()
+            await transport.connect("echo", ["-x"])
+        assert transport.is_connected
+        assert proc.stdin.write.called  # initialized 通知已写入
+        await transport.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_connect_again_disconnects_first(self):
+        # 第二次握手的 request id 会递增到 2，服务端响应 id 须匹配
+        init_resp = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
+        init_resp2 = json.dumps({"jsonrpc": "2.0", "id": 2, "result": {}})
+        proc = _FakeProc(_FakeStream([init_resp]))
+        proc2 = _FakeProc(_FakeStream([init_resp2]))
+        transport = StdioTransport()
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=[proc, proc2])):
+            await transport.connect("echo")
+            await transport.connect("echo")
+        assert proc.terminated
+        assert transport.is_connected
+        await transport.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_connect_command_not_found(self):
+        transport = StdioTransport()
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=FileNotFoundError)):
+            with pytest.raises(FileNotFoundError, match="未找到|not found"):
+                await transport.connect("nope")
+
+    @pytest.mark.asyncio
+    async def test_connect_spawn_error(self):
+        transport = StdioTransport()
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=PermissionError("denied"))):
+            with pytest.raises(RuntimeError, match="启动|failed|error"):
+                await transport.connect("x")
+
+    @pytest.mark.asyncio
+    async def test_connect_handshake_send_failure(self):
+        proc = _FakeProc(_FakeStream([]))
+        transport = StdioTransport()
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            with patch.object(StdioTransport, "send_request", new=AsyncMock(side_effect=RuntimeError("boom"))):
+                with pytest.raises(RuntimeError, match="boom"):
+                    await transport.connect("echo")
+        assert proc.terminated  # cleanup 终止了子进程
+
+    @pytest.mark.asyncio
+    async def test_connect_handshake_error_response(self):
+        err_resp = json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "bad handshake"}})
+        proc = _FakeProc(_FakeStream([err_resp]))
+        transport = StdioTransport()
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            with pytest.raises(RuntimeError, match="initialize 失败|initialize failed"):
+                await transport.connect("echo")
+        assert not transport.is_connected
+        assert proc.terminated
+
+
+class TestStdioTransportReadLoop:
+    @pytest.mark.asyncio
+    async def test_read_loop_no_proc(self):
+        transport = StdioTransport()
+        await transport._read_loop()  # 直接 return
+
+    @pytest.mark.asyncio
+    async def test_read_loop_dispatches_by_id(self):
+        transport = StdioTransport()
+        transport._proc = _FakeProc(_FakeStream([
+            '{"jsonrpc":"2.0","id":0,"result":{}}',
+            '{"jsonrpc":"2.0","id":99,"result":{"x":1}}',
+        ], keep_alive=False))
+        await transport._read_loop()  # 覆盖服务端推送 + 无匹配响应两个分支
+
+    @pytest.mark.asyncio
+    async def test_read_loop_delivers_pending(self):
+        transport = StdioTransport()
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        transport._pending[7] = future
+        transport._proc = _FakeProc(_FakeStream([
+            '{"jsonrpc":"2.0","id":7,"result":{"ok":true}}',
+        ], keep_alive=False))
+        task = asyncio.create_task(transport._read_loop())
+        response = await asyncio.wait_for(future, timeout=1.0)
+        await task
+        assert response.result == {"ok": True}
+
+    @pytest.mark.asyncio
+    async def test_read_loop_generic_exception(self):
+        transport = StdioTransport()
+        transport._proc = _FakeProc(_BadStream())
+        await transport._read_loop()  # 异常被吞掉并记录日志
+
+
+class TestStdioTransportCleanup:
+    @pytest.mark.asyncio
+    async def test_cleanup_kills_on_wait_timeout(self):
+        transport = StdioTransport()
+        proc = _FakeProc(wait_exc=asyncio.TimeoutError())
+        transport._proc = proc
+        await transport._cleanup()
+        assert proc.terminated
+        assert proc.killed
+
+    @pytest.mark.asyncio
+    async def test_cleanup_kills_on_lookup_error(self):
+        transport = StdioTransport()
+        proc = _FakeProc(wait_exc=ProcessLookupError())
+        transport._proc = proc
+        await transport._cleanup()
+        assert proc.killed
+
+    @pytest.mark.asyncio
+    async def test_cleanup_swallows_kill_lookup(self):
+        transport = StdioTransport()
+        proc = _FakeProc(wait_exc=asyncio.TimeoutError())
+
+        def _kill():
+            raise ProcessLookupError()
+
+        proc.kill = _kill
+        transport._proc = proc
+        await transport._cleanup()  # 不抛异常
+
+    @pytest.mark.asyncio
+    async def test_cleanup_fails_pending_futures(self):
+        transport = StdioTransport()
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        transport._pending[1] = future
+        transport._proc = None
+        await transport._cleanup()
+        with pytest.raises(RuntimeError, match="已断开|disconnected"):
+            future.result()
+
+
+# ── HTTPTransport 连接 / POST ────────────────────────────────────────
+
+
+class _FakeHTTPResponse:
+    def __init__(self, text, headers, status_code=200):
+        self.text = text
+        self.headers = headers
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import httpx
+            raise httpx.HTTPStatusError(
+                f"HTTP {self.status_code}", request=None, response=self
+            )
+
+
+class TestHTTPTransportConnectFailure:
+    @pytest.mark.asyncio
+    async def test_connect_post_failure_closes_client(self):
+        transport = HTTPTransport()
+        transport._ensure_client = MagicMock()
+        with patch.object(transport, "_http_post", new=AsyncMock(side_effect=ConnectionError("refused"))):
+            with pytest.raises(RuntimeError, match="连接失败|connection failed"):
+                await transport.connect("http://localhost:8080/mcp")
+        assert not transport.is_connected
+
+    @pytest.mark.asyncio
+    async def test_connect_notification_failure_ok(self):
+        transport = HTTPTransport()
+        transport._ensure_client = MagicMock()
+        ok = JSONRPCResponse(id=1, result={})
+        with patch.object(transport, "_http_post", new=AsyncMock(return_value=ok)):
+            with patch.object(transport, "_http_post_notification", new=AsyncMock(side_effect=RuntimeError("nope"))):
+                await transport.connect("http://localhost:8080/mcp")
+        assert transport.is_connected
+        assert transport._url == "http://localhost:8080/mcp"
+
+
+class TestHTTPTransportHttpPost:
+    @pytest.mark.asyncio
+    async def test_post_sends_and_updates_session_id(self):
+        transport = HTTPTransport()
+        transport._url = "http://x/mcp"
+        transport._session_id = "old-sess"
+        resp = _FakeHTTPResponse(
+            text=json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}),
+            headers={"Mcp-Session-Id": "new-sess", "content-type": "application/json"},
+        )
+        transport._client = MagicMock()
+        transport._client.post = AsyncMock(return_value=resp)
+        result = await transport._http_post(make_tools_list_request(), timeout=5.0)
+        assert result.result == {"ok": True}
+        assert transport._session_id == "new-sess"
+        headers = transport._client.post.call_args.kwargs["headers"]
+        assert headers["Mcp-Session-Id"] == "old-sess"
+
+    @pytest.mark.asyncio
+    async def test_post_connect_error(self):
+        import httpx
+        transport = HTTPTransport()
+        transport._url = "http://x/mcp"
+        transport._client = MagicMock()
+        transport._client.post = AsyncMock(side_effect=httpx.ConnectError("no route"))
+        with pytest.raises(ConnectionError):
+            await transport._http_post(make_tools_list_request(), timeout=5.0)
+
+    @pytest.mark.asyncio
+    async def test_post_connect_timeout(self):
+        import httpx
+        transport = HTTPTransport()
+        transport._url = "http://x/mcp"
+        transport._client = MagicMock()
+        transport._client.post = AsyncMock(side_effect=httpx.ConnectTimeout("slow"))
+        with pytest.raises(ConnectionError):
+            await transport._http_post(make_tools_list_request(), timeout=5.0)
+
+    @pytest.mark.asyncio
+    async def test_post_read_timeout(self):
+        import httpx
+        transport = HTTPTransport()
+        transport._url = "http://x/mcp"
+        transport._client = MagicMock()
+        transport._client.post = AsyncMock(side_effect=httpx.ReadTimeout("slow"))
+        with pytest.raises(asyncio.TimeoutError):
+            await transport._http_post(make_tools_list_request(), timeout=5.0)
+
+    @pytest.mark.asyncio
+    async def test_notification_sends_session_id(self):
+        transport = HTTPTransport()
+        transport._url = "http://x/mcp"
+        transport._session_id = "sess-1"
+        transport._client = MagicMock()
+        transport._client.post = AsyncMock(return_value=_FakeHTTPResponse("", {}, 200))
+        await transport._http_post_notification(make_initialized_notification())
+        headers = transport._client.post.call_args.kwargs["headers"]
+        assert headers["Mcp-Session-Id"] == "sess-1"
+
+    @pytest.mark.asyncio
+    async def test_notification_swallows_error(self):
+        transport = HTTPTransport()
+        transport._url = "http://x/mcp"
+        transport._client = MagicMock()
+        transport._client.post = AsyncMock(side_effect=RuntimeError("boom"))
+        await transport._http_post_notification(make_initialized_notification())  # 不抛异常
+
+
+# ── HTTPTransport SSE 多事件解析边界 ─────────────────────────────────
+
+
+class TestHTTPTransportSSEMultiLine:
+    def _mock_response(self, text, content_type="application/json"):
+        resp = MagicMock()
+        resp.text = text
+        resp.headers = {"content-type": content_type}
+        return resp
+
+    def test_multi_line_skips_invalid_last_data(self):
+        """最后一条 data 非法时回退到上一条有效 JSON。"""
+        transport = HTTPTransport()
+        resp = self._mock_response(
+            'data: {"jsonrpc":"2.0","id":4,"result":{"done":true}}\n'
+            "data: not-json",
+            content_type="text/event-stream",
+        )
+        result = transport._parse_http_response(4, resp)
+        assert not result.is_error
+        assert result.result == {"done": True}
+
+    def test_multi_line_all_invalid_returns_error(self):
+        """所有 data 行都非法时返回解析失败错误。"""
+        transport = HTTPTransport()
+        resp = self._mock_response(
+            "data: nope1\ndata: nope2",
+            content_type="text/event-stream",
+        )
+        result = transport._parse_http_response(8, resp)
+        assert result.is_error
+        assert "无法解析" in result.error_message or "parse" in result.error_message.lower()

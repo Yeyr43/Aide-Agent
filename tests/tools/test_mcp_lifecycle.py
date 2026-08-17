@@ -161,3 +161,106 @@ class TestConfigWatcher:
         adapter = MagicMock()
         watcher = ConfigWatcher(adapter, "/tmp/mcp")
         await watcher.stop()  # should not crash
+
+
+class TestConfigWatcherReload:
+    """ConfigWatcher.reload_config — 增量重载新增/删除/重连/禁用。"""
+
+    @staticmethod
+    def _make_adapter():
+        from core.mcp.adapter import MCPAdapter
+        adapter = MCPAdapter()
+        adapter.connect = AsyncMock()
+        adapter._sync_tools_to_registry = AsyncMock(return_value=0)
+        return adapter
+
+    @pytest.mark.asyncio
+    async def test_reload_adds_new(self, tmp_path):
+        (tmp_path / "servers.json").write_text(json.dumps([
+            {"name": "srv1", "command": "echo", "args": ["-x"]},
+        ]))
+        adapter = self._make_adapter()
+        watcher = ConfigWatcher(adapter, str(tmp_path))
+        result = await watcher.reload_config()
+        assert result == (1, 0, 0)
+        adapter.connect.assert_awaited_once_with("srv1")
+        cfg = adapter._registry.get("srv1")
+        assert cfg.command == "echo"
+        assert cfg.args == ["-x"]
+        adapter._sync_tools_to_registry.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_reload_reconnects_existing(self, tmp_path):
+        from core.mcp.adapter import MCPServerConfig
+        (tmp_path / "servers.json").write_text(json.dumps([
+            {"name": "srv1", "command": "new-cmd"},
+        ]))
+        adapter = self._make_adapter()
+        adapter.add_server(MCPServerConfig(name="srv1", command="old-cmd"))
+        watcher = ConfigWatcher(adapter, str(tmp_path))
+        result = await watcher.reload_config()
+        assert result == (0, 0, 1)
+        adapter.connect.assert_awaited_once_with("srv1")
+
+    @pytest.mark.asyncio
+    async def test_reload_disconnects_removed(self, tmp_path):
+        from core.mcp.adapter import MCPServerConfig
+        (tmp_path / "servers.json").write_text(json.dumps([
+            {"name": "srv1", "command": "echo"},
+        ]))
+        adapter = self._make_adapter()
+        adapter.add_server(MCPServerConfig(name="srv1", command="echo"))
+        adapter.add_server(MCPServerConfig(name="srv2", command="gone"))
+        watcher = ConfigWatcher(adapter, str(tmp_path))
+        result = await watcher.reload_config()
+        assert result == (0, 1, 1)
+        assert "srv2" not in adapter._registry.names
+
+    @pytest.mark.asyncio
+    async def test_reload_disabled_skips_connect(self, tmp_path):
+        (tmp_path / "servers.json").write_text(json.dumps([
+            {"name": "srv1", "command": "echo", "enabled": False},
+        ]))
+        adapter = self._make_adapter()
+        watcher = ConfigWatcher(adapter, str(tmp_path))
+        result = await watcher.reload_config()
+        assert result == (0, 0, 0)
+        adapter.connect.assert_not_called()
+        adapter._sync_tools_to_registry.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reload_connect_failure(self, tmp_path):
+        (tmp_path / "servers.json").write_text(json.dumps([
+            {"name": "bad", "command": "nope"},
+        ]))
+        adapter = self._make_adapter()
+        adapter.connect = AsyncMock(side_effect=RuntimeError("cannot connect"))
+        watcher = ConfigWatcher(adapter, str(tmp_path))
+        result = await watcher.reload_config()
+        assert result == (0, 0, 0)
+        adapter._sync_tools_to_registry.assert_not_called()
+
+
+class TestConfigWatcherStartStop:
+    @pytest.mark.asyncio
+    async def test_start_creates_backend(self, tmp_path):
+        adapter = MagicMock()
+        watcher = ConfigWatcher(adapter, str(tmp_path), interval=0.01)
+        watcher.start()
+        assert watcher._watcher is not None
+        await asyncio.sleep(0.05)
+        assert watcher.is_running
+        await watcher.stop()
+        assert watcher._watcher is None
+        assert not watcher.is_running
+
+    @pytest.mark.asyncio
+    async def test_start_stops_existing_watcher(self, tmp_path):
+        adapter = MagicMock()
+        watcher = ConfigWatcher(adapter, str(tmp_path), interval=0.01)
+        old = MagicMock()
+        watcher._watcher = old
+        watcher.start()
+        old.stop.assert_called_once()
+        await asyncio.sleep(0.01)
+        await watcher.stop()

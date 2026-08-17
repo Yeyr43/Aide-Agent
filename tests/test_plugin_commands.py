@@ -3,8 +3,9 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-from core.commands.builtin.plugin_commands import handle_plugin
+from core.commands.builtin.plugin_commands import handle_plugin, handle_plugins_status
 from core.plugins.contract import PluginManifest
+from core.plugins.state import PluginStateEntry, PluginStatus
 
 
 class TestHandlePluginDefault:
@@ -192,3 +193,127 @@ class TestHandlePluginUnknownSub:
         """discover 不再是子命令，会落入未知分支。"""
         result = await handle_plugin(MagicMock(), "discover")
         assert "未知" in result
+
+
+class TestHandlePluginEnableDisable:
+    async def test_enable_missing_id(self):
+        result = await handle_plugin(MagicMock(), "enable")
+        assert "enable" in result
+
+    async def test_enable_success(self):
+        app = MagicMock()
+        app._kernel = MagicMock()
+        app._kernel._plugins = MagicMock()
+        app._kernel._plugins.enable_plugin = AsyncMock()
+        result = await handle_plugin(app, "enable foo")
+        app._kernel._plugins.enable_plugin.assert_awaited_once_with("foo")
+        assert "已启用" in result
+
+    async def test_disable_missing_id(self):
+        result = await handle_plugin(MagicMock(), "disable")
+        assert "disable" in result
+
+    async def test_disable_success(self):
+        app = MagicMock()
+        app._kernel = MagicMock()
+        app._kernel._plugins = MagicMock()
+        app._kernel._plugins.disable_plugin = AsyncMock()
+        result = await handle_plugin(app, "disable foo")
+        app._kernel._plugins.disable_plugin.assert_awaited_once_with("foo")
+        assert "已禁用" in result
+
+
+class TestHandlePluginsStatus:
+    async def test_enable_subcommand(self):
+        app = MagicMock()
+        app._kernel = MagicMock()
+        app._kernel._plugins = MagicMock()
+        app._kernel._plugins.enable_plugin = AsyncMock()
+        result = await handle_plugins_status(app, "enable foo")
+        assert "已启用" in result
+
+    async def test_disable_subcommand(self):
+        app = MagicMock()
+        app._kernel = MagicMock()
+        app._kernel._plugins = MagicMock()
+        app._kernel._plugins.disable_plugin = AsyncMock()
+        result = await handle_plugins_status(app, "disable foo")
+        assert "已禁用" in result
+
+    async def test_no_entries(self):
+        app = MagicMock()
+        app._kernel = MagicMock()
+        app._kernel._plugins = MagicMock()
+        app._kernel._plugins.state_manager = MagicMock()
+        app._kernel._plugins.state_manager.list_all.return_value = []
+        app._kernel._plugins.discover.return_value = []
+        result = await handle_plugins_status(app, "")
+        assert "无已安装插件" in result
+
+    async def test_load_failure_swallowed(self):
+        app = MagicMock()
+        app._kernel = MagicMock()
+        app._kernel._plugins = MagicMock()
+        app._kernel._plugins.state_manager = MagicMock()
+        app._kernel._plugins.state_manager.list_all.return_value = []
+        app._kernel._plugins.state_manager.count_by_status.return_value = {}
+        app._kernel._plugins.discover.return_value = [
+            PluginManifest(id="boom", version="1.0"),
+        ]
+        app._kernel._plugins.list_loaded.return_value = []
+        app._kernel.load_plugin = AsyncMock(side_effect=RuntimeError("boom"))
+        result = await handle_plugins_status(app, "")
+        assert "无已安装插件" in result
+
+    async def test_already_loaded_skipped(self):
+        app = MagicMock()
+        app._kernel = MagicMock()
+        app._kernel._plugins = MagicMock()
+        app._kernel._plugins.state_manager = MagicMock()
+        app._kernel._plugins.state_manager.list_all.return_value = []
+        app._kernel._plugins.state_manager.count_by_status.return_value = {
+            "ready": 0, "needs_setup": 0, "disabled": 0,
+        }
+        app._kernel._plugins.discover.return_value = [
+            PluginManifest(id="loaded-p", version="1.0"),
+        ]
+        app._kernel._plugins.list_loaded.return_value = [
+            PluginManifest(id="loaded-p", version="1.0"),
+        ]
+        app._kernel.load_plugin = AsyncMock()
+        result = await handle_plugins_status(app, "")
+        assert "无已安装插件" in result
+        app._kernel.load_plugin.assert_not_called()
+
+    async def test_full_panel(self):
+        app = MagicMock()
+        state_mgr = MagicMock()
+        state_mgr.list_all.return_value = [
+            PluginStateEntry(plugin_id="ready-p", version="1.2.0",
+                             status=PluginStatus.READY),
+            PluginStateEntry(plugin_id="setup-p", status=PluginStatus.NEEDS_SETUP,
+                             missing_requirements=["api_key:FOO"]),
+            PluginStateEntry(plugin_id="dis-p", version="0.1",
+                             status=PluginStatus.DISABLED),
+        ]
+        state_mgr.count_by_status.return_value = {
+            "ready": 1, "needs_setup": 1, "disabled": 1,
+        }
+        app._kernel = MagicMock()
+        app._kernel._plugins = MagicMock()
+        app._kernel._plugins.state_manager = state_mgr
+        app._kernel._plugins.discover.return_value = [
+            PluginManifest(id="new-p", name="New", version="3.0"),
+        ]
+        app._kernel._plugins.list_loaded.return_value = []
+        app._kernel.load_plugin = AsyncMock(return_value=MagicMock())
+        result = await handle_plugins_status(app, "")
+        assert "Ready: **1**" in result
+        assert "Needs Setup: **1**" in result
+        assert "Disabled: **1**" in result
+        assert "ready-p" in result
+        assert "v1.2.0" in result
+        assert "缺少: `api_key:FOO`" in result
+        assert "dis-p" in result
+        assert "已禁用" in result
+        app._kernel.load_plugin.assert_awaited_once_with("new-p")

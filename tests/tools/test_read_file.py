@@ -2,6 +2,7 @@
 
 import pytest
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 from core.tools.read_file import execute, schema, MAX_BYTES
 
@@ -83,3 +84,49 @@ class TestReadFileExecute:
         result = await execute({"file_path": str(file)})
         # Should not crash — returns either content with replacement chars or error
         assert isinstance(result, str)
+
+
+class TestReadFileErrors:
+    @pytest.mark.asyncio
+    async def test_permission_error(self, tmp_path):
+        f = tmp_path / "f.txt"
+        f.write_text("x", encoding="utf-8")
+        with patch("builtins.open", side_effect=PermissionError("denied")):
+            result = await execute({"file_path": str(f)})
+        assert "读取权限" in result
+
+    @pytest.mark.asyncio
+    async def test_generic_open_exception(self, tmp_path):
+        f = tmp_path / "f.txt"
+        f.write_text("x", encoding="utf-8")
+        with patch("builtins.open", side_effect=RuntimeError("boom")):
+            result = await execute({"file_path": str(f)})
+        assert "读取文件失败" in result
+
+    @pytest.mark.asyncio
+    async def test_decode_exception(self, tmp_path):
+        f = tmp_path / "f.txt"
+        f.write_text("x", encoding="utf-8")
+
+        class _BadBytes:
+            def __len__(self):
+                return 1
+
+            def decode(self, *args, **kwargs):
+                raise Exception("decode boom")
+
+        fake_file = MagicMock()
+        fake_file.__enter__.return_value.read.return_value = _BadBytes()
+        with patch("builtins.open", return_value=fake_file):
+            result = await execute({"file_path": str(f)})
+        assert "读取文件失败" in result
+
+    @pytest.mark.asyncio
+    async def test_truncate_utf8_boundary(self, tmp_path):
+        """大文件在 UTF-8 多字节字符边界处截断，回退算法不发散。"""
+        f = tmp_path / "large.txt"
+        # 102399 个 ASCII 'a' + 3 字节的 '你'：第 102400 字节落在多字节字符中间
+        data = b"a" * (MAX_BYTES - 1) + "你".encode("utf-8")
+        f.write_bytes(data)
+        result = await execute({"file_path": str(f)})
+        assert "截断" in result or "truncated" in result.lower()

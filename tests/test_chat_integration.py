@@ -390,6 +390,100 @@ class TestChatIntegration:
                        for m in data["messages"])
 
 
+class TestMultiToolCallRoundtrip:
+    """多工具调用 → 结果按原顺序重组 → 最终正文。"""
+
+    @pytest.fixture
+    async def store(self):
+        s = await _make_store()
+        yield s
+        await s.close()
+
+    async def test_multi_tool_calls_preserve_order(self, store, tmp_path):
+        agent_root = _make_agent_dir(tmp_path)
+        sessions_root = tmp_path / "sessions"
+        sessions_root.mkdir()
+        config = Config(aide_root=tmp_path / ".aide")
+
+        tool_registry = ToolRegistry()
+
+        async def _echo(arguments: dict) -> str:
+            return f"Echo:{arguments.get('text', '')}"
+        tool_registry.register(ToolDefinition(
+            name="echo", description="Echo", parameters={"type": "object", "properties": {}},
+            execute=_echo,
+        ))
+
+        provider = AsyncMock()
+        call = [0]
+
+        async def _mock_chat(messages, tools):
+            if call[0] == 0:
+                call[0] += 1
+                yield StreamEnd(
+                    finish_reason="tool_calls",
+                    tool_calls=[
+                        {"id": "call_1", "type": "function",
+                         "function": {"name": "echo", "arguments": '{"text":"a"}'}},
+                        {"id": "call_2", "type": "function",
+                         "function": {"name": "echo", "arguments": '{"text":"b"}'}},
+                    ],
+                )
+            else:
+                yield TextDelta(content="两个工具都执行成功")
+                yield StreamEnd(finish_reason="stop", tool_calls=[])
+
+        provider.chat_with_tools = _mock_chat
+        provider.supports_vision = False
+
+        pipeline = ContextPipeline(agent_root=agent_root)
+        ingester = ContextIngester(store, sessions_root=sessions_root)
+        ctx = KernelContext(
+            config=config,
+            provider=provider,
+            tooling=ToolingContext(
+                tool_registry=tool_registry, command_registry=MagicMock(),
+                plugin_host=MagicMock(), slot_registry=MagicMock(),
+            ),
+            memory=MemoryContext(reflector=MagicMock()),
+            session=SessionContext(
+                context_pipeline=pipeline, ingester=ingester, session_manager=MagicMock(),
+            ),
+        )
+        kernel = AgentKernel(ctx)
+
+        session_dir = tmp_path / "session"
+        session_dir.mkdir()
+        (session_dir / "messages").mkdir()
+
+        result = await kernel.chat(
+            user_msg="echo a and b",
+            session_dir=session_dir,
+            turn=1,
+            conversation=[],
+            ui=MagicMock(),
+        )
+
+        assert result.assistant_text == "两个工具都执行成功"
+
+        # 1) 带 tool_calls 的 assistant 消息
+        tc_msgs = [m for m in result.conversation if m.get("tool_calls")]
+        assert len(tc_msgs) == 1
+        calls = tc_msgs[0]["tool_calls"]
+        assert [c["function"]["name"] for c in calls] == ["echo", "echo"]
+
+        # 2) 两条 tool 结果，按原顺序（call_1 → call_2）
+        tool_msgs = [m for m in result.conversation if m.get("role") == "tool"]
+        assert len(tool_msgs) == 2
+        assert [m["tool_call_id"] for m in tool_msgs] == ["call_1", "call_2"]
+        assert tool_msgs[0]["content"] == "Echo:a"
+        assert tool_msgs[1]["content"] == "Echo:b"
+
+        # 3) 最终正文在最后
+        assert result.conversation[-1]["role"] == "assistant"
+        assert result.conversation[-1]["content"] == "两个工具都执行成功"
+
+
 class TestXmlToolCallPersistence:
     """回归：模型流式输出 <tool_call> XML → 工具执行 + 落盘 content 干净（再次渲染无乱码）。"""
 

@@ -139,3 +139,72 @@ class TestIsColdStart:
 
         with patch('core.setup.aide_dir', return_value=tmp_path):
             assert is_cold_start() is True
+
+
+class TestInstallBuiltinPlugins:
+    """_install_builtin_plugins 的分支容错。"""
+
+    def test_skips_when_templates_missing(self, tmp_path):
+        """模板目录不存在 → 静默跳过。"""
+        with patch('core.setup.aide_dir', return_value=tmp_path), \
+             patch('core.resources.get_resource_path', return_value=tmp_path / "no_templates"):
+            ensure_aide_root()  # 不抛
+
+    def test_skips_non_plugin_entries(self, tmp_path):
+        """模板目录里的普通文件 / 无 manifest 目录 → 跳过。"""
+        templates = tmp_path / "templates"
+        templates.mkdir(parents=True)
+        (templates / "readme.txt").write_text("x")
+        (templates / "noplugin").mkdir()
+        with patch('core.setup.aide_dir', return_value=tmp_path), \
+             patch('core.resources.get_resource_path', return_value=templates):
+            ensure_aide_root()
+        assert not (tmp_path / "plugins" / "readme.txt").exists()
+        assert not (tmp_path / "plugins" / "noplugin").exists()
+
+    def test_copies_valid_plugin_template(self, tmp_path):
+        """有效插件模板（SKILL.md）→ 复制到 plugins/。"""
+        templates = tmp_path / "templates"
+        plugin_src = templates / "hello"
+        (plugin_src / "SKILL.md").mkdir(parents=True)
+        (plugin_src / "SKILL.md" / "SKILL.md").write_text("x")
+        with patch('core.setup.aide_dir', return_value=tmp_path), \
+             patch('core.resources.get_resource_path', return_value=templates):
+            ensure_aide_root()
+        assert (tmp_path / "plugins" / "hello" / "SKILL.md" / "SKILL.md").exists()
+
+    def test_copytree_oserror_skipped(self, tmp_path):
+        """copytree 失败 → 跳过该模板，不中断。"""
+        templates = tmp_path / "templates"
+        (templates / "p" / "SKILL.md").mkdir(parents=True)
+        (templates / "p" / "SKILL.md" / "x.md").write_text("x")
+        with patch('core.setup.aide_dir', return_value=tmp_path), \
+             patch('core.resources.get_resource_path', return_value=templates), \
+             patch('shutil.copytree', side_effect=OSError("disk full")):
+            ensure_aide_root()  # 不抛
+
+
+class TestSeedMcpConfig:
+    """_seed_mcp_config 容错。"""
+
+    def test_copy2_oserror_skipped(self, tmp_path):
+        """bundle MCP 配置复制失败 → 静默跳过。"""
+        (tmp_path / "mcp").mkdir(exist_ok=True)
+        bundled = tmp_path / "bundle"
+        (bundled / "mcp").mkdir(parents=True)
+        (bundled / "mcp" / "servers.json").write_text("{}", encoding="utf-8")
+        with patch('core.setup.aide_dir', return_value=tmp_path), \
+             patch('core.resources.get_bundle_dir', return_value=bundled), \
+             patch('shutil.copy2', side_effect=OSError):
+            ensure_aide_root()  # 不抛
+
+    def test_copies_bundled_config(self, tmp_path):
+        """bundle 有默认配置且目标不存在 → 复制。"""
+        (tmp_path / "mcp").mkdir(exist_ok=True)
+        bundled = tmp_path / "bundle"
+        (bundled / "mcp").mkdir(parents=True)
+        (bundled / "mcp" / "servers.json").write_text('{"s": []}', encoding="utf-8")
+        with patch('core.setup.aide_dir', return_value=tmp_path), \
+             patch('core.resources.get_bundle_dir', return_value=bundled):
+            ensure_aide_root()
+        assert (tmp_path / "mcp" / "servers.json").exists()

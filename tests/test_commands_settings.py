@@ -1,6 +1,7 @@
 """Tests for core.commands.builtin.settings_handlers — language/API/model management."""
 
 import pytest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch, AsyncMock
 
 from core.commands.builtin.settings_handlers import (
@@ -206,3 +207,255 @@ class TestHandleApiAdd:
             mock_cfg.api_config_exists.return_value = True
             result = await handle_api(MagicMock(), "add myapi openai gpt-4o key")
             assert "已存在" in result
+
+
+def _api_screen_result(name="openai", provider="openai", model="gpt-4o",
+                       api_key="sk-1", base_url="", ctx="96000"):
+    return {
+        "name": name,
+        "provider": provider,
+        "model": model,
+        "api_key": api_key,
+        "base_url": base_url,
+        "supports_vision": True,
+        "context_window": ctx,
+    }
+
+
+class TestHandleApiNoArg:
+    """/api 无参数 → 打开配置页保存。"""
+
+    async def test_screen_cancelled_returns_empty(self):
+        app = MagicMock()
+        app.open_api_config_screen = AsyncMock(return_value=None)
+        with patch("core.commands.builtin.settings_handlers.Config"):
+            assert await handle_api(app, "") == ""
+
+    async def test_screen_saved_sets_active_when_none(self):
+        app = MagicMock()
+        app.open_api_config_screen = AsyncMock(return_value=_api_screen_result())
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.get_active_api_name.return_value = ""
+            mock_cfg.save_api_config = MagicMock()
+            mock_cfg.set_active_api_name = MagicMock()
+            mock_cfg.load_settings.return_value = {}
+            mock_cfg.save_settings = MagicMock()
+            result = await handle_api(app, "")
+            mock_cfg.save_api_config.assert_called_once()
+            mock_cfg.set_active_api_name.assert_called_once_with("openai")
+            saved = mock_cfg.save_settings.call_args[0][0]
+            assert saved["app"]["context_window"] == 96000
+            assert "已保存" in result
+
+    async def test_screen_saved_keeps_existing_active(self):
+        app = MagicMock()
+        app.open_api_config_screen = AsyncMock(return_value=_api_screen_result())
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.get_active_api_name.return_value = "existing"
+            mock_cfg.save_api_config = MagicMock()
+            mock_cfg.set_active_api_name = MagicMock()
+            mock_cfg.load_settings.return_value = {}
+            mock_cfg.save_settings = MagicMock()
+            await handle_api(app, "")
+            mock_cfg.set_active_api_name.assert_not_called()
+
+
+class TestHandleApiList:
+    async def test_list_subcommand(self):
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.list_api_configs.return_value = {
+                "openai": {"provider": "openai", "model": "gpt-4o"},
+            }
+            mock_cfg.get_active_api_name.return_value = "openai"
+            result = await handle_api(MagicMock(), "list")
+            assert "openai" in result
+            assert "gpt-4o" in result
+
+
+class TestHandleApiDelete:
+    async def test_delete_missing_name(self):
+        with patch("core.commands.builtin.settings_handlers.Config"):
+            result = await handle_api(MagicMock(), "delete")
+            assert "用法" in result
+
+    async def test_delete_not_found(self):
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.api_config_exists.return_value = False
+            result = await handle_api(MagicMock(), "delete foo")
+            assert "未找到" in result
+
+    async def test_delete_active_clears_active(self):
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.api_config_exists.return_value = True
+            mock_cfg.get_active_api_name.return_value = "foo"
+            mock_cfg.delete_api_config = MagicMock()
+            mock_cfg.load_settings.return_value = {"active_api": "foo"}
+            mock_cfg.save_settings = MagicMock()
+            result = await handle_api(MagicMock(), "delete foo")
+            mock_cfg.delete_api_config.assert_called_once_with("foo")
+            saved = mock_cfg.save_settings.call_args[0][0]
+            assert saved["active_api"] == ""
+            assert "已删除" in result
+
+    async def test_delete_non_active_keeps_active(self):
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.api_config_exists.return_value = True
+            mock_cfg.get_active_api_name.return_value = "other"
+            mock_cfg.delete_api_config = MagicMock()
+            result = await handle_api(MagicMock(), "delete foo")
+            assert "已删除" in result
+            mock_cfg.save_settings.assert_not_called()
+
+
+class TestHandleApiEdit:
+    async def test_edit_no_name_no_active(self):
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.get_active_api_name.return_value = ""
+            result = await handle_api(MagicMock(), "edit")
+            assert "暂无" in result
+
+    async def test_edit_not_found(self):
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.get_active_api_name.return_value = "foo"
+            mock_cfg.api_config_exists.return_value = False
+            result = await handle_api(MagicMock(), "edit foo")
+            assert "未找到" in result
+
+    async def test_edit_uses_active_name_when_omitted(self):
+        app = MagicMock()
+        app.open_api_config_screen = AsyncMock(return_value=None)
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.get_active_api_name.return_value = "active-api"
+            mock_cfg.api_config_exists.return_value = True
+            result = await handle_api(app, "edit")
+            assert result == ""
+            app.open_api_config_screen.assert_called_once_with(edit_name="active-api")
+
+    async def test_edit_cancelled(self):
+        app = MagicMock()
+        app.open_api_config_screen = AsyncMock(return_value=None)
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.get_active_api_name.return_value = "foo"
+            mock_cfg.api_config_exists.return_value = True
+            result = await handle_api(app, "edit foo")
+            assert result == ""
+            app.open_api_config_screen.assert_called_once_with(edit_name="foo")
+
+    async def test_edit_same_name_no_rename(self):
+        app = MagicMock()
+        app.open_api_config_screen = AsyncMock(
+            return_value=_api_screen_result(name="foo"))
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.get_active_api_name.return_value = "foo"
+            mock_cfg.api_config_exists.return_value = True
+            mock_cfg.save_api_config = MagicMock()
+            mock_cfg.delete_api_config = MagicMock()
+            result = await handle_api(app, "edit foo")
+            mock_cfg.save_api_config.assert_called_once()
+            mock_cfg.delete_api_config.assert_not_called()
+            assert "已保存" in result
+
+    async def test_edit_renamed_updates_active(self):
+        app = MagicMock()
+        app.open_api_config_screen = AsyncMock(
+            return_value=_api_screen_result(name="newname"))
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.get_active_api_name.return_value = "foo"
+            mock_cfg.api_config_exists.return_value = True
+            mock_cfg.save_api_config = MagicMock()
+            mock_cfg.delete_api_config = MagicMock()
+            mock_cfg.set_active_api_name = MagicMock()
+            result = await handle_api(app, "edit foo")
+            mock_cfg.delete_api_config.assert_called_once_with("foo")
+            mock_cfg.set_active_api_name.assert_called_once_with("newname")
+            assert "已保存" in result
+
+
+class TestHandleApiUnknownSub:
+    async def test_unknown_subcommand_falls_to_list_empty(self):
+        """未知子命令落入最终兜底（list_empty）。"""
+        with patch("core.commands.builtin.settings_handlers.Config"):
+            result = await handle_api(MagicMock(), "bogus")
+            assert "暂无" in result
+
+
+class TestHandleModelDelete:
+    async def test_delete_active_clears_active(self):
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.list_api_configs.return_value = {
+                "openai": {"provider": "openai", "model": "gpt-4o"},
+            }
+            mock_cfg.get_active_api_name.return_value = "openai"
+            mock_cfg.delete_api_config = MagicMock()
+            mock_cfg.load_settings.return_value = {"active_api": "openai"}
+            mock_cfg.save_settings = MagicMock()
+            result = await handle_model(MagicMock(), "openai delete")
+            mock_cfg.delete_api_config.assert_called_once_with("openai")
+            saved = mock_cfg.save_settings.call_args[0][0]
+            assert saved["active_api"] == ""
+            assert "已删除" in result
+
+    async def test_delete_non_active(self):
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.list_api_configs.return_value = {
+                "openai": {"provider": "openai"},
+            }
+            mock_cfg.get_active_api_name.return_value = "other"
+            mock_cfg.delete_api_config = MagicMock()
+            result = await handle_model(MagicMock(), "openai delete")
+            assert "已删除" in result
+            mock_cfg.save_settings.assert_not_called()
+
+
+class TestHandleModelSwitch:
+    async def test_switch_without_provider_attr(self):
+        app = MagicMock()
+        del app.provider  # 无 provider 属性 → 跳过运行时更新
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.list_api_configs.return_value = {
+                "openai": {"provider": "openai", "model": "gpt-4o"},
+            }
+            mock_cfg.set_active_api_name = MagicMock()
+            result = await handle_model(app, "openai")
+            mock_cfg.set_active_api_name.assert_called_once_with("openai")
+            assert "已切换" in result
+
+    async def test_switch_updates_provider(self):
+        app = MagicMock()
+        app.provider = None
+        app._model_name = ""
+        app._api_name = ""
+        app._kernel = MagicMock()
+        app.refresh_status_bar_model = MagicMock()
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.list_api_configs.return_value = {
+                "openai": {"provider": "openai", "model": "gpt-4o"},
+            }
+            mock_cfg.set_active_api_name = MagicMock()
+            with patch("core.config.Config.load",
+                       return_value=SimpleNamespace(
+                           llm=SimpleNamespace(model="gpt-4o", provider="openai"))):
+                with patch("core.llm_gateway.create_provider",
+                           return_value="fake_provider") as mk:
+                    result = await handle_model(app, "openai")
+        mk.assert_called_once()
+        assert app.provider == "fake_provider"
+        assert app._api_name == "openai"
+        app.refresh_status_bar_model.assert_called_once()
+        assert "已切换" in result
+
+    async def test_switch_provider_failure(self):
+        app = MagicMock()
+        app.provider = None
+        with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
+            mock_cfg.list_api_configs.return_value = {
+                "openai": {"provider": "openai", "model": "gpt-4o"},
+            }
+            mock_cfg.set_active_api_name = MagicMock()
+            with patch("core.config.Config.load",
+                       return_value=SimpleNamespace(
+                           llm=SimpleNamespace(model="gpt-4o", provider="openai"))):
+                with patch("core.llm_gateway.create_provider",
+                           side_effect=RuntimeError("boom")):
+                    result = await handle_model(app, "openai")
+        assert "初始化失败" in result

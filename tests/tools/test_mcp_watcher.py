@@ -3,9 +3,11 @@
 import asyncio
 import pytest
 import json
+import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
-from core.mcp.watcher import FileWatcher
+from core.mcp.watcher import FileWatcher, PollingBackend, WatchfilesBackend
 
 
 class TestFileWatcher:
@@ -173,3 +175,105 @@ class TestFileWatcher:
 
 async def _noop_callback():
     return (0, 0, 0)
+
+
+# ── PollingBackend OSError 处理 ───────────────────────────────────────
+
+
+class _StatOSErrorFile:
+    name = "x.json"
+
+    def stat(self):
+        raise OSError("permission denied")
+
+
+class _FakeDir:
+    """替身 Path — is_dir 恒真，glob 返回 stat 抛错的文件。"""
+
+    def __init__(self, path):
+        self.path = path
+
+    def is_dir(self):
+        return True
+
+    def glob(self, pattern):
+        return [_StatOSErrorFile()]
+
+
+class TestPollingBackendOSError:
+    @pytest.mark.asyncio
+    async def test_start_snapshot_stat_oserror(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("core.mcp.watcher.Path", _FakeDir)
+
+        async def on_change():
+            return (0, 0, 0)
+
+        backend = PollingBackend(interval=0.01)
+        await backend.start(str(tmp_path), on_change)
+        assert backend._mtimes == {}
+        await backend.stop()
+
+    @pytest.mark.asyncio
+    async def test_poll_loop_stat_oserror(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("core.mcp.watcher.Path", _FakeDir)
+
+        async def on_change():
+            return (0, 0, 0)
+
+        backend = PollingBackend(interval=0.01)
+        await backend.start(str(tmp_path), on_change)
+        await asyncio.sleep(0.05)  # 让 poll 循环至少跑一轮
+        await backend.stop()
+
+
+# ── WatchfilesBackend（事件驱动后端）─────────────────────────────────
+
+
+class TestWatchfilesBackend:
+    def test_initial_state(self):
+        backend = WatchfilesBackend()
+        assert backend._stop_event is None
+        assert backend._task is None
+        assert not backend.is_running
+
+    @pytest.mark.asyncio
+    async def test_start_requires_watchfiles(self, tmp_path):
+        backend = WatchfilesBackend()
+
+        async def on_change():
+            return (0, 0, 0)
+
+        with pytest.raises(ImportError, match="watchfiles"):
+            await backend.start(str(tmp_path), on_change)
+
+    @pytest.mark.asyncio
+    async def test_start_stop_with_fake_watchfiles(self, tmp_path, monkeypatch):
+        calls = []
+
+        async def fake_awatch(*args, **kwargs):
+            yield "changed"
+            await asyncio.sleep(60)  # 阻塞直到被取消
+
+        fake_module = MagicMock()
+        fake_module.awatch = fake_awatch
+        monkeypatch.setitem(sys.modules, "watchfiles", fake_module)
+
+        async def on_change():
+            calls.append(1)
+            return (0, 0, 0)
+
+        backend = WatchfilesBackend()
+        await backend.start(str(tmp_path), on_change)
+        assert backend.is_running
+        await asyncio.sleep(0.05)
+        assert calls, "on_change should be invoked on file change"
+        await backend.stop()
+        assert not backend.is_running
+        assert backend._stop_event is None
+        assert backend._task is None
+
+    @pytest.mark.asyncio
+    async def test_stop_not_started_is_safe(self):
+        backend = WatchfilesBackend()
+        await backend.stop()
+        assert not backend.is_running

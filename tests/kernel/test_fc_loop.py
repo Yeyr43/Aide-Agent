@@ -588,3 +588,397 @@ class TestPerCallThinkingPersistence:
             assert "_thinking" not in m, "内部思考键泄漏到 LLM 上下文"
         # 原列表不受影响（_thinking 仍留作落盘）
         assert messages[1]["_thinking"] == "secret thinking"
+
+
+class TestSanitizeMultimodal:
+    """_sanitize_messages 多模态 content → 纯文本（非视觉模型降级）。"""
+
+    def test_text_and_image_becomes_placeholder(self):
+        from core.kernel.fc_loop import _sanitize_messages
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "看图"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,x"}},
+            ],
+        }]
+        clean = _sanitize_messages(messages, supports_vision=False)
+        assert clean[0]["content"] == "看图\n[图片]"
+
+    def test_image_only_becomes_placeholder(self):
+        from core.kernel.fc_loop import _sanitize_messages
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,x"}},
+            ],
+        }]
+        clean = _sanitize_messages(messages, supports_vision=False)
+        assert clean[0]["content"] == "[图片]"
+
+    def test_text_only_list_joined(self):
+        from core.kernel.fc_loop import _sanitize_messages
+        messages = [{
+            "role": "user",
+            "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}],
+        }]
+        clean = _sanitize_messages(messages, supports_vision=False)
+        assert clean[0]["content"] == "a b"
+
+    def test_empty_content_list(self):
+        from core.kernel.fc_loop import _sanitize_messages
+        messages = [{"role": "user", "content": []}]
+        clean = _sanitize_messages(messages, supports_vision=False)
+        assert clean[0]["content"] == ""
+
+
+class TestSmartContinuation:
+    """P6: 模型因 max_tokens 截断时自动续写 — native_stop_reason 驱动 (continue)。"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("native_reason", ["max_tokens", "length"])
+    async def test_truncated_response_auto_continues(self, native_reason):
+        from core.llm_gateway import TextDelta, StreamEnd
+        registry = ToolRegistry()
+        provider = AsyncMock()
+        call = [0]
+
+        async def _mock_chat(messages, tools):
+            call[0] += 1
+            if call[0] == 1:
+                yield TextDelta(content="partial")
+                yield StreamEnd(finish_reason="length", tool_calls=[],
+                                native_stop_reason=native_reason)
+            else:
+                yield TextDelta(content="... rest")
+                yield StreamEnd(finish_reason="stop", tool_calls=[])
+
+        provider.chat_with_tools = _mock_chat
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, registry, max_turns=1)
+        messages = await loop.run([{"role": "user", "content": "go"}], ui=ui)
+
+        # 第二轮自动注入 (continue)
+        continue_msgs = [m for m in messages
+                         if m.get("role") == "user" and m["content"] == "(continue)"]
+        assert continue_msgs, "截断后应自动注入 (continue) 续写"
+        # 最终 assistant 为续写后的完整内容
+        assert messages[-1]["role"] == "assistant"
+        assert messages[-1]["content"] == "... rest"
+
+
+class TestMaxLoopTurns:
+    """MAX_LOOP_TURNS 到达后收尾：最后一次 LLM 调用决定结束方式。"""
+
+    @pytest.mark.asyncio
+    async def test_final_call_text_appended(self, monkeypatch):
+        import core.kernel.fc_loop as fc_loop_mod
+        from core.llm_gateway import TextDelta, StreamEnd
+        from core.tools import ToolDefinition
+        monkeypatch.setattr(fc_loop_mod, "MAX_LOOP_TURNS", 2)
+        registry = ToolRegistry()
+
+        async def echo(args):
+            return "ok"
+        registry.register(ToolDefinition(name="echo", description="", parameters={}, execute=echo))
+
+        provider = AsyncMock()
+        call = [0]
+
+        async def _mock_chat(messages, tools):
+            call[0] += 1
+            if call[0] <= 2:
+                yield StreamEnd(finish_reason="tool_calls", tool_calls=[{
+                    "id": f"c{call[0]}", "type": "function",
+                    "function": {"name": "echo", "arguments": "{}"},
+                }])
+            else:
+                yield TextDelta(content="最终答复")
+                yield StreamEnd(finish_reason="stop", tool_calls=[])
+
+        provider.chat_with_tools = _mock_chat
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, registry, max_turns=1)
+        messages = await loop.run([{"role": "user", "content": "go"}], ui=ui)
+        assert messages[-1]["content"] == "最终答复"
+        ui.on_max_turns.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_final_call_still_tool_calls_calls_on_max_turns(self, monkeypatch):
+        import core.kernel.fc_loop as fc_loop_mod
+        from core.llm_gateway import StreamEnd
+        from core.tools import ToolDefinition
+        monkeypatch.setattr(fc_loop_mod, "MAX_LOOP_TURNS", 2)
+        registry = ToolRegistry()
+
+        async def echo(args):
+            return "ok"
+        registry.register(ToolDefinition(name="echo", description="", parameters={}, execute=echo))
+
+        provider = AsyncMock()
+
+        async def _mock_chat(messages, tools):
+            yield StreamEnd(finish_reason="tool_calls", tool_calls=[{
+                "id": "c1", "type": "function",
+                "function": {"name": "echo", "arguments": "{}"},
+            }])
+
+        provider.chat_with_tools = _mock_chat
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, registry, max_turns=1)
+        await loop.run([{"role": "user", "content": "go"}], ui=ui)
+        ui.on_max_turns.assert_called_once()
+
+
+class TestXmlBranchInRun:
+    """run() 内直接提取 XML tool calls 的路径（绕过 _try_xml_fallback）。"""
+
+    @pytest.mark.asyncio
+    async def test_xml_extracted_in_run_appends_clean_content(self):
+        from core.llm_gateway import StreamEnd
+        from core.kernel.fc_loop import _TurnResult
+        from core.tools import ToolDefinition
+        registry = ToolRegistry()
+
+        async def echo(args):
+            return "ok"
+        registry.register(ToolDefinition(name="echo", description="", parameters={}, execute=echo))
+
+        provider = AsyncMock()
+        loop = FunctionCallingLoop(provider, registry, max_turns=1)
+        call = [0]
+
+        async def fake_call(messages, tools, ui):
+            call[0] += 1
+            if call[0] == 1:
+                return _TurnResult(
+                    stream_end=StreamEnd(finish_reason="stop", tool_calls=[]),
+                    response_text='Before <invoke name="echo">'
+                                  '<parameter name="msg">hi</parameter></invoke>',
+                    thinking="",
+                )
+            return _TurnResult(
+                stream_end=StreamEnd(finish_reason="stop", tool_calls=[]),
+                response_text="完成",
+                thinking="",
+            )
+
+        loop._call_llm = fake_call
+        ui = MagicMock()
+        messages = await loop.run([{"role": "user", "content": "go"}], ui=ui)
+
+        tool_msgs = [m for m in messages if m.get("tool_calls")]
+        assert len(tool_msgs) == 1
+        # XML 已剥离，正文干净
+        assert "<invoke" not in tool_msgs[0]["content"]
+        assert tool_msgs[0]["content"] == "Before"
+        assert tool_msgs[0]["tool_calls"][0]["function"]["name"] == "echo"
+        ui.on_replace_streamed_text.assert_called_once_with("Before")
+
+
+class TestInStreamXmlDetection:
+    """TextDelta 流中检测到 <invoke 后，后续 token 抑制渲染。"""
+
+    @pytest.mark.asyncio
+    async def test_text_token_suppressed_after_invoke_detected(self):
+        from core.llm_gateway import TextDelta, StreamEnd
+        from core.tools import ToolDefinition
+        registry = ToolRegistry()
+
+        async def echo(args):
+            return "ok"
+        registry.register(ToolDefinition(name="echo", description="", parameters={}, execute=echo))
+
+        provider = AsyncMock()
+        call = [0]
+
+        async def _mock_chat(messages, tools):
+            call[0] += 1
+            if call[0] == 1:
+                yield TextDelta(content="START")
+                yield TextDelta(content='<invoke name="echo">'
+                                        '<parameter name="msg">hi</parameter></invoke>')
+                yield TextDelta(content="AFTER_XML")
+                yield StreamEnd(finish_reason="stop", tool_calls=[])
+            else:
+                yield TextDelta(content="DONE")
+                yield StreamEnd(finish_reason="stop", tool_calls=[])
+
+        provider.chat_with_tools = _mock_chat
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, registry, max_turns=1)
+        await loop.run([{"role": "user", "content": "go"}], ui=ui)
+        # 第一轮：XML 前的 START 被渲染，XML 段与 XML 后的 AFTER_XML 被抑制
+        texts = [c.args[0] for c in ui.on_text_token.call_args_list]
+        assert texts[0] == "START"
+        assert "AFTER_XML" not in texts
+        assert not any("<invoke" in t for t in texts)
+
+
+class TestCallLlmErrors:
+    """_call_llm 异常处理路径。"""
+
+    @pytest.mark.asyncio
+    async def test_type_error_returns_none(self):
+        from core.llm_gateway import TextDelta  # noqa: F401
+        provider = AsyncMock()
+
+        async def _mock_chat(messages, tools):
+            raise TypeError("boom type")
+            yield  # noqa: B018 — 不可达 yield 使其成为 async generator
+
+        provider.chat_with_tools = _mock_chat
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, ToolRegistry(), max_turns=1)
+        result = await loop._call_llm([{"role": "user", "content": "hi"}], [], ui)
+        assert result is None
+        ui.on_tool_error.assert_called_once()
+        assert "类型错误" in ui.on_tool_error.call_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_error_with_response_body_appended(self):
+        provider = AsyncMock()
+
+        class FakeResp:
+            status_code = 400
+            text = "invalid api key body"
+
+        class FakeErr(Exception):
+            def __init__(self):
+                super().__init__("上游 400")
+                self.response = FakeResp()
+
+        async def _mock_chat(messages, tools):
+            raise FakeErr()
+            yield  # noqa: B018 — 不可达 yield 使其成为 async generator
+
+        provider.chat_with_tools = _mock_chat
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, ToolRegistry(), max_turns=1)
+        result = await loop._call_llm([{"role": "user", "content": "hi"}], [], ui)
+        assert result is None
+        assert "invalid api key body" in ui.on_tool_error.call_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_error_without_response(self):
+        provider = AsyncMock()
+
+        async def _mock_chat(messages, tools):
+            raise RuntimeError("plain failure")
+            yield  # noqa: B018 — 不可达 yield 使其成为 async generator
+
+        provider.chat_with_tools = _mock_chat
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, ToolRegistry(), max_turns=1)
+        result = await loop._call_llm([{"role": "user", "content": "hi"}], [], ui)
+        assert result is None
+        ui.on_tool_error.assert_called_once_with("LLM", "plain failure")
+
+    @pytest.mark.asyncio
+    async def test_error_response_text_read_failure_ignored(self):
+        """响应体读取异常时降级为原始错误消息（不中断）。"""
+        provider = AsyncMock()
+
+        class FakeResp:
+            status_code = 400
+
+            @property
+            def text(self):
+                raise RuntimeError("cannot read body")
+
+        class FakeErr(Exception):
+            def __init__(self):
+                super().__init__("上游 400")
+                self.response = FakeResp()
+
+        async def _mock_chat(messages, tools):
+            raise FakeErr()
+            yield  # noqa: B018 — 不可达 yield 使其成为 async generator
+
+        provider.chat_with_tools = _mock_chat
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, ToolRegistry(), max_turns=1)
+        result = await loop._call_llm([{"role": "user", "content": "hi"}], [], ui)
+        assert result is None
+        assert ui.on_tool_error.call_args.args[1] == "上游 400"
+
+    @pytest.mark.asyncio
+    async def test_stream_ends_without_streamend(self):
+        from core.llm_gateway import TextDelta
+        provider = AsyncMock()
+
+        async def _mock_chat(messages, tools):
+            yield TextDelta(content="incomplete")
+
+        provider.chat_with_tools = _mock_chat
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, ToolRegistry(), max_turns=1)
+        result = await loop._call_llm([{"role": "user", "content": "hi"}], [], ui)
+        assert result is None
+        ui.on_tool_error.assert_called_once_with("LLM", "流式响应异常中断")
+
+    @pytest.mark.asyncio
+    async def test_run_breaks_on_llm_failure(self):
+        from core.errors import ProviderError
+        provider = AsyncMock()
+
+        async def _mock_chat(messages, tools):
+            raise ProviderError("API down", provider="test", status_code=500)
+            yield  # noqa: B018 — 不可达 yield 使其成为 async generator
+
+        provider.chat_with_tools = _mock_chat
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, ToolRegistry(), max_turns=1)
+        messages = await loop.run([{"role": "user", "content": "hi"}], ui=ui)
+        # LLM 调用失败 → 循环终止，消息不变
+        assert messages == [{"role": "user", "content": "hi"}]
+
+
+class TestToolResultReordering:
+    """工具结果重组：超限调用与正常调用混合时，按原顺序喂回 LLM。"""
+
+    @pytest.mark.asyncio
+    async def test_mixed_over_limit_and_fresh(self):
+        from core.llm_gateway import TextDelta, StreamEnd
+        from core.tools import ToolDefinition
+        registry = ToolRegistry()
+
+        async def flaky(args):
+            return "总是失败"
+
+        async def ok(args):
+            return f"ok:{args.get('x', '')}"
+
+        registry.register(ToolDefinition(name="flaky", description="", parameters={}, execute=flaky))
+        registry.register(ToolDefinition(name="ok", description="", parameters={}, execute=ok))
+
+        provider = AsyncMock()
+        call = [0]
+
+        async def _mock_chat(messages, tools):
+            call[0] += 1
+            if call[0] == 1:
+                yield StreamEnd(finish_reason="tool_calls", tool_calls=[
+                    {"id": "f1", "type": "function", "function": {"name": "flaky", "arguments": '{"a":1}'}},
+                    {"id": "o1", "type": "function", "function": {"name": "ok", "arguments": '{"x":"A"}'}},
+                ])
+            elif call[0] == 2:
+                yield StreamEnd(finish_reason="tool_calls", tool_calls=[
+                    {"id": "f2", "type": "function", "function": {"name": "flaky", "arguments": '{"a":1}'}},
+                    {"id": "o2", "type": "function", "function": {"name": "ok", "arguments": '{"x":"B"}'}},
+                ])
+            else:
+                yield TextDelta(content="done")
+                yield StreamEnd(finish_reason="stop", tool_calls=[])
+
+        provider.chat_with_tools = _mock_chat
+        ui = MagicMock()
+        loop = FunctionCallingLoop(provider, registry, max_turns=1)
+        messages = await loop.run([{"role": "user", "content": "go"}], ui=ui)
+
+        tool_msgs = [m for m in messages if m.get("role") == "tool"]
+        # 第二次迭代：flaky 同参超限被拒，ok 新参数照常执行
+        rejections = [m for m in tool_msgs if "已停止重试" in m["content"]]
+        assert len(rejections) == 1
+        assert "flaky" in rejections[0]["content"]
+        assert len([m for m in tool_msgs if m["content"] == "ok:B"]) == 1

@@ -2,8 +2,13 @@
 
 import pytest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from core.tools.search_in_files import execute, schema, _search_file, _iter_files
+import core.tools.search_in_files as sif
+from core.tools.search_in_files import (
+    execute, schema, _search_file, _iter_files, _fmt_size,
+)
 
 
 class TestSearchInFiles:
@@ -118,3 +123,192 @@ class TestSearchInFilesSchema:
         assert "max_results" in schema["properties"]
         assert "case_sensitive" in schema["properties"]
         assert "recursive" in schema["properties"]
+
+
+# ── 搜索模式边角 ───────────────────────────────────────────────────────────
+
+class TestSearchModeEdgeCases:
+    @pytest.mark.asyncio
+    async def test_invalid_max_results_falls_back(self, tmp_path):
+        (tmp_path / "a.py").write_text("TODO fix", encoding="utf-8")
+        result = await execute({"pattern": "TODO", "directory": str(tmp_path), "max_results": "abc"})
+        assert "a.py" in result
+
+    @pytest.mark.asyncio
+    async def test_iter_files_permission_error(self, tmp_path):
+        with patch("core.tools.search_in_files._iter_files", side_effect=PermissionError("denied")):
+            result = await execute({"pattern": "x", "directory": str(tmp_path)})
+        assert "权限" in result
+
+    @pytest.mark.asyncio
+    async def test_too_many_files_limit(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(sif, "MAX_FILES", 5)
+        for i in range(10):
+            (tmp_path / f"f{i}.txt").write_text("TODO item", encoding="utf-8")
+        result = await execute({"pattern": "TODO", "directory": str(tmp_path)})
+        assert "扫描上限" in result
+
+    @pytest.mark.asyncio
+    async def test_oversized_files_skipped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(sif, "MAX_FILE_SIZE", 10)
+        (tmp_path / "big.txt").write_text("aaaaaaaaa TODO x", encoding="utf-8")  # >10 bytes
+        (tmp_path / "small.txt").write_text("TODO", encoding="utf-8")
+        result = await execute({"pattern": "TODO", "directory": str(tmp_path)})
+        assert "已跳过" in result
+        assert "small.txt" in result
+        assert "big.txt" not in result
+
+    @pytest.mark.asyncio
+    async def test_stat_os_error_skips_file(self, tmp_path):
+        (tmp_path / "good.txt").write_text("TODO x", encoding="utf-8")
+        fake_bad = SimpleNamespace(
+            name="bad.txt", stat=lambda: (_ for _ in ()).throw(OSError("gone"))
+        )
+        with patch("core.tools.search_in_files._iter_files",
+                   return_value=[fake_bad, tmp_path / "good.txt"]):
+            result = await execute({"pattern": "TODO", "directory": str(tmp_path)})
+        assert "good.txt" in result
+        assert "bad.txt" not in result
+
+    @pytest.mark.asyncio
+    async def test_search_file_exception_skipped(self, tmp_path):
+        (tmp_path / "bad.py").write_text("TODO x", encoding="utf-8")
+        (tmp_path / "good.py").write_text("TODO x", encoding="utf-8")
+        real_search = _search_file
+
+        def fake_search(fp, regex):
+            if fp.name == "bad.py":
+                raise PermissionError("denied")
+            return real_search(fp, regex)
+
+        with patch("core.tools.search_in_files._search_file", side_effect=fake_search):
+            result = await execute({"pattern": "TODO", "directory": str(tmp_path)})
+        assert "good.py" in result
+        assert "bad.py" not in result
+
+
+# ── 目录列表模式边角 ───────────────────────────────────────────────────────
+
+class TestListModeEdgeCases:
+    @pytest.mark.asyncio
+    async def test_invalid_max_results_falls_back(self, tmp_path):
+        (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+        result = await execute({"pattern": "", "directory": str(tmp_path), "max_results": "abc"})
+        assert "a.txt" in result
+
+    @pytest.mark.asyncio
+    async def test_scandir_permission_error(self, tmp_path):
+        with patch("core.tools.search_in_files._scandir_entries", side_effect=PermissionError("denied")):
+            result = await execute({"pattern": "", "directory": str(tmp_path)})
+        assert "权限" in result
+
+    @pytest.mark.asyncio
+    async def test_list_generic_exception(self, tmp_path):
+        with patch("core.tools.search_in_files._scandir_entries", side_effect=RuntimeError("boom")):
+            result = await execute({"pattern": "", "directory": str(tmp_path)})
+        assert "列出目录失败" in result
+
+    @pytest.mark.asyncio
+    async def test_empty_dir_with_pattern(self, tmp_path):
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        result = await execute({"pattern": "", "directory": str(empty), "glob": "*.py"})
+        assert "模式" in result
+
+    @pytest.mark.asyncio
+    async def test_max_items_truncated(self, tmp_path):
+        for i in range(5):
+            (tmp_path / f"f{i}.txt").write_text("x", encoding="utf-8")
+        result = await execute({"pattern": "", "directory": str(tmp_path), "max_results": 2})
+        assert "上限" in result
+
+    @pytest.mark.asyncio
+    async def test_output_too_large_truncated(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(sif, "MAX_LIST_SIZE", 100)
+        for i in range(5):
+            (tmp_path / f"file{i}.txt").write_text("x", encoding="utf-8")
+        result = await execute({"pattern": "", "directory": str(tmp_path)})
+        assert "输出过大" in result
+
+    @pytest.mark.asyncio
+    async def test_scandir_stat_os_error(self, tmp_path):
+        (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+        with patch("core.tools.search_in_files._fmt_time", side_effect=OSError("stat fail")):
+            result = await execute({"pattern": "", "directory": str(tmp_path)})
+        assert "?" in result
+
+    @pytest.mark.asyncio
+    async def test_scandir_permission_error_reraises(self, tmp_path):
+        with patch("core.tools.search_in_files.os.scandir", side_effect=PermissionError("denied")):
+            result = await execute({"pattern": "", "directory": str(tmp_path)})
+        assert "权限" in result
+
+
+# ── 递归列表模式 ───────────────────────────────────────────────────────────
+
+class TestRecursiveList:
+    @pytest.mark.asyncio
+    async def test_recursive_lists_nested(self, tmp_path):
+        (tmp_path / "a").mkdir()
+        (tmp_path / "a" / "nested.txt").write_text("x", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("x", encoding="utf-8")
+        result = await execute({"pattern": "", "directory": str(tmp_path), "recursive": True})
+        assert "nested.txt" in result
+        assert "b.txt" in result
+
+    @pytest.mark.asyncio
+    async def test_recursive_depth_limit(self, tmp_path):
+        d = tmp_path
+        for name in ["a", "b", "c", "d", "e", "f"]:
+            d = d / name
+            d.mkdir()
+        (d / "leaf.txt").write_text("x", encoding="utf-8")
+        result = await execute({"pattern": "", "directory": str(tmp_path), "recursive": True})
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    @pytest.mark.asyncio
+    async def test_recursive_max_entries_top_check(self, tmp_path):
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "inner.txt").write_text("x", encoding="utf-8")
+        (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+        result = await execute({
+            "pattern": "", "directory": str(tmp_path), "recursive": True, "max_results": 1,
+        })
+        assert isinstance(result, str)
+
+    @pytest.mark.asyncio
+    async def test_recursive_max_entries_in_loop(self, tmp_path):
+        for i in range(3):
+            (tmp_path / f"f{i}.txt").write_text("x", encoding="utf-8")
+        result = await execute({
+            "pattern": "", "directory": str(tmp_path), "recursive": True, "max_results": 1,
+        })
+        assert isinstance(result, str)
+
+    @pytest.mark.asyncio
+    async def test_recursive_stat_os_error(self, tmp_path):
+        (tmp_path / "a").mkdir()
+        (tmp_path / "a" / "f.txt").write_text("x", encoding="utf-8")
+        with patch("core.tools.search_in_files._fmt_time", side_effect=OSError("stat fail")):
+            result = await execute({"pattern": "", "directory": str(tmp_path), "recursive": True})
+        assert isinstance(result, str)
+
+    @pytest.mark.asyncio
+    async def test_recursive_scandir_permission_error(self, tmp_path):
+        (tmp_path / "a").mkdir()
+        with patch("core.tools.search_in_files.os.scandir", side_effect=PermissionError("denied")):
+            result = await execute({"pattern": "", "directory": str(tmp_path), "recursive": True})
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+
+# ── _fmt_size 单位换算 ──────────────────────────────────────────────────────
+
+class TestFormatSize:
+    def test_units(self):
+        assert _fmt_size(500) == "500B"
+        assert _fmt_size(2048) == "2.0KB"
+        assert _fmt_size(2 * 1024 * 1024) == "2.0MB"
+        assert _fmt_size(2 * 1024 * 1024 * 1024) == "2.0GB"

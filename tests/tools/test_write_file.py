@@ -2,8 +2,9 @@
 
 import pytest
 from pathlib import Path
+from unittest.mock import patch
 
-from core.tools.write_file import execute, schema
+from core.tools.write_file import execute, schema, MAX_CONTENT_BYTES
 
 
 # ── Overwrite mode ─────────────────────────────────────────────────────────
@@ -199,3 +200,93 @@ class TestEmptyWriteGuard:
         f = tmp_path / "brand_new.txt"
         result = await execute({"file_path": str(f)})
         assert not f.exists(), "不应创建空文件"
+
+
+# ── 覆写模式边角 ───────────────────────────────────────────────────────────
+
+class TestWriteFileOverwriteEdgeCases:
+    @pytest.mark.asyncio
+    async def test_content_too_large(self, tmp_path):
+        """覆写内容超过 500KB 上限被拒绝，不创建文件。"""
+        f = tmp_path / "big.txt"
+        result = await execute({"file_path": str(f), "content": "x" * (MAX_CONTENT_BYTES + 1)})
+        assert "过大" in result
+        assert not f.exists()
+
+    @pytest.mark.asyncio
+    async def test_atomic_write_permission_error(self, tmp_path):
+        with patch("core.tools.write_file.atomic_write_text",
+                   side_effect=PermissionError("denied")):
+            result = await execute({"file_path": str(tmp_path / "f.txt"), "content": "x"})
+        assert "权限" in result
+
+    @pytest.mark.asyncio
+    async def test_atomic_write_os_error(self, tmp_path):
+        with patch("core.tools.write_file.atomic_write_text",
+                   side_effect=OSError("disk full")):
+            result = await execute({"file_path": str(tmp_path / "f.txt"), "content": "x"})
+        assert "失败" in result
+
+
+# ── 编辑模式边角 ───────────────────────────────────────────────────────────
+
+class TestWriteFileEditEdgeCases:
+    @pytest.mark.asyncio
+    async def test_edit_file_too_large(self, tmp_path):
+        """编辑目标文件超过 500KB 上限被拒绝。"""
+        f = tmp_path / "big.txt"
+        f.write_bytes(b"x" * (MAX_CONTENT_BYTES + 1))
+        result = await execute({"file_path": str(f), "old_string": "x", "new_string": "y"})
+        assert "过大" in result
+
+    @pytest.mark.asyncio
+    async def test_edit_stat_os_error_ignored(self):
+        """path.stat() 抛 OSError 时静默跳过大小检查，继续编辑。"""
+        with patch("core.tools.write_file.Path") as mock_path_cls:
+            inst = mock_path_cls.return_value
+            inst.expanduser.return_value = inst
+            inst.resolve.return_value = inst
+            inst.exists.return_value = True
+            inst.is_file.return_value = True
+            inst.stat.side_effect = OSError("stat failed")
+            inst.read_text.return_value = "hello old world"
+            with patch("core.tools.write_file.atomic_write_text") as mock_atomic:
+                result = await execute({
+                    "file_path": "whatever", "old_string": "old", "new_string": "new",
+                })
+        assert "已编辑" in result
+        mock_atomic.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_edit_unicode_decode_error(self, tmp_path):
+        """文件无法以 UTF-8 解码 → decode_error。"""
+        f = tmp_path / "binary.txt"
+        f.write_bytes(b"\xff\xfe\xff")
+        result = await execute({"file_path": str(f), "old_string": "x", "new_string": "y"})
+        assert "解码" in result
+
+    @pytest.mark.asyncio
+    async def test_edit_no_read_permission(self, tmp_path):
+        f = tmp_path / "f.txt"
+        f.write_text("hello old", encoding="utf-8")
+        with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
+            result = await execute({"file_path": str(f), "old_string": "old", "new_string": "new"})
+        assert "读取" in result
+
+    @pytest.mark.asyncio
+    async def test_edit_no_write_permission(self, tmp_path):
+        f = tmp_path / "f.txt"
+        f.write_text("hello old", encoding="utf-8")
+        with patch("core.tools.write_file.atomic_write_text",
+                   side_effect=PermissionError("denied")):
+            result = await execute({"file_path": str(f), "old_string": "old", "new_string": "new"})
+        assert "写入" in result
+
+    @pytest.mark.asyncio
+    async def test_edit_write_os_error(self, tmp_path):
+        f = tmp_path / "f.txt"
+        f.write_text("hello old", encoding="utf-8")
+        with patch("core.tools.write_file.atomic_write_text",
+                   side_effect=OSError("disk full")):
+            result = await execute({"file_path": str(f), "old_string": "old", "new_string": "new"})
+        assert "失败" in result

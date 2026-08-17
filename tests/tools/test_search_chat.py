@@ -2,9 +2,11 @@
 
 import json
 import pytest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from core.tools.search_chat import execute, schema, _session_search
+from core.search.index import SearchResult
 
 
 class TestSearchChatSchema:
@@ -154,3 +156,91 @@ class TestSessionSearch:
             result = await _session_search("s1", "登录验证", 5)
             assert isinstance(result, str)
             assert len(result) > 0
+
+
+class TestSearchChatExecuteEdgeCases:
+    @pytest.mark.asyncio
+    async def test_invalid_session_id_rejected(self):
+        """路径遍历 session_id 必须被拒绝（视为非法，不做路径访问）。"""
+        result = await execute({"query": "x", "session_id": "..\\..\\etc"})
+        assert "会话不存在" in result
+
+    @pytest.mark.asyncio
+    async def test_global_search_without_context(self):
+        """不传 ctx → 全局搜索，索引为空。"""
+        result = await execute({"query": "x"})
+        assert "索引为空" in result
+
+    @pytest.mark.asyncio
+    async def test_session_read_json_error(self, tmp_path):
+        """timeline 读取抛 JSONDecodeError → session_read_error。"""
+        sessions_root = tmp_path / "sessions"
+        sessions_root.mkdir()
+        sess_dir = sessions_root / "s1"
+        sess_dir.mkdir()
+        (sess_dir / "timeline.json").write_text("[]", encoding="utf-8")
+        with patch("core.tools.search_chat.read_jsonl",
+                   side_effect=json.JSONDecodeError("bad", "doc", 0)):
+            with patch("core.tools.search_chat.SESSIONS_ROOT", sessions_root):
+                result = await _session_search("s1", "query", 5)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    @pytest.mark.asyncio
+    async def test_session_read_os_error(self, tmp_path):
+        """timeline 读取抛 OSError → session_read_error。"""
+        sessions_root = tmp_path / "sessions"
+        sessions_root.mkdir()
+        sess_dir = sessions_root / "s1"
+        sess_dir.mkdir()
+        (sess_dir / "timeline.json").write_text("[]", encoding="utf-8")
+        with patch("core.tools.search_chat.read_jsonl",
+                   side_effect=OSError("read failed")):
+            with patch("core.tools.search_chat.SESSIONS_ROOT", sessions_root):
+                result = await _session_search("s1", "query", 5)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+
+class _FakeIndex:
+    """最小 SearchIndex 替身：控制 size / 返回结果 / 抛异常。"""
+
+    def __init__(self, size, results=None, exc=None):
+        self.size = size
+        self._results = results or []
+        self._exc = exc
+
+    async def search(self, query, top_k=5):
+        if self._exc:
+            raise self._exc
+        return self._results
+
+
+class TestGlobalSearch:
+    @pytest.mark.asyncio
+    async def test_index_empty(self):
+        result = await execute({"query": "x"}, ctx=SimpleNamespace(search_index=_FakeIndex(size=0)))
+        assert "索引为空" in result
+
+    @pytest.mark.asyncio
+    async def test_search_raises(self):
+        index = _FakeIndex(size=5, exc=RuntimeError("boom"))
+        result = await execute({"query": "x"}, ctx=SimpleNamespace(search_index=index))
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    @pytest.mark.asyncio
+    async def test_no_results(self):
+        index = _FakeIndex(size=5, results=[])
+        result = await execute({"query": "x"}, ctx=SimpleNamespace(search_index=index))
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    @pytest.mark.asyncio
+    async def test_results_formatted(self):
+        index = _FakeIndex(size=5, results=[
+            SearchResult(session_id="20260801_000000", turn=3, summary="讨论 Docker", score=0.5),
+        ])
+        result = await execute({"query": "Docker"}, ctx=SimpleNamespace(search_index=index))
+        assert "20260801_000000" in result
+        assert "0.50" in result

@@ -66,3 +66,25 @@ class TestSearchMemoryExecute:
             result = await execute({"query": "test"})
             # Newlines in snippets should be replaced (won't appear as raw \n)
             assert isinstance(result, str)
+
+    @pytest.mark.asyncio
+    async def test_recall_raises(self):
+        """recall 抛异常 → 返回 no_match，不崩溃。"""
+        mock_recall = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch("core.tools.search_memory.search_recall", mock_recall):
+            result = await execute({"query": "anything"})
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    @pytest.mark.asyncio
+    async def test_malformed_entries_skipped(self):
+        """畸形条目（无 .get 或 snippet 非 str）被跳过，正常条目仍输出。"""
+        mock_recall = AsyncMock(return_value=[
+            {"source": "good", "snippet": "fine content"},
+            "malformed_string",                       # 无 .get → AttributeError
+            {"source": "bad", "snippet": 12345},      # .replace → AttributeError
+        ])
+        with patch("core.tools.search_memory.search_recall", mock_recall):
+            result = await execute({"query": "test"})
+        assert "fine content" in result
+        assert isinstance(result, str)
