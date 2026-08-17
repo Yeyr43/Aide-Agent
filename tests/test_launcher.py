@@ -123,16 +123,21 @@ class TestDecorateConsole:
     def test_missing_icon_no_error(self, monkeypatch):
         """图标文件不存在 → 不抛异常。"""
         monkeypatch.setattr("core.launcher.IS_WINDOWS", True)
-        with patch("ctypes.windll.kernel32.SetConsoleTitleW") as mock_title:
+        # ctypes.windll 仅 Windows 存在：mock 整个对象，避免 Linux/macOS AttributeError
+        fake_windll = MagicMock()
+        fake_windll.kernel32.SetConsoleTitleW = MagicMock()
+        with patch("core.launcher.ctypes.windll", fake_windll):
             decorate_console(Path("/nonexistent/icon.ico"))
-            mock_title.assert_called_once_with("Aide Agent")
+            fake_windll.kernel32.SetConsoleTitleW.assert_called_once_with("Aide Agent")
 
     def test_icon_path_none_no_error(self, monkeypatch):
         """图标路径为 None → 仅设置标题。"""
         monkeypatch.setattr("core.launcher.IS_WINDOWS", True)
-        with patch("ctypes.windll.kernel32.SetConsoleTitleW") as mock_title:
+        fake_windll = MagicMock()
+        fake_windll.kernel32.SetConsoleTitleW = MagicMock()
+        with patch("core.launcher.ctypes.windll", fake_windll):
             decorate_console(None)
-            mock_title.assert_called_once_with("Aide Agent")
+            fake_windll.kernel32.SetConsoleTitleW.assert_called_once_with("Aide Agent")
 
 
 class TestEnsureDaemon:

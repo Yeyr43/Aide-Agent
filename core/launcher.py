@@ -17,7 +17,14 @@ from core.platform import IS_WINDOWS
 # ── 单实例锁 ────────────────────────────────────────────────────────────────
 
 def pid_alive(pid: int) -> bool:
-    """检查 PID 是否存活（跨平台）。"""
+    """检查 PID 是否存活（跨平台）。
+
+    负 PID 一律视为不存在：POSIX 的 os.kill(-1, 0) 会检查当前用户的所有
+    进程组（返回 True），与"负 pid 是死进程"的语义相悖；Windows 的
+    OpenProcess 对负 pid 也会失败。两平台统一提前拦截。
+    """
+    if pid < 0:
+        return False
     try:
         if IS_WINDOWS:
             kernel32 = ctypes.windll.kernel32
