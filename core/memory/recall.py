@@ -11,9 +11,10 @@ from datetime import datetime
 from pathlib import Path
 
 from core.context.overview import parse_overview_md, read_current_overview
-from core.context.relevance import _tokenize, _tfidf_score, _expand_query, get_vocab_index
+from core.context.relevance import _tokenize, _tfidf_score, _expand_query, get_vocab_index, time_decay
 from core.locale import t
 from core.memory import MEMORY_FILES
+from core.sessions.manager import read_session_meta
 from core.setup import aide_dir
 
 logger = logging.getLogger(__name__)
@@ -104,22 +105,17 @@ async def recall(
 
 def _search_session(session_dir: Path, keywords: set[str], matches: list[dict]) -> None:
     """搜索一个会话目录（meta.json + timeline.json + overview.md）。"""
-    # meta.json
-    meta_path = session_dir / "meta.json"
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            name = meta.get("name", "")
-            score = _keyword_score(name, keywords)
-            if score > 0:
-                matches.append({
-                    "source": f"[会话 {session_dir.name}]",
-                    "snippet": f"会话：{name}",
-                    "score": score * 1.5,  # meta 加权
-                    "_session_dir": session_dir.name,
-                })
-        except (json.JSONDecodeError, OSError):
-            logger.debug("Failed to read meta.json for session %s, skipping", session_dir.name)
+    # meta.json（统一走 read_session_meta，损坏自动回退空 dict）
+    meta = read_session_meta(session_dir)
+    name = meta.get("name", "")
+    score = _keyword_score(name, keywords)
+    if score > 0:
+        matches.append({
+            "source": f"[会话 {session_dir.name}]",
+            "snippet": f"会话：{name}",
+            "score": score * 1.5,  # meta 加权
+            "_session_dir": session_dir.name,
+        })
 
     # timeline.json
     timeline_path = session_dir / "timeline.json"
@@ -157,22 +153,17 @@ def _read_session_overview(session_dir: Path) -> str:
 
 def _enrich_session(session_dir: Path, keywords: set[str], matches: list[dict]) -> None:
     """补充 meta.json + overview.md 细节（timeline 已由搜索索引覆盖）。"""
-    # meta.json
-    meta_path = session_dir / "meta.json"
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            name = meta.get("name", "")
-            score = _keyword_score(name, keywords)
-            if score > 0:
-                matches.append({
-                    "source": f"[会话 {session_dir.name}]",
-                    "snippet": f"会话：{name}",
-                    "score": score * 1.5,
-                    "_session_dir": session_dir.name,
-                })
-        except (json.JSONDecodeError, OSError):
-            pass
+    # meta.json（统一走 read_session_meta）
+    meta = read_session_meta(session_dir)
+    name = meta.get("name", "")
+    score = _keyword_score(name, keywords)
+    if score > 0:
+        matches.append({
+            "source": f"[会话 {session_dir.name}]",
+            "snippet": f"会话：{name}",
+            "score": score * 1.5,
+            "_session_dir": session_dir.name,
+        })
 
     # overview（overview.json 当前版，兼容旧 overview.md）
     text = _read_session_overview(session_dir)
@@ -267,13 +258,11 @@ def _keyword_score(text: str, keywords: set[str], vocab: frozenset[str] | None =
 
 
 def _session_time_weight(session_dir_name: str) -> float:
-    """Decay weight based on session age. 30-day half-life（与 pipeline _decay_factor 统一）。"""
+    """Decay weight based on session age. 30-day half-life（统一走 time_decay 公式）。"""
     try:
         ts = datetime.strptime(session_dir_name[:15], "%Y%m%d_%H%M%S")
         age_days = (datetime.now() - ts).days
-        if age_days <= 0:
-            return 1.0
-        return 0.5 ** (age_days / 30)
+        return time_decay(age_days)
     except (ValueError, IndexError):
         return 0.5
 

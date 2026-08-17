@@ -369,6 +369,17 @@ def _tfidf_score(query_tokens: set[str], doc_tokens: set[str],
     return score
 
 
+def time_decay(age_days: float, half_life_days: float = 30) -> float:
+    """指数时间衰减：weight = 0.5 ^ (age_days / half_life_days)。
+
+    统一衰减公式：context 评分（pipeline/_decay_factor）与 memory 召回
+    （recall._session_time_weight）共用，避免两处各自实现。
+    """
+    if age_days <= 0:
+        return 1.0
+    return 0.5 ** (age_days / half_life_days)
+
+
 def _decay_factor(file_path: Path | None, half_life_days: int = 30) -> float:
     """指数时间衰减：weight = 0.5 ^ (age_days / half_life_days)。"""
     if file_path is None:
@@ -376,9 +387,7 @@ def _decay_factor(file_path: Path | None, half_life_days: int = 30) -> float:
     try:
         mtime = file_path.stat().st_mtime
         age_days = (time.time() - mtime) / 86400.0
-        if age_days <= 0:
-            return 1.0
-        return 0.5 ** (age_days / half_life_days)
+        return time_decay(age_days, half_life_days)
     except (OSError, ValueError):
         return 1.0
 

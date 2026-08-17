@@ -105,6 +105,34 @@ class AideApp(App):
 
         self._startup_worker()
 
+    # ── 公开属性（CommandContext Protocol 用）────────────────────────
+    # core 命令处理器只消费这些公开名，不再反查 _kernel/_session 等私有字段。
+
+    @property
+    def kernel(self):
+        """AgentKernel（组合根注入，on_mount 前为 None）。"""
+        return getattr(self, "_kernel", None)
+
+    @property
+    def session(self):
+        """当前会话运行时状态 SessionContext。"""
+        return getattr(self, "_session", None)
+
+    @property
+    def ingester(self):
+        """ContextIngester。"""
+        return getattr(self, "_ingester", None)
+
+    @property
+    def cmd_registry(self):
+        """CommandRegistry。"""
+        return getattr(self, "_cmd_registry", None)
+
+    @property
+    def mcp_adapter(self):
+        """MCPAdapter。"""
+        return getattr(self, "_mcp_adapter", None)
+
     @work(exclusive=True, thread=False)
     async def _startup_worker(self) -> None:
         """启动 worker：智能跳过已有配置 → 冷启动检查 → 引导 → 首页。"""

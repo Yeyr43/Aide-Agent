@@ -177,41 +177,49 @@ class TestScheduleReload:
         await asyncio.sleep(0.01)
 
 
-class TestWatchfilesLoop:
-    """_watchfiles_loop — watchfiles 变更事件。"""
+class TestOnChange:
+    """_on_change — 共享后端触发后的目录重扫 + 去抖调度。"""
 
-    async def test_ignores_changes_outside_dir(self, tmp_path):
-        """监听目录外的变更 → 跳过，不调度重载。"""
+    async def test_empty_dir_schedules_nothing(self, tmp_path):
+        """空目录 → 不调度任何重载。"""
         host = MagicMock()
         host.load = AsyncMock()
         host.reload = AsyncMock()
         host.unload = AsyncMock()
         w = PluginWatcher(tmp_path, host)
-        outside = (tmp_path.parent / "outside.txt").resolve()
-
-        async def fake_awatch(*a, **k):
-            yield {(1, str(outside))}
-
-        await w._watchfiles_loop(fake_awatch)
+        await w._on_change()
+        await asyncio.sleep(0.05)
         host.load.assert_not_awaited()
         host.reload.assert_not_awaited()
         host.unload.assert_not_awaited()
 
-    async def test_schedules_reload_for_in_dir_change(self, tmp_path):
-        """目录内文件变更 → 调度去抖重载。"""
+    async def test_detects_new_dir_and_loads(self, tmp_path):
+        """新增插件目录 → 调度去抖 load。"""
         host = MagicMock()
         host.is_loaded.return_value = False
         host.load = AsyncMock()
         w = PluginWatcher(tmp_path, host)
         w.DEBOUNCE_SECONDS = 0
-        d = _make_plugin_dir(tmp_path)
+        _make_plugin_dir(tmp_path, files={"SKILL.md": "x"})
 
-        async def fake_awatch(*a, **k):
-            yield {(1, str(d / "SKILL.md"))}
-
-        await w._watchfiles_loop(fake_awatch)
+        await w._on_change()
         await asyncio.sleep(0.05)
         host.load.assert_awaited_once_with("demo")
+
+    async def test_detects_deleted_dir_and_unloads(self, tmp_path):
+        """快照中存在、磁盘已消失的目录 → 调度 unload。"""
+        host = MagicMock()
+        host.unload = AsyncMock()
+        w = PluginWatcher(tmp_path, host)
+        w.DEBOUNCE_SECONDS = 0
+        d = _make_plugin_dir(tmp_path)
+        w._mtimes["demo"] = 1.0  # 快照里有记录
+        d.rmdir()  # 目录已删除
+
+        await w._on_change()
+        await asyncio.sleep(0.05)
+        host.unload.assert_awaited_once_with("demo")
+        assert "demo" not in w._mtimes
 
 
 class TestStartStop:
@@ -222,9 +230,10 @@ class TestStartStop:
         w = PluginWatcher(tmp_path, MagicMock())
         with patch.dict(sys.modules, {"watchfiles": None}):
             await w.start()
-        assert w._task is not None
+        assert w._watcher is not None
+        assert w._watcher.is_running
         await w.stop()
-        assert w._task is None
+        assert w._watcher is None
 
     async def test_start_uses_watchfiles_when_installed(self, tmp_path, monkeypatch):
         """watchfiles 可用 → 走 watchfiles 模式。"""
@@ -238,20 +247,10 @@ class TestStartStop:
 
         w = PluginWatcher(tmp_path, MagicMock())
         await w.start()
-        assert w._task is not None
+        assert w._watcher is not None
+        assert w._watcher.is_running
         await w.stop()
-
-    async def test_watchfiles_loop_error_falls_back_to_polling(self, tmp_path):
-        """watchfiles 循环异常 → 切到 polling。"""
-        w = PluginWatcher(tmp_path, MagicMock())
-
-        async def broken_awatch(*a, **k):
-            raise RuntimeError("boom")
-            yield  # pragma: no cover
-
-        await w._watchfiles_loop(broken_awatch)
-        assert w._task is not None  # polling 任务
-        await w.stop()
+        assert w._watcher is None
 
     async def test_detect_changed_files_stat_oserror(self, tmp_path):
         """文件 stat 抛 OSError → 忽略。

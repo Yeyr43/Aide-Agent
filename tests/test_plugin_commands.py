@@ -12,19 +12,19 @@ def _app_with_plugins(manifests, loaded_ids=(), load_plugin=None,
                       entries=None, counts=None):
     """构造 mock app：discover 返回 manifests，list_loaded 返回 loaded_ids。"""
     app = MagicMock()
-    app._kernel = MagicMock()
-    app._kernel._plugins = MagicMock()
-    app._kernel._plugins.discover.return_value = manifests
-    app._kernel._plugins.list_loaded.return_value = [
+    app.kernel = MagicMock()
+    app.kernel._plugins = MagicMock()
+    app.kernel._plugins.discover.return_value = manifests
+    app.kernel._plugins.list_loaded.return_value = [
         PluginManifest(id=i) for i in loaded_ids
     ]
     state_mgr = MagicMock()
     state_mgr.list_all.return_value = entries if entries is not None else []
     state_mgr.count_by_status.return_value = counts or {
         "ready": 0, "needs_setup": 0, "disabled": 0}
-    app._kernel._plugins.state_manager = state_mgr
+    app.kernel._plugins.state_manager = state_mgr
     if load_plugin is not None:
-        app._kernel.load_plugin = load_plugin
+        app.kernel.load_plugin = load_plugin
     return app
 
 
@@ -47,7 +47,7 @@ class TestPluginsDefault:
         )
         result = await handle_plugins(app, "")
         assert "插件状态" in result
-        app._kernel.load_plugin.assert_not_called()
+        app.kernel.load_plugin.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_auto_load_new(self):
@@ -129,7 +129,7 @@ class TestPluginsPanel:
         assert "缺少: `api_key:FOO`" in result
         assert "dis-p" in result
         assert "已禁用" in result
-        app._kernel.load_plugin.assert_awaited_once_with("new-p")
+        app.kernel.load_plugin.assert_awaited_once_with("new-p")
 
 
 class TestPluginsSubcommands:
@@ -146,8 +146,8 @@ class TestPluginsSubcommands:
         info.name = "loaded-plugin"
         info.manifest = PluginManifest(id="lp", name="Loaded Plugin", version="2.0.0")
         app = MagicMock()
-        app._kernel = MagicMock()
-        app._kernel.load_plugin = AsyncMock(return_value=info)
+        app.kernel = MagicMock()
+        app.kernel.load_plugin = AsyncMock(return_value=info)
         result = await handle_plugins(app, "load lp")
         assert "已加载" in result
         assert "loaded-plugin" in result
@@ -155,8 +155,8 @@ class TestPluginsSubcommands:
     @pytest.mark.asyncio
     async def test_load_failure(self):
         app = MagicMock()
-        app._kernel = MagicMock()
-        app._kernel.load_plugin = AsyncMock(return_value=None)
+        app.kernel = MagicMock()
+        app.kernel.load_plugin = AsyncMock(return_value=None)
         result = await handle_plugins(app, "load bad")
         assert "失败" in result
 
@@ -168,16 +168,16 @@ class TestPluginsSubcommands:
     @pytest.mark.asyncio
     async def test_unload_success(self):
         app = MagicMock()
-        app._kernel = MagicMock()
-        app._kernel.unload_plugin = AsyncMock(return_value=True)
+        app.kernel = MagicMock()
+        app.kernel.unload_plugin = AsyncMock(return_value=True)
         result = await handle_plugins(app, "unload p")
         assert "已卸载" in result
 
     @pytest.mark.asyncio
     async def test_unload_failure(self):
         app = MagicMock()
-        app._kernel = MagicMock()
-        app._kernel.unload_plugin = AsyncMock(return_value=False)
+        app.kernel = MagicMock()
+        app.kernel.unload_plugin = AsyncMock(return_value=False)
         result = await handle_plugins(app, "unload p")
         assert "不存在" in result or "未加载" in result
 
@@ -192,18 +192,18 @@ class TestPluginsSubcommands:
         info.name = "reloaded"
         info.manifest = PluginManifest(id="rp", name="RP", version="1.0.0")
         app = MagicMock()
-        app._kernel = MagicMock()
-        app._kernel._plugins = MagicMock()
-        app._kernel._plugins.reload = AsyncMock(return_value=info)
+        app.kernel = MagicMock()
+        app.kernel._plugins = MagicMock()
+        app.kernel._plugins.reload = AsyncMock(return_value=info)
         result = await handle_plugins(app, "reload rp")
         assert "已重载" in result
 
     @pytest.mark.asyncio
     async def test_reload_failure(self):
         app = MagicMock()
-        app._kernel = MagicMock()
-        app._kernel._plugins = MagicMock()
-        app._kernel._plugins.reload = AsyncMock(return_value=None)
+        app.kernel = MagicMock()
+        app.kernel._plugins = MagicMock()
+        app.kernel._plugins.reload = AsyncMock(return_value=None)
         result = await handle_plugins(app, "reload bad")
         assert "失败" in result
 
@@ -217,11 +217,11 @@ class TestPluginsEnableDisable:
     @pytest.mark.asyncio
     async def test_enable_success(self):
         app = MagicMock()
-        app._kernel = MagicMock()
-        app._kernel._plugins = MagicMock()
-        app._kernel._plugins.enable_plugin = AsyncMock()
+        app.kernel = MagicMock()
+        app.kernel._plugins = MagicMock()
+        app.kernel._plugins.enable_plugin = AsyncMock()
         result = await handle_plugins(app, "enable foo")
-        app._kernel._plugins.enable_plugin.assert_awaited_once_with("foo")
+        app.kernel._plugins.enable_plugin.assert_awaited_once_with("foo")
         assert "已启用" in result
 
     @pytest.mark.asyncio
@@ -232,11 +232,11 @@ class TestPluginsEnableDisable:
     @pytest.mark.asyncio
     async def test_disable_success(self):
         app = MagicMock()
-        app._kernel = MagicMock()
-        app._kernel._plugins = MagicMock()
-        app._kernel._plugins.disable_plugin = AsyncMock()
+        app.kernel = MagicMock()
+        app.kernel._plugins = MagicMock()
+        app.kernel._plugins.disable_plugin = AsyncMock()
         result = await handle_plugins(app, "disable foo")
-        app._kernel._plugins.disable_plugin.assert_awaited_once_with("foo")
+        app.kernel._plugins.disable_plugin.assert_awaited_once_with("foo")
         assert "已禁用" in result
 
 

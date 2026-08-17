@@ -10,7 +10,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 from ui.textual_app.widgets.tree_nodes import (
-    should_separate, _format_args, _guide_indented, _render_inline_markdown,
+    should_separate, _format_args, _guide_indented, _is_table_block, _PrefixedLines, _render_inline_markdown,
     TurnTree, ThinkNode, ToolNode, BodyNode, ErrorNode, SystemNode,
 )
 
@@ -95,7 +95,8 @@ class TestNodeRenderables:
         node = ThinkNode()
         node.append_chunk("思考内容")
         r = node._build_renderable()
-        assert "思考内容" in r.plain
+        text = "".join(s[0] for s in _console_segments(r))
+        assert "思考内容" in text
 
     def test_think_expanded_non_last_continuation_has_connector(self):
         """非末节点（├）展开：思考续行带 │ —— 树左边框不因换行断开。"""
@@ -103,7 +104,8 @@ class TestNodeRenderables:
         node._connector = "├"
         node.append_chunk("第一行\n第二行")
         r = node._build_renderable()
-        lines = r.plain.split("\n")
+        text = "".join(s[0] for s in _console_segments(r))
+        lines = text.split("\n")
         assert lines[1].startswith("│")
 
     def test_think_expanded_last_continuation_pure_indent(self):
@@ -112,7 +114,8 @@ class TestNodeRenderables:
         node._connector = "└"
         node.append_chunk("第一行\n第二行")
         r = node._build_renderable()
-        lines = r.plain.split("\n")
+        text = "".join(s[0] for s in _console_segments(r))
+        lines = text.split("\n")
         assert not lines[1].startswith("│")
         assert lines[1].startswith("    ")
 
@@ -423,3 +426,66 @@ class TestBreathing:
         node = ToolNode("read_file", {"path": "x"})
         node.set_error("boom")
         assert node._active_bullet_color() == BULLET_ERROR
+
+
+def test_think_expanded_long_line_wrap_keeps_connector():
+    """回归：长单行思考展开，终端按宽度 wrap 的续行也要带 │ —— 不渲染到节点列。
+
+    旧 _guide_indented 只对显式 \n 行加前缀，长单行 wrap 续行落到 col 0。
+    """
+    node = ThinkNode()
+    node._connector = "├"
+    node.append_chunk("这是一段非常长的思考内容，用来在窄宽度下触发终端视觉换行" * 3)
+    r = node._build_renderable()
+    c = Console(force_terminal=False, width=30)
+    segments = [(seg.text, str(seg.style)) for seg in c.render(r, c.options) if seg.text]
+    text = "".join(s[0] for s in segments)
+    lines = text.split("\n")
+    assert len(lines) >= 3, "窄宽度下应产生多行 wrap"
+    for line in lines[1:]:
+        assert line.startswith("│"), f"wrap 续行应带 │（对齐文本列）: {line!r}"
+
+
+def test_think_expanded_long_line_wrap_pure_indent_last():
+    """末节点（└）长单行展开：wrap 续行纯缩进（无 │），也不渲染到节点列。"""
+    node = ThinkNode()
+    node._connector = "└"
+    node.append_chunk("这是一段非常长的思考内容，用来在窄宽度下触发终端视觉换行" * 3)
+    r = node._build_renderable()
+    c = Console(force_terminal=False, width=30)
+    segments = [(seg.text, str(seg.style)) for seg in c.render(r, c.options) if seg.text]
+    text = "".join(s[0] for s in segments)
+    lines = text.split("\n")
+    assert len(lines) >= 3
+    for line in lines[1:]:
+        assert line.startswith("    "), f"末节点 wrap 续行应纯缩进: {line!r}"
+
+
+def test_is_table_block_detects_table():
+    assert _is_table_block("| a | b |\n|---|----|") is True
+    assert _is_table_block("| 名称 | 类型 |\n|------|------|\n| 甲 | 工具 |") is True
+    assert _is_table_block("普通文字") is False
+    assert _is_table_block("| a | b |") is False  # 单行
+    assert _is_table_block("| a | b |\n| 内容 | 行 |") is False  # 次行非分隔行
+
+
+def test_body_first_line_table_uses_markdown():
+    """回归：正文首行是 Markdown 表格 → 整体走 RichMarkdown（非首行行内）。
+
+    表格首行表头无法用"首行行内"逻辑渲染，此前变纯文字（| 分隔符原样），
+    用户看不到表格。现在检测到表格块整体交 Markdown 渲染。
+    （框线渲染由 rich/Textual 保证；pytest 环境的 CJK 宽度有边缘差异，故用结构断言。）
+    """
+    node = BodyNode()
+    node._connector = "├"
+    node.append_chunk("| a | b |\n|--|--|\n| 1 | 2 |")
+    node.finish()
+    r = node._build_renderable()
+    assert isinstance(r, Group)
+    tail = r.renderables[1]
+    # tail 是 _PrefixedLines 包 Markdown —— 表格整体渲染（非首行行内 Text 纯文字）
+    assert isinstance(tail, _PrefixedLines)
+    assert isinstance(tail._inner, Markdown)
+    # 表格内容已进入 Markdown（若走首行行内则会变成 | 分隔符纯文字）
+    md_text = "".join(t for t, _ in _console_segments(tail._inner))
+    assert "1" in md_text

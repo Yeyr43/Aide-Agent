@@ -167,7 +167,7 @@ class TestCommandHandlers:
                        "/plugins", "/session", "/memory", "/tools", "/update",
                        "/clear", "/rollback", "/mcp", "/language", "/api", "/model"]
         ]
-        result = await handle_help(MagicMock(_cmd_registry=mock_registry), "")
+        result = await handle_help(MagicMock(cmd_registry=mock_registry), "")
         assert "可用命令" in result
         for cmd in ["/help", "/profile", "/compact", "/export", "/import", "/plugins",
                      "/session", "/memory", "/tools", "/clear", "/mcp",
@@ -239,7 +239,7 @@ class TestCommandHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_session_no_kernel(self):
-        app = MagicMock(_kernel=None)
+        app = MagicMock(kernel=None)
         result = await handle_session(app, "")
         assert "未初始化" in result
 
@@ -247,7 +247,7 @@ class TestCommandHandlers:
     async def test_handle_session_list_empty(self):
         kernel = AsyncMock()
         kernel.list_sessions.return_value = []
-        app = MagicMock(_kernel=kernel)
+        app = MagicMock(kernel=kernel)
         result = await handle_session(app, "list")
         assert "暂无" in result
 
@@ -259,7 +259,7 @@ class TestCommandHandlers:
             SessionInfo(id="20260703_120000", name="Test"),
             SessionInfo(id="20260703_130000", name="Demo"),
         ]
-        app = MagicMock(_kernel=kernel)
+        app = MagicMock(kernel=kernel)
         result = await handle_session(app, "list")
         assert "Test" in result
         assert "Demo" in result
@@ -268,7 +268,7 @@ class TestCommandHandlers:
     @pytest.mark.asyncio
     async def test_handle_session_delete_no_args(self):
         kernel = AsyncMock()
-        app = MagicMock(_kernel=kernel)
+        app = MagicMock(kernel=kernel)
         result = await handle_session(app, "delete")
         assert "用法" in result
 
@@ -276,7 +276,7 @@ class TestCommandHandlers:
     async def test_handle_session_delete_success(self):
         kernel = AsyncMock()
         kernel.delete_session.return_value = True
-        app = MagicMock(_kernel=kernel)
+        app = MagicMock(kernel=kernel)
         result = await handle_session(app, "delete my-id")
         assert "已删除" in result
 
@@ -284,14 +284,14 @@ class TestCommandHandlers:
     async def test_handle_session_delete_not_found(self):
         kernel = AsyncMock()
         kernel.delete_session.return_value = False
-        app = MagicMock(_kernel=kernel)
+        app = MagicMock(kernel=kernel)
         result = await handle_session(app, "delete bad-id")
         assert "未找到" in result
 
     @pytest.mark.asyncio
     async def test_handle_session_invalid_subcommand(self):
         kernel = AsyncMock()
-        app = MagicMock(_kernel=kernel)
+        app = MagicMock(kernel=kernel)
         result = await handle_session(app, "xyz")
         assert "未知子命令" in result
 
@@ -316,7 +316,7 @@ class TestCommandHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_tools_no_kernel(self):
-        app = MagicMock(_kernel=None)
+        app = MagicMock(kernel=None)
         result = await handle_tools(app, "")
         assert "未初始化" in result
 
@@ -327,7 +327,7 @@ class TestCommandHandlers:
         tool_reg.get.return_value = MagicMock(description="A test tool")
 
         kernel = MagicMock(tool_registry=tool_reg)
-        app = MagicMock(_kernel=kernel)
+        app = MagicMock(kernel=kernel)
         result = await handle_tools(app, "")
         assert "read_file" in result
         assert "mcp_fs_read" in result
@@ -345,7 +345,7 @@ class TestCommandHandlers:
     @pytest.mark.asyncio
     async def test_handle_rollback_no_kernel(self):
         """无内核时返回错误提示。"""
-        app = MagicMock(_kernel=None)
+        app = MagicMock(kernel=None)
         result = await handle_rollback(app, "3")
         assert "未初始化" in result
 
@@ -353,7 +353,7 @@ class TestCommandHandlers:
     async def test_handle_rollback_invalid_turn(self):
         """非法轮数参数。"""
         kernel = MagicMock()
-        app = MagicMock(_kernel=kernel)
+        app = MagicMock(kernel=kernel)
         result = await handle_rollback(app, "abc")
         assert "用法" in result
 
@@ -362,7 +362,7 @@ class TestCommandHandlers:
         """无活动会话。"""
         kernel = MagicMock()
         ingester = MagicMock(_session_dir=None)
-        app = MagicMock(_kernel=kernel, _ingester=ingester)
+        app = MagicMock(kernel=kernel, ingester=ingester)
         result = await handle_rollback(app, "3")
         assert "没有活动会话" in result
 
@@ -372,7 +372,7 @@ class TestCommandHandlers:
         kernel = MagicMock()
         ingester = MagicMock(_session_dir=Path("/tmp/test"))
         session = MagicMock(turn=3)
-        app = MagicMock(_kernel=kernel, _ingester=ingester, _session=session)
+        app = MagicMock(kernel=kernel, ingester=ingester, session=session)
         result = await handle_rollback(app, "5")
         assert "无法回滚" in result
 
@@ -382,7 +382,7 @@ class TestCommandHandlers:
         kernel = MagicMock()
         ingester = MagicMock(_session_dir=Path("/tmp/test"))
         session = MagicMock(turn=3)
-        app = MagicMock(_kernel=kernel, _ingester=ingester, _session=session)
+        app = MagicMock(kernel=kernel, ingester=ingester, session=session)
         result = await handle_rollback(app, "-1")
         assert "必须 >= 1" in result
 
@@ -392,7 +392,7 @@ class TestCommandHandlers:
         kernel = MagicMock()
         ingester = MagicMock(_session_dir=Path("/tmp/test"))
         session = MagicMock(turn=5)
-        app = MagicMock(_kernel=kernel, _ingester=ingester, _session=session)
+        app = MagicMock(kernel=kernel, ingester=ingester, session=session)
         result = await handle_rollback(app, "3")
         assert session.pending_rollback is True
         assert session.pending_rollback_turn == 3
@@ -405,7 +405,7 @@ class TestCommandHandlers:
         tool_reg.list_names.return_value = []
 
         kernel = MagicMock(tool_registry=tool_reg)
-        app = MagicMock(_kernel=kernel)
+        app = MagicMock(kernel=kernel)
         result = await handle_tools(app, "")
         assert "没有" in result
 
@@ -416,7 +416,7 @@ class TestMCPCommand:
     @pytest.mark.asyncio
     async def test_handle_mcp_no_adapter(self):
         """无 MCP 适配器时提示未初始化。"""
-        result = await handle_mcp(MagicMock(_mcp_adapter=None), "")
+        result = await handle_mcp(MagicMock(mcp_adapter=None), "")
         assert "未初始化" in result
 
     @pytest.mark.asyncio
@@ -424,7 +424,7 @@ class TestMCPCommand:
         """无服务端时显示提示。"""
         adapter = MagicMock()
         adapter.list_servers.return_value = []
-        app = MagicMock(_mcp_adapter=adapter)
+        app = MagicMock(mcp_adapter=adapter)
         result = await handle_mcp(app, "")
         assert "没有" in result or "暂无" in result
 
@@ -442,7 +442,7 @@ class TestMCPCommand:
             MCPServerStatus(name="filesystem", transport="none", connected=False, enabled=False, tool_count=0, healthy=False),
             MCPServerStatus(name="git", transport="stdio", connected=True, enabled=True, tool_count=3, healthy=True),
         ]
-        app = MagicMock(_mcp_adapter=adapter)
+        app = MagicMock(mcp_adapter=adapter)
         result = await handle_mcp(app, "list")
         assert "filesystem" in result
         assert "git" in result
@@ -452,7 +452,7 @@ class TestMCPCommand:
     async def test_handle_mcp_connect_no_args(self):
         """connect 缺少参数。"""
         adapter = MagicMock()
-        app = MagicMock(_mcp_adapter=adapter)
+        app = MagicMock(mcp_adapter=adapter)
         result = await handle_mcp(app, "connect")
         assert "用法" in result
 
@@ -460,7 +460,7 @@ class TestMCPCommand:
     async def test_handle_mcp_disconnect_no_args(self):
         """disconnect 缺少参数。"""
         adapter = MagicMock()
-        app = MagicMock(_mcp_adapter=adapter)
+        app = MagicMock(mcp_adapter=adapter)
         result = await handle_mcp(app, "disconnect")
         assert "用法" in result
 
@@ -468,7 +468,7 @@ class TestMCPCommand:
     async def test_handle_mcp_invalid_subcommand(self):
         """无效子命令。"""
         adapter = MagicMock()
-        app = MagicMock(_mcp_adapter=adapter)
+        app = MagicMock(mcp_adapter=adapter)
         result = await handle_mcp(app, "xyz")
         assert "未知" in result
 

@@ -211,14 +211,11 @@ class ReflectEngine:
     def _read_reflection_marker(self, session_dir: Path) -> int:
         """读取反思标记：从 meta.json 的 last_reflected_turn 字段。
         兼容旧 .reflection_marker 文件（P5 迁移后优先 meta.json）。"""
-        # 优先从 meta.json 读取
-        meta_path = session_dir / "meta.json"
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                return meta.get("last_reflected_turn", 0)
-            except (json.JSONDecodeError, OSError):
-                pass
+        # 优先从 meta.json 读取（统一走 read_session_meta，损坏回退空 dict）
+        from core.sessions.manager import read_session_meta
+        meta = read_session_meta(session_dir)
+        if meta:
+            return meta.get("last_reflected_turn", 0)
         # 兼容旧 .reflection_marker
         old_marker = session_dir / ".reflection_marker"
         if old_marker.exists():

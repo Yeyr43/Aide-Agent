@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from core.commands.context import CommandContext
 from core.locale import t
 from core.setup import aide_dir
 
@@ -50,7 +51,7 @@ async def _plugin_subcommand(kernel, sub: str, rest: str) -> str:
     return t("cmd.plugin.unknown_sub", sub=sub)
 
 
-async def handle_plugins(app, args: str) -> str:
+async def handle_plugins(app: CommandContext, args: str) -> str:
     """插件管理统一入口。
 
     无参数: 自动加载所有发现的插件 + 列出状态面板
@@ -64,7 +65,7 @@ async def handle_plugins(app, args: str) -> str:
     sub = parts[0] if parts else ""
     rest = parts[1] if len(parts) > 1 else ""
 
-    kernel = app._kernel
+    kernel = app.kernel
     state_mgr = kernel._plugins.state_manager
 
     # ── 显式子命令 ──

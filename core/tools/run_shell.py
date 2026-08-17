@@ -12,7 +12,6 @@ import asyncio
 import locale
 import logging
 import subprocess as _subprocess
-import sys as _sys
 
 from core.locale import t
 from .definition import ToolDefinition
@@ -29,7 +28,7 @@ _REPEAT_THRESHOLD = 5      # 连续重复行压缩阈值
 # 用 errors="replace" 兜底：即使编码猜错也不崩，非法字节变 �。
 def _detect_shell_encoding() -> str:
     """探测当前平台 shell 输出的最可能编码。"""
-    if _sys.platform != "win32":
+    if not IS_WINDOWS:
         return "utf-8"
     # Windows：OEM 代码页才是 cmd.exe 管道输出的真实编码
     # （locale.getpreferredencoding() 返回的是 ANSI 代码页，英文系统上二者不同）

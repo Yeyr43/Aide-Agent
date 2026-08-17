@@ -32,7 +32,7 @@ async def handle_help(app: CommandContext, args: str) -> str:
     lines = [t("cmd.help.title")]
 
     # 从 CommandRegistry 读取（包含插件命令）
-    cmd_registry = getattr(app, '_cmd_registry', None)
+    cmd_registry = app.cmd_registry
     if cmd_registry is not None:
         for cmd_def in cmd_registry.list_all():
             lines.append(f"- **{cmd_def.name}** — {cmd_def.description}")
@@ -169,7 +169,7 @@ async def handle_session(app: CommandContext, args: str) -> str:
       list       — 列出所有会话
       delete <id> — 删除指定会话
     """
-    kernel = getattr(app, '_kernel', None)
+    kernel = app.kernel
     if kernel is None:
         return t("cmd.session.no_kernel")
 
@@ -266,7 +266,7 @@ async def handle_memory(app: CommandContext, args: str) -> str:
 
 async def handle_tools(app: CommandContext, args: str) -> str:
     """列出所有已注册的工具。"""
-    kernel = getattr(app, '_kernel', None)
+    kernel = app.kernel
     if kernel is None:
         return t("cmd.tools.no_kernel")
 
@@ -307,7 +307,7 @@ async def handle_rollback(app: CommandContext, args: str) -> str:
     第一步：验证参数 + 设置 pending 状态 → 返回确认提示。
     第二步：用户输入 yes/确认 → app.py 执行实际回滚。
     """
-    kernel = getattr(app, '_kernel', None)
+    kernel = app.kernel
     if kernel is None:
         return t("cmd.rollback.no_kernel")
 
@@ -316,11 +316,11 @@ async def handle_rollback(app: CommandContext, args: str) -> str:
     except ValueError:
         return t("cmd.rollback.usage")
 
-    ingester = getattr(app, '_ingester', None)
+    ingester = app.ingester
     if ingester is None or ingester._session_dir is None:
         return t("cmd.rollback.no_session")
 
-    session = getattr(app, '_session', None)
+    session = app.session
     if session is None:
         return t("cmd.rollback.no_turn")
 
@@ -343,7 +343,7 @@ async def handle_rollback(app: CommandContext, args: str) -> str:
 
 def _rebuild_conversation_from_disk(app: CommandContext, session_dir: Path, target_turn: int) -> None:
     """从 turn 文件重建 session.conversation（回滚后调用）。"""
-    session = app._session
+    session = app.session
     session.turn = target_turn
     session.conversation = []
 

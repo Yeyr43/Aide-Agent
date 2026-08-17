@@ -23,7 +23,7 @@ BUILTIN_TOOLS = (
 
 
 def register_builtin_tools(registry: ToolRegistry) -> int:
-    """注册所有内置工具（声明式清单）。共 8 个工具。"""
+    """注册所有内置工具（声明式清单）。共 9 个工具。"""
     for tool_def in BUILTIN_TOOLS:
         registry.register(tool_def)
     return len(BUILTIN_TOOLS)

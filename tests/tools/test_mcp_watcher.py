@@ -183,12 +183,18 @@ async def _noop_callback():
 class _StatOSErrorFile:
     name = "x.json"
 
+    def is_file(self):
+        return True
+
+    def relative_to(self, other):
+        return Path("x.json")
+
     def stat(self):
         raise OSError("permission denied")
 
 
 class _FakeDir:
-    """替身 Path — is_dir 恒真，glob 返回 stat 抛错的文件。"""
+    """替身 Path — is_dir 恒真，rglob 返回 stat 抛错的文件。"""
 
     def __init__(self, path):
         self.path = path
@@ -196,14 +202,14 @@ class _FakeDir:
     def is_dir(self):
         return True
 
-    def glob(self, pattern):
+    def rglob(self, pattern):
         return [_StatOSErrorFile()]
 
 
 class TestPollingBackendOSError:
     @pytest.mark.asyncio
     async def test_start_snapshot_stat_oserror(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("core.mcp.watcher.Path", _FakeDir)
+        monkeypatch.setattr("core.watcher.Path", _FakeDir)
 
         async def on_change():
             return (0, 0, 0)
@@ -215,7 +221,7 @@ class TestPollingBackendOSError:
 
     @pytest.mark.asyncio
     async def test_poll_loop_stat_oserror(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("core.mcp.watcher.Path", _FakeDir)
+        monkeypatch.setattr("core.watcher.Path", _FakeDir)
 
         async def on_change():
             return (0, 0, 0)

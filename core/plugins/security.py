@@ -12,11 +12,12 @@
 
 from __future__ import annotations
 
-import os
 import re
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from core.platform import IS_WINDOWS
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +231,7 @@ class PluginPreflightCheck:
     def _check_permissions(self, plugin_dir: Path) -> list[PreflightWarning]:
         """检查世界可写文件（仅 POSIX）。"""
         warnings: list[PreflightWarning] = []
-        if os.name == "nt":  # Windows 权限模型不同
+        if IS_WINDOWS:  # Windows 权限模型不同
             return warnings
 
         for f in plugin_dir.rglob("*"):

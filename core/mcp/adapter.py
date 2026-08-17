@@ -220,7 +220,7 @@ class MCPAdapter:
         self._transports: dict[str, StdioTransport | HTTPTransport] = {}
         self._tool_cache: dict[str, list[ToolDefinition]] = {}
         # aide_tool_name → (server_name, original_tool_name) 映射
-        # 用于 execute_aide_tool 可靠反查，避免 split("_", 2) 歧义
+        # 供 discover_all_tools 绑定 execute 时可靠反查，避免 split("_", 2) 歧义
         self._tool_mapping: dict[str, tuple[str, str]] = {}
         # 熔断器
         self._breaker = CircuitBreaker(threshold=3)
@@ -537,27 +537,6 @@ class MCPAdapter:
             return "\n".join(texts) if texts else "(空结果)"
 
         return json.dumps(result, ensure_ascii=False, indent=2)
-
-    async def execute_aide_tool(
-        self,
-        aide_tool_name: str,
-        arguments: dict,
-    ) -> str | None:
-        """执行以 'mcp_' 为前缀的 Aide 工具。"""
-        if not aide_tool_name.startswith("mcp_"):
-            return None
-
-        mapping = self._tool_mapping.get(aide_tool_name)
-        if mapping is not None:
-            server_name, tool_name = mapping
-        else:
-            # fallback: 从工具名解析（兼容未经过 discover 的工具名）
-            parts = aide_tool_name.split("_", 2)
-            if len(parts) < 3:
-                return t("mcp.invalid_tool_name", name=aide_tool_name)
-            server_name = parts[1]
-            tool_name = parts[2]
-        return await self.call_tool(server_name, tool_name, arguments)
 
     # ── 全部工具汇总 ────────────────────────────────────────────────
 

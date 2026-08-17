@@ -18,9 +18,10 @@ from rich.panel import Panel
 from rich.markup import escape
 from rich.text import Text
 from textual.containers import VerticalScroll
-from textual.events import Click, Resize
+from textual.events import Click
 from textual.widgets import Static
 
+from .sticky_pin import StickyPinMixin
 from .tree_nodes import (
     ThinkNode, ToolNode, BodyNode, ErrorNode, SystemNode, TurnTree,
 )
@@ -73,8 +74,8 @@ class MessageWidget(Static):
             logger.warning("clipboard copy failed", exc_info=True)
 
 
-class MessageList(VerticalScroll):
-    """聊天消息列表 — 回合树流式管理器。"""
+class MessageList(StickyPinMixin, VerticalScroll):
+    """聊天消息列表 — 回合树流式管理器 + 用户消息钉顶（StickyPinMixin）。"""
 
     def __init__(self, code_theme: str = "monokai", **kwargs) -> None:
         super().__init__(**kwargs)
@@ -86,24 +87,7 @@ class MessageList(VerticalScroll):
         self._tool_start_times: dict[int, float] = {}
         self._turn_ai_text = ""
         self._pinned = True  # 滚动吸附：在底部时跟随输出，用户上翻解除
-        self._user_msgs: list[MessageWidget] = []  # 按文档顺序的用户消息
-        self._msg_trees: list[TurnTree | None] = []  # 与 _user_msgs 对齐的回合树（几何钉顶判定）
-        self._pinned_msg: MessageWidget | None = None  # 当前钉顶的用户消息（视觉固定头）
-        self._pinned_msg_top: float = 0.0  # 钉住时消息的自然顶部（scroll 内容坐标）
-        self._pinned_msg_height: float = 0.0  # 钉住时消息的占位高度（含 margin，释放判定用）
-        self._pinned_tree: TurnTree | None = None  # 钉住消息的回合树
-        self._pinned_orig_display = ""  # 钉住前消息的 display 值（释放时恢复）
-        self._sticky_header: MessageWidget | None = None  # dock:top 固定头（钉顶时显示消息副本）
-        self._pin_disabled = False  # restore/clear 期间暂停钉顶判定
-
-    def on_mount(self) -> None:
-        """创建钉顶固定头（dock:top，初始隐藏，不参与流式布局）。"""
-        header = MessageWidget("")
-        header.add_class("sticky-header")
-        header.styles.display = "none"
-        header.styles.dock = "top"
-        self._sticky_header = header
-        self.mount(header)
+        self._init_pin_state()  # 钉顶状态（sticky_pin mixin）
 
     # ── 回合树管理 ──────────────────────────────────────────────
 
@@ -401,120 +385,6 @@ class MessageList(VerticalScroll):
 
             # 每轮结束关闭状态（下一轮 / 用户新消息时重建树）
             self._close_turn()
-
-    # ── 用户消息钉顶（几何 sticky：消息顶滑出窗口但回合树仍在窗口）──────────
-
-    def _update_sticky_pin(self) -> None:
-        """按当前 scroll_y 判定钉顶状态 — 幂等：仅状态变化时改 DOM。
-
-        机制：钉住 = 流内消息 display:none（占位取消）+ dock:top 固定头显示
-        消息副本。display:none 移除的占位 == 固定头 dock 间距（等高 + 同 margin），
-        两者抵消 → 树的位置与 max_scroll_y 不变，无需滚动补偿，树自由滚动。
-        """
-        if self._pin_disabled or self._sticky_header is None:
-            return
-        if self._pinned_msg is not None:
-            if self._pinned_should_release():
-                self._release_sticky()
-            else:
-                # 锚点跟随：滚动使下一消息顶滑出 → 切换到下一消息
-                new_target = self._active_sticky_target()
-                if new_target is not None and new_target[0] is not self._pinned_msg:
-                    self._release_sticky()
-                    self._engage_sticky(*new_target)
-                return
-        target = self._active_sticky_target()
-        if target is not None:
-            msg, tree, msg_top = target
-            self._engage_sticky(msg, tree, msg_top)
-
-    def _active_sticky_target(self) -> tuple[MessageWidget, TurnTree, float] | None:
-        """找到当前应钉住的消息：(msg, tree, msg_top)。
-
-        锚点语义：上方最近的消息顶已滑出窗口顶（msg_top < scroll_y），且消息
-        不足一屏 → 钉住该消息作为上下文锚点（固定头显示消息副本，用户始终
-        知道当前滚动位置属于哪条消息）。
-
-        不依赖树的几何——多回合短树滚动到"树间隙"（上方树已整体滑过）时，
-        原逻辑因要求"树尾仍可见"而永远不钉，长对话滚动时顶部失去消息锚点。
-        """
-        sy = self.scroll_y
-        h = self.size.height
-        if h <= 0:
-            return None
-        candidate = None
-        for i, msg in enumerate(self._user_msgs):
-            if not msg.is_mounted:
-                continue
-            try:
-                box = msg.virtual_region
-                region = msg.virtual_region_with_margin
-            except Exception:
-                continue
-            if not box.size or not region.size:
-                continue  # 尚未布局
-            msg_top = float(box.y)  # 气泡盒顶（不含上边距）
-            if msg_top >= sy:
-                break  # 其后消息顶更大，未滑出
-            if region.height >= h:
-                continue  # 消息 ≥ 一屏：钉住会盖住回复，跳过
-            tree = self._msg_trees[i] if i < len(self._msg_trees) else None
-            if tree is None or not tree.is_mounted:
-                continue
-            candidate = (msg, tree, msg_top)  # 上方最近滑出的消息
-        return candidate
-
-    def _pinned_should_release(self) -> bool:
-        """当前钉住是否应解除：消息可正常显示（顶回到视口）或消息 ≥ 一屏。"""
-        sy = self.scroll_y
-        h = self.size.height
-        if self._pinned_msg_top >= sy:
-            return True  # 消息顶回到视口 → 正常显示
-        if self._pinned_msg_height >= h:
-            return True  # 窗口缩小后消息 ≥ 一屏 → 钉住会盖住回复，释放
-        return False
-
-    def _engage_sticky(self, msg: MessageWidget, tree: TurnTree, msg_top: float) -> None:
-        """钉住 msg：流内隐藏 + 固定头显示消息副本。"""
-        header = self._sticky_header
-        if header is None:
-            return
-        try:
-            header.update(msg.content)  # 复制气泡（Panel）
-            header._plain_content = msg._plain_content
-            header._image_paths = msg._image_paths
-            header._file_paths = msg._file_paths
-            header.styles.height = msg.size.height  # 与消息同高 → dock 间距 == 消息占位
-        except Exception:
-            pass
-        self._pinned_msg = msg
-        self._pinned_msg_top = msg_top
-        try:
-            self._pinned_msg_height = float(msg.virtual_region_with_margin.height)
-        except Exception:
-            self._pinned_msg_height = 0.0
-        self._pinned_tree = tree
-        self._pinned_orig_display = msg.styles.display
-        header.styles.display = "block"
-        msg.styles.display = "none"
-        self.refresh()  # 强制重绘消息区：避免钉住切换时的残留/重叠
-
-    def _release_sticky(self) -> None:
-        """解除钉顶：隐藏固定头，恢复流内消息显示。"""
-        if self._sticky_header is not None:
-            self._sticky_header.styles.display = "none"
-        if self._pinned_msg is not None:
-            self._pinned_msg.styles.display = self._pinned_orig_display
-        self._pinned_msg = None
-        self._pinned_msg_top = 0.0
-        self._pinned_msg_height = 0.0
-        self._pinned_tree = None
-        self._pinned_orig_display = ""
-        self.refresh()  # 强制重绘消息区：避免解除钉顶时的残留/重叠
-
-    def on_resize(self, event: Resize) -> None:
-        """窗口尺寸变化 → 重新判定钉顶（钉住消息可能因缩小而不适用）。"""
-        self._update_sticky_pin()
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """吸附状态判定：在底部 → 跟随输出；上翻 → 解除吸附。钉顶独立于吸附。

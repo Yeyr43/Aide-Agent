@@ -16,7 +16,7 @@ async def handle_mcp(app: CommandContext, args: str) -> str:
       disconnect <name>     — 断开指定服务端
       reload                — 重载 mcp/ 目录配置
     """
-    adapter = getattr(app, '_mcp_adapter', None)
+    adapter = app.mcp_adapter
     if adapter is None:
         return t("cmd.mcp.no_adapter")
 

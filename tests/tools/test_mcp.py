@@ -162,16 +162,6 @@ class TestMCPAdapter:
         result = await adapter.call_tool("nope", "tool", {})
         assert "未连接" in result
 
-    async def test_execute_aide_tool_not_mcp_prefix(self):
-        adapter = MCPAdapter()
-        result = await adapter.execute_aide_tool("read_file", {})
-        assert result is None
-
-    async def test_execute_aide_tool_invalid_mcp_name(self):
-        adapter = MCPAdapter()
-        result = await adapter.execute_aide_tool("mcp_invalid", {})
-        assert "无效的 MCP 工具名" in result
-
 
 class TestMCPAdapterToolParsing:
     """测试工具发现 → Aide ToolDefinition 映射。"""
@@ -297,34 +287,6 @@ class TestMCPAdapterToolParsing:
         adapter._transports["test"] = MockTransport()
         result = await adapter.call_tool("test", "slow", {})
         assert "超时" in result
-
-
-class TestMCPToolExecutionBinding:
-    """测试 execute_aide_tool 方法的路由逻辑。"""
-
-    async def test_execute_aide_tool_routes_correctly(self):
-        adapter = MCPAdapter()
-        called_with = {}
-
-        class MockTransport:
-            async def send_request(self, request, timeout=None):
-                obj = json.loads(request.to_json())
-                called_with["server"] = "myfs"
-                called_with["tool"] = obj["params"]["name"]
-                called_with["args"] = obj["params"]["arguments"]
-                resp = type("R", (), {
-                    "is_error": False,
-                    "error_message": "",
-                    "result": {"content": [{"type": "text", "text": "done"}]},
-                })()
-                return resp
-
-        adapter._transports["myfs"] = MockTransport()
-        result = await adapter.execute_aide_tool("mcp_myfs_read_file", {"path": "/tmp/x"})
-
-        assert result == "done"
-        assert called_with["tool"] == "read_file"
-        assert called_with["args"] == {"path": "/tmp/x"}
 
 
 class TestMCPCallToolIsError:
@@ -943,21 +905,6 @@ class TestMCPAdapterCallToolEdgeCases:
         adapter._transports["s"] = MockTransport()
         result = await adapter.call_tool("s", "t", {})
         assert '"content"' in result
-
-    async def test_execute_aide_tool_uses_mapping(self):
-        adapter = MCPAdapter()
-        adapter._tool_mapping["mcp_srv_renamed"] = ("actual_server", "actual_tool")
-        captured = {}
-
-        async def fake_call(server, tool, args):
-            captured["server"] = server
-            captured["tool"] = tool
-            return "mapped"
-
-        adapter.call_tool = fake_call
-        result = await adapter.execute_aide_tool("mcp_srv_renamed", {"a": 1})
-        assert result == "mapped"
-        assert captured == {"server": "actual_server", "tool": "actual_tool"}
 
     async def test_load_builtin_servers(self, tmp_path):
         adapter = MCPAdapter()

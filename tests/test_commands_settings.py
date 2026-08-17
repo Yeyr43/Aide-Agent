@@ -423,9 +423,7 @@ class TestHandleModelSwitch:
     async def test_switch_updates_provider(self):
         app = MagicMock()
         app.provider = None
-        app._model_name = ""
-        app._api_name = ""
-        app._kernel = MagicMock()
+        app.kernel = MagicMock()
         app.refresh_status_bar_model = MagicMock()
         with patch("core.commands.builtin.settings_handlers.Config") as mock_cfg:
             mock_cfg.list_api_configs.return_value = {
@@ -440,8 +438,10 @@ class TestHandleModelSwitch:
                     result = await handle_model(app, "openai")
         mk.assert_called_once()
         assert app.provider == "fake_provider"
-        assert app._api_name == "openai"
-        app.refresh_status_bar_model.assert_called_once()
+        # 状态栏模型/API 名经 refresh_status_bar_model(model=..., api_name=...) 更新
+        app.refresh_status_bar_model.assert_called_once_with(
+            model="gpt-4o", api_name="openai")
+        app.kernel.set_provider.assert_called_once_with("fake_provider")
         assert "已切换" in result
 
     async def test_switch_provider_failure(self):

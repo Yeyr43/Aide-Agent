@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -260,16 +259,9 @@ class AutoMemoryExtractor:
 
     async def _reflected_through(self, session_dir: Path, turn: int) -> bool:
         """本轮是否已被 /reflect 覆盖（last_reflected_turn >= turn → 跳过）。"""
-        meta_path = session_dir / "meta.json"
-        if not meta_path.exists():
-            return False
-        try:
-            meta = json.loads(await asyncio.to_thread(
-                meta_path.read_text, encoding="utf-8",
-            ))
-            return meta.get("last_reflected_turn", 0) >= turn
-        except (json.JSONDecodeError, OSError):
-            return False
+        from core.sessions.manager import read_session_meta
+        meta = await asyncio.to_thread(read_session_meta, session_dir)
+        return meta.get("last_reflected_turn", 0) >= turn
 
     async def _write_marker(self, session_dir: Path, turn: int) -> None:
         """写入自动提取标记到 meta.json（last_auto_memory_turn）。"""

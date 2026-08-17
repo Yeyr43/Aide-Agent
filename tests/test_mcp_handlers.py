@@ -11,7 +11,7 @@ class TestHandleMCP:
     async def test_no_adapter_returns_error(self):
         """Without an MCP adapter, command returns an error message."""
         app = MagicMock()
-        app._mcp_adapter = None
+        app.mcp_adapter = None
         result = await handle_mcp(app, "")
         assert isinstance(result, str)
         assert len(result) > 0
@@ -22,7 +22,7 @@ class TestHandleMCP:
         app = MagicMock()
         adapter = MagicMock()
         adapter.list_servers.return_value = []
-        app._mcp_adapter = adapter
+        app.mcp_adapter = adapter
 
         result = await handle_mcp(app, "list")
         assert isinstance(result, str)
@@ -46,7 +46,7 @@ class TestHandleMCP:
 
         adapter.list_servers.return_value = [mock_server]
         adapter.get_server_status.return_value = mock_status
-        app._mcp_adapter = adapter
+        app.mcp_adapter = adapter
 
         result = await handle_mcp(app, "list")
         assert isinstance(result, str)
@@ -70,7 +70,7 @@ class TestHandleMCP:
 
         adapter.list_servers.return_value = [mock_server]
         adapter.get_server_status.return_value = mock_status
-        app._mcp_adapter = adapter
+        app.mcp_adapter = adapter
 
         result = await handle_mcp(app, "list")
         assert isinstance(result, str)
@@ -94,7 +94,7 @@ class TestHandleMCP:
 
         adapter.list_servers.return_value = [mock_server]
         adapter.get_server_status.return_value = mock_status
-        app._mcp_adapter = adapter
+        app.mcp_adapter = adapter
 
         result = await handle_mcp(app, "list")
         assert "partial-srv" in result
@@ -117,7 +117,7 @@ class TestHandleMCP:
 
         adapter.list_servers.return_value = [mock_server]
         adapter.get_server_status.return_value = mock_status
-        app._mcp_adapter = adapter
+        app.mcp_adapter = adapter
 
         result = await handle_mcp(app, "list")
         assert "offline" in result
@@ -126,7 +126,7 @@ class TestHandleMCP:
     async def test_connect_missing_name(self):
         """connect without name shows usage."""
         app = MagicMock()
-        app._mcp_adapter = MagicMock()
+        app.mcp_adapter = MagicMock()
 
         result = await handle_mcp(app, "connect")
         assert isinstance(result, str)
@@ -139,7 +139,7 @@ class TestHandleMCP:
         adapter = MagicMock()
         adapter.connect = AsyncMock()
         adapter._sync_tools_to_registry = AsyncMock(return_value=3)
-        app._mcp_adapter = adapter
+        app.mcp_adapter = adapter
 
         result = await handle_mcp(app, "connect myserver")
         assert isinstance(result, str)
@@ -152,7 +152,7 @@ class TestHandleMCP:
         app = MagicMock()
         adapter = MagicMock()
         adapter.connect = AsyncMock(side_effect=KeyError("unknown"))
-        app._mcp_adapter = adapter
+        app.mcp_adapter = adapter
 
         result = await handle_mcp(app, "connect unknown")
         assert isinstance(result, str)
@@ -164,7 +164,7 @@ class TestHandleMCP:
         app = MagicMock()
         adapter = MagicMock()
         adapter.connect = AsyncMock(side_effect=RuntimeError("connection refused"))
-        app._mcp_adapter = adapter
+        app.mcp_adapter = adapter
 
         result = await handle_mcp(app, "connect bad")
         assert isinstance(result, str)
@@ -174,7 +174,7 @@ class TestHandleMCP:
     async def test_disconnect_missing_name(self):
         """disconnect without name shows usage."""
         app = MagicMock()
-        app._mcp_adapter = MagicMock()
+        app.mcp_adapter = MagicMock()
 
         result = await handle_mcp(app, "disconnect")
         assert isinstance(result, str)
@@ -186,7 +186,7 @@ class TestHandleMCP:
         app = MagicMock()
         adapter = MagicMock()
         adapter.disconnect = AsyncMock()
-        app._mcp_adapter = adapter
+        app.mcp_adapter = adapter
 
         result = await handle_mcp(app, "disconnect myserver")
         assert isinstance(result, str)
@@ -199,7 +199,7 @@ class TestHandleMCP:
         app = MagicMock()
         adapter = MagicMock()
         adapter.reload_config = AsyncMock(return_value=(2, 1, 1))
-        app._mcp_adapter = adapter
+        app.mcp_adapter = adapter
 
         result = await handle_mcp(app, "reload")
         assert isinstance(result, str)
@@ -209,7 +209,7 @@ class TestHandleMCP:
     async def test_unknown_subcommand(self):
         """Unknown subcommand shows help."""
         app = MagicMock()
-        app._mcp_adapter = MagicMock()
+        app.mcp_adapter = MagicMock()
 
         result = await handle_mcp(app, "unknown_cmd")
         assert isinstance(result, str)

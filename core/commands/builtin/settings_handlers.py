@@ -60,16 +60,15 @@ async def handle_language(app: CommandContext, args: str) -> str:
     Config.save_settings(settings)
 
     # 刷新 UI 中的 locale 敏感字符串
-    if app is not None and hasattr(app, '_cmd_handler'):
+    if app is not None:
         input_box = app.query_one("#input", None)
         if input_box is not None:
             from core.locale import t as _t
             input_box.placeholder = _t("ui.widget.input_placeholder")
         # 重新注册命令（刷新描述）
-        cmd_registry = getattr(app, '_cmd_registry', None)
-        if cmd_registry is not None:
+        if app.cmd_registry is not None:
             from core.commands.builtin.handlers import register_builtin_commands
-            register_builtin_commands(cmd_registry)
+            register_builtin_commands(app.cmd_registry)
             app.refresh_command_palette()
 
     lang_display = {"zh": "中文", "en": "English"}.get(lang, lang)
@@ -209,10 +208,11 @@ async def handle_model(app: CommandContext, args: str) -> str:
         config = Cfg.load()
         try:
             app.provider = create_provider(config.llm)
-            app._model_name = config.llm.model or config.llm.provider
-            app._kernel.set_provider(app.provider)
-            app._api_name = name
-            app.refresh_status_bar_model()
+            app.refresh_status_bar_model(
+                model=config.llm.model or config.llm.provider,
+                api_name=name,
+            )
+            app.kernel.set_provider(app.provider)
         except Exception as e:
             return t("cmd.model.switched", name=name,
                      provider=cfg.get('provider', ''), model=cfg.get('model', '')) \

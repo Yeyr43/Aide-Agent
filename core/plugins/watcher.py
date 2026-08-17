@@ -1,7 +1,7 @@
 """PluginWatcher — 插件热重载。
 
-watchfiles 优先 + polling fallback。
-检测 plugins/ 目录变更，按变更范围精确重载：
+复用 core.watcher 的通用后端（watchfiles 优先 + polling fallback），
+保留插件自身的变更语义：检测 plugins/ 目录变更，按变更范围精确重载：
   - SKILL.md 修改 → 重载 skill 上下文
   - hooks.json 修改 → 重新编译 matchers
   - plugin.json 修改 → 全量 reload
@@ -16,13 +16,13 @@ import asyncio
 import logging
 from pathlib import Path
 
+from core.watcher import FileWatcher, PollingBackend, WatchfilesBackend
+
 logger = logging.getLogger(__name__)
 
 
 class PluginWatcher:
-    """插件目录热重载。
-
-    对标 MCP watcher.py 的 FileWatcher 模式。
+    """插件目录热重载 — 通用后端 + 插件精确重载语义。
 
     用法:
         watcher = PluginWatcher(plugins_dir, plugin_host)
@@ -35,77 +35,54 @@ class PluginWatcher:
     def __init__(self, plugins_dir: Path, host) -> None:
         self._dir = plugins_dir
         self._host = host
-        self._task: asyncio.Task | None = None
+        self._watcher: FileWatcher | None = None
         self._pending: dict[str, asyncio.Task] = {}
         self._mtimes: dict[str, float] = {}
 
     async def start(self) -> None:
         """启动热重载监听。watchfiles 优先，polling fallback。"""
         try:
-            from watchfiles import awatch
-            self._task = asyncio.create_task(self._watchfiles_loop(awatch))
-            logger.info("PluginWatcher: watchfiles 模式已启动")
+            import watchfiles  # noqa: F401
+            backend: PollingBackend | WatchfilesBackend = WatchfilesBackend()
+            mode = "watchfiles"
         except ImportError:
-            logger.info("PluginWatcher: watchfiles 未安装，使用 polling 模式")
-            self._task = asyncio.create_task(self._polling_loop())
+            backend = PollingBackend(interval=2.0)
+            mode = "polling"
+        self._watcher = FileWatcher(str(self._dir), on_change=self._on_change, backend=backend)
+        await self._watcher.start()
+        logger.info(f"PluginWatcher: {mode} 模式已启动")
 
     async def stop(self) -> None:
         """停止监听。"""
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
+        if self._watcher:
+            await self._watcher.stop()
+            self._watcher = None
 
-    # ── watchfiles 模式 ────────────────────────────────────────────────
+    # ── 变更回调（通用后端触发 → 重扫子目录精确调度） ─────────────────
 
-    async def _watchfiles_loop(self, awatch) -> None:
-        """使用 watchfiles.awatch 监听文件变更。"""
-        try:
-            async for changes in awatch(str(self._dir)):
-                changed_dirs: set[Path] = set()
-                for change_type, path_str in changes:
-                    path = Path(path_str)
-                    # 找变更所属的插件目录
-                    try:
-                        rel = path.relative_to(self._dir)
-                        plugin_dir = self._dir / rel.parts[0]
-                        changed_dirs.add(plugin_dir)
-                    except ValueError:
-                        continue
+    async def _on_change(self) -> None:
+        """共享后端报告"plugins/ 下有变更"→ 重扫各插件目录 mtime 调度重载。
 
-                for plugin_dir in changed_dirs:
-                    await self._schedule_reload(plugin_dir)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.debug("watchfiles 循环异常，切换到 polling", exc_info=True)
-            self._task = asyncio.create_task(self._polling_loop())
+        与后端解耦：不依赖后端报告的路径详情（mcp 轮询/事件后端都不带路径）。
+        同时补齐删除检测：快照中消失的目录 → 调度 unload。
+        """
+        if not self._dir.exists():
+            return
 
-    # ── Polling 模式 ───────────────────────────────────────────────────
+        existing: set[str] = set()
+        for entry in self._dir.iterdir():
+            if not entry.is_dir():
+                continue
+            existing.add(entry.name)
+            current_mtime = self._dir_mtime(entry)
+            prev = self._mtimes.get(entry.name, 0)
+            if current_mtime > prev:
+                await self._schedule_reload(entry)
 
-    async def _polling_loop(self) -> None:
-        """每 2 秒检查 mtime 变更。"""
-        while True:
-            try:
-                await asyncio.sleep(2)
-                if not self._dir.exists():
-                    continue
-
-                for entry in self._dir.iterdir():
-                    if not entry.is_dir():
-                        continue
-                    current_mtime = self._dir_mtime(entry)
-                    prev = self._mtimes.get(entry.name, 0)
-                    if current_mtime > prev:
-                        self._mtimes[entry.name] = current_mtime
-                        await self._schedule_reload(entry)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.debug("PluginWatcher polling 异常", exc_info=True)
+        # 删除检测：快照里有、磁盘上已消失的目录 → 调度 unload
+        for name in list(self._mtimes):
+            if name not in existing:
+                await self._schedule_reload(self._dir / name)
 
     @staticmethod
     def _dir_mtime(plugin_dir: Path) -> float:
@@ -136,9 +113,17 @@ class PluginWatcher:
         self._pending[key] = task
 
     async def _delayed_reload(self, plugin_dir: Path) -> None:
-        """等待去抖窗口后执行重载。"""
+        """等待去抖窗口后执行重载，并推进 mtime 基线。
+
+        基线在重载**之后**推进，使 _reload_plugin 内的 _detect_changed_files
+        以变更前的基线做 mtime 比较，能准确检出"这次变了哪些文件"。
+        """
         await asyncio.sleep(self.DEBOUNCE_SECONDS)
         await self._reload_plugin(plugin_dir)
+        if plugin_dir.exists():
+            self._mtimes[plugin_dir.name] = self._dir_mtime(plugin_dir)
+        else:
+            self._mtimes.pop(plugin_dir.name, None)
 
     async def _reload_plugin(self, plugin_dir: Path) -> None:
         """按变更文件范围执行精确重载。"""

@@ -467,14 +467,14 @@ class TestLoadSafetyAndFallback:
 
     async def test_world_writable_rejected(self, host, tmp_path, monkeypatch):
         _write_python_plugin(host, "ww-p", _BASIC_PLUGIN)
-        monkeypatch.setattr("sys.platform", "linux")
+        monkeypatch.setattr("core.plugins.host.IS_WINDOWS", False)
         with patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mode=0o777)):
             info = await host.load("ww-p")
         assert info is None
 
     async def test_stat_oserror_continues(self, host, tmp_path, monkeypatch):
         _write_python_plugin(host, "stat-p", _BASIC_PLUGIN)
-        monkeypatch.setattr("sys.platform", "linux")
+        monkeypatch.setattr("core.plugins.host.IS_WINDOWS", False)
         # 触发 _load_python_plugin 世界可写检查（host.py:247）的 except OSError 分支。
         # 三个 mock 缺一不可：
         #  - preflight.check：跳过它遍历文件调 is_file()

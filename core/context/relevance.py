@@ -11,6 +11,7 @@ from .tokenizer import (  # noqa: F401
     _tokenize,
     _tfidf_score,
     _decay_factor,
+    time_decay,
     _build_vocabulary,
     _vocab_index,
     flush_vocab_cache,

@@ -131,7 +131,7 @@ class TestCheckPermissions:
         return os.stat_result((mode, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
     async def test_world_writable_warns(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("os.name", "posix")
+        monkeypatch.setattr("core.plugins.security.IS_WINDOWS", False)
         d = tmp_path / "plug"
         _write(d, "script.sh", "echo hi")
         with patch("pathlib.Path.stat", return_value=self._stat_result(0o100777)):
@@ -140,7 +140,7 @@ class TestCheckPermissions:
         assert any(w.category == "permissions" for w in result.warnings)
 
     async def test_normal_permissions_no_warn(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("os.name", "posix")
+        monkeypatch.setattr("core.plugins.security.IS_WINDOWS", False)
         d = tmp_path / "plug"
         _write(d, "script.sh", "echo hi")
         with patch("pathlib.Path.stat", return_value=self._stat_result(0o100644)):
