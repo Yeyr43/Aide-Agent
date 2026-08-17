@@ -4,6 +4,14 @@ Usage: aide   # current terminal becomes Aide TUI, daemon stays in tray
 #>
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
+# Bundle mode (PyInstaller onedir): Aide.exe 就在脚本旁 → 直跑。
+# Aide.exe 内部会按 --daemon 分流拉起托盘，并在当前终端启动 TUI。
+$bundleExe = Join-Path $ScriptDir "Aide.exe"
+if (Test-Path $bundleExe) {
+    & $bundleExe
+    exit $LASTEXITCODE
+}
+
 # Find project root
 $projectRoot = $null
 if ((Test-Path (Join-Path $ScriptDir "core\tray_daemon.py")) -and

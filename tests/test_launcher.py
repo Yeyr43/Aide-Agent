@@ -320,6 +320,39 @@ class TestEnsureDaemon:
             ensure_daemon(lock_path, script)
         mp.assert_called_once()
 
+    def test_daemon_windows_frozen_spawns_reentry(self, tmp_path, monkeypatch):
+        """Bundle 模式（sys.frozen）：Windows 用 sys.executable --daemon 二次进入。
+
+        回归：bundle 下 tray_daemon.py 编译进 PYZ 无独立文件，
+        必须以 `Aide.exe --daemon` 拉起，否则打包版无托盘。
+        """
+        monkeypatch.setattr("core.launcher.IS_WINDOWS", True)
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        lock_path = tmp_path / "daemon.pid"
+        lock_path.unlink(missing_ok=True)
+        with patch("subprocess.DETACHED_PROCESS", 0x00000008, create=True), \
+             patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True), \
+             patch("subprocess.Popen") as mp:
+            ensure_daemon(lock_path, Path("/nonexistent/tray_daemon.py"))
+        mp.assert_called_once()
+        cmd = mp.call_args.args[0]
+        assert cmd == [sys.executable, "--daemon"]
+        assert mp.call_args.kwargs.get("creationflags") == (0x00000008 | 0x00000200)
+
+    def test_daemon_posix_frozen_spawns_reentry(self, tmp_path, monkeypatch):
+        """Bundle 模式：非 Windows 用 sys.executable --daemon + start_new_session。"""
+        monkeypatch.setattr("core.launcher.IS_WINDOWS", False)
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        lock_path = tmp_path / "daemon.pid"
+        lock_path.unlink(missing_ok=True)
+        with patch("subprocess.Popen") as mp:
+            ensure_daemon(lock_path, Path("/nonexistent/tray_daemon.py"))
+        mp.assert_called_once()
+        cmd = mp.call_args.args[0]
+        assert cmd == [sys.executable, "--daemon"]
+        assert mp.call_args.kwargs.get("start_new_session") is True
+        assert mp.call_args.kwargs.get("stdout") == subprocess.DEVNULL
+
 
 class TestBringToFront:
     """窗口激活（仅 Windows — ctypes.WINFUNCTYPE 在 POSIX 不存在）。"""

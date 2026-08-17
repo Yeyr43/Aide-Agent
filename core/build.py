@@ -6,16 +6,19 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 # 脚本位于 core/ 包内：把脚本目录从 sys.path 移除，避免 core/locale.py
 # 遮蔽标准库 locale（subprocess/argparse 等 stdlib 依赖 locale，会导致 ImportError）。
 # 必须在任何会间接 import locale 的 stdlib 模块之前执行。
+# 比较用 os.path.normcase：Windows 上 sys.path[0] 保留启动传参大小写（Git Bash 小写），
+# 而 Path.resolve() 返回磁盘实际大小写，直接字符串比较会失配导致 core/ 未被移除。
 if not getattr(sys, "frozen", False):
     _here = Path(__file__).resolve().parent
-    if str(_here) in sys.path:
-        sys.path.remove(str(_here))
+    _here_norm = os.path.normcase(str(_here))
+    sys.path[:] = [p for p in sys.path if os.path.normcase(str(p)) != _here_norm]
 
 import argparse
 import subprocess

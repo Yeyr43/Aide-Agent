@@ -240,7 +240,7 @@ def ensure_daemon(daemon_lock: Path, daemon_script: Path) -> None:
 
     Args:
         daemon_lock: 守护进程 PID 锁文件路径
-        daemon_script: tray_daemon.py 的路径
+        daemon_script: tray_daemon.py 的路径（仅开发/源码模式使用）
     """
     if daemon_lock.exists():
         try:
@@ -252,20 +252,27 @@ def ensure_daemon(daemon_lock: Path, daemon_script: Path) -> None:
 
     import subprocess
 
-    if not daemon_script.exists():
+    # Bundle 模式：tray_daemon.py 编译进 PYZ 无独立文件，改用
+    # `Aide.exe --daemon` 二次进入 main() 运行托盘循环（main 内按 flag 分流）。
+    frozen = getattr(sys, "frozen", False)
+    if not frozen and not daemon_script.exists():
         return
 
     if IS_WINDOWS:
-        pythonw = Path(sys.executable).parent / "pythonw.exe"
-        if not pythonw.exists():
-            pythonw = sys.executable
+        if frozen:
+            exe = sys.executable
+        else:
+            pythonw = Path(sys.executable).parent / "pythonw.exe"
+            exe = pythonw if pythonw.exists() else sys.executable
+        cmd = [str(exe), "--daemon"] if frozen else [str(exe), str(daemon_script)]
         subprocess.Popen(
-            [str(pythonw), str(daemon_script)],
+            cmd,
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
         )
     else:
+        cmd = [sys.executable, "--daemon"] if frozen else [sys.executable, str(daemon_script)]
         subprocess.Popen(
-            [sys.executable, str(daemon_script)],
+            cmd,
             start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )

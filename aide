@@ -12,6 +12,13 @@ else
     _RESOLVED="$0"
 fi
 SCRIPT_DIR="$(dirname "$_RESOLVED")"
+
+# Bundle mode (PyInstaller onedir): Aide 二进制就在脚本旁 → 直跑。
+# Aide.exe 内部会按 --daemon 分流拉起托盘，并在当前终端启动 TUI。
+if [[ -f "$SCRIPT_DIR/Aide" ]]; then
+    exec "$SCRIPT_DIR/Aide"
+fi
+
 PROJECT_ROOT=""
 
 if [[ -f "$SCRIPT_DIR/core/tray_daemon.py" && -f "$SCRIPT_DIR/pyproject.toml" ]]; then

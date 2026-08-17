@@ -48,7 +48,8 @@ if IS_WINDOWS:
 
 def _load_icon() -> Image.Image:
     """加载托盘图标，优先 Aide.ico，回退到程序生成。"""
-    ico = Path(__file__).parent.parent / "Aide.ico"
+    from core.resources import get_resource_path
+    ico = get_resource_path("Aide.ico")
     if ico.exists():
         return Image.open(ico)
     # Fallback: generate simple icon
@@ -69,14 +70,23 @@ class TrayDaemon:
 
     @property
     def _project_root(self) -> Path:
+        # bundle 模式：可执行文件所在目录（onedir 下 Aide 二进制位置），
+        # 作为 TUI 子进程 cwd；源码模式为项目根。
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).parent
         return Path(__file__).parent.parent
 
     # ── TUI 子进程管理 ──────────────────────────────────────────────────
 
     def _get_tui_command(self) -> list[str]:
-        exe = self._project_root / "dist" / "Aide" / "Aide.exe"
-        if not IS_WINDOWS:
-            exe = self._project_root / "dist" / "Aide" / "Aide"
+        # bundle 模式：当前可执行文件即 TUI（Aide.exe / Aide），
+        # 由 main() 内的 --daemon 分流保证本进程只跑托盘循环。
+        if getattr(sys, "frozen", False):
+            exe = str(sys.executable)
+            if IS_WINDOWS:
+                return ["cmd", "/c", f"title Aide Agent && {exe}"]
+            return [exe]
+        exe = self._project_root / "dist" / "Aide" / ("Aide.exe" if IS_WINDOWS else "Aide")
         if exe.exists():
             if IS_WINDOWS:
                 return ["cmd", "/c", f"title Aide Agent && {exe}"]

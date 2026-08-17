@@ -3,6 +3,7 @@
 用法:
     uv run python core/main.py            # 启动 TUI + 托盘守护
     uv run python core/main.py --no-daemon  # 仅 TUI，不拉托盘守护（调试用）
+    uv run python core/main.py --daemon     # 仅跑托盘守护循环（bundle 二次进入）
     aide
 
 第二次运行 aide 时，不会启动新实例，而是激活已有窗口。
@@ -29,8 +30,7 @@ if not getattr(sys, "frozen", False):
     if not any(os.path.normcase(str(p)) == _root_norm for p in sys.path):
         sys.path.insert(0, str(_project_root))
 
-from core.resources import is_bundled
-
+from core.resources import get_resource_path
 from core.setup import aide_dir, ensure_aide_root
 from core.launcher import (
     acquire_instance_lock,
@@ -125,13 +125,21 @@ def main() -> None:
 
     no_daemon = "--no-daemon" in sys.argv
 
+    # 托盘守护进程二次进入：bundle 模式 ensure_daemon 以 `Aide.exe --daemon`
+    # 拉起当前可执行文件；源码模式亦可用 `python core/main.py --daemon`
+    # 独立启动托盘（便于调试），不抢实例锁、不启动 TUI。
+    if "--daemon" in sys.argv:
+        from core.tray_daemon import main as daemon_main
+        daemon_main()
+        return
+
     ensure_aide_root()
 
     if not acquire_instance_lock(_LOCK_FILE):
         print("Aide is already running.")
         return
 
-    decorate_console(Path(__file__).parent.parent / "Aide.ico")
+    decorate_console(get_resource_path("Aide.ico"))
 
     if not no_daemon:
         daemon_script = Path(__file__).parent / "tray_daemon.py"

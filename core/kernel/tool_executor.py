@@ -185,13 +185,12 @@ class ToolExecutor:
         tool_id = tc.get("id", "")
         arguments = self._parse_args(func.get("arguments", "{}"))
 
-        # ── 网络工具限流检查 ──
-        if tool_name in self._web_tool_names:
-            self._web_call_count += 1
-            if self._web_call_count > MAX_WEB_CALLS:
-                result = f"错误：网络调用已达上限（{MAX_WEB_CALLS} 次），请基于已有信息回复。"
-                ui.on_tool_error(tool_name, result)
-                return False, {"content": result, "tool_id": tool_id}
+        # ── 网络工具限流检查（连续失败熔断：只检查计数，执行后按结果更新）──
+        # 计数 == MAX 表示已连续失败 MAX 次 → 拒绝本次（本轮剩余调用）
+        if tool_name in self._web_tool_names and self._web_call_count >= MAX_WEB_CALLS:
+            result = f"错误：网络调用已达上限（{MAX_WEB_CALLS} 次），请基于已有信息回复。"
+            ui.on_tool_error(tool_name, result)
+            return False, {"content": result, "tool_id": tool_id}
 
         # ── 高危工具检查（BLOCKED 状态 + PermissionRequest hook）──
         if blocked_reason := await self._should_block(tool_name, arguments):
@@ -224,9 +223,13 @@ class ToolExecutor:
         if cacheable:
             cache_key = (tool_name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
             if cache_key in self._result_cache:
+                cached = self._result_cache[cache_key]
                 ui.on_tool_start(tool_name, arguments)
-                ui.on_tool_done(tool_name, self._result_cache[cache_key])
-                return True, {"content": self._result_cache[cache_key], "tool_id": tool_id}
+                ui.on_tool_done(tool_name, cached)
+                # 缓存命中按缓存结果判定成败（缓存可能也是失败结果，不能一律清零）
+                self._update_web_count(
+                    tool_name, success=not cached.startswith(("错误：", "Error:")))
+                return True, {"content": cached, "tool_id": tool_id}
 
         ui.on_tool_start(tool_name, arguments)
 
@@ -238,11 +241,13 @@ class ToolExecutor:
         except asyncio.TimeoutError:
             result = f"错误：工具 {tool_name} 执行超时（{tool_timeout}s）"
             ui.on_tool_error(tool_name, result)
+            self._update_web_count(tool_name, success=False)
             return False, {"content": result, "tool_id": tool_id}
         except Exception as e:
             logger.exception(f"工具 {tool_name} 执行异常")
             result = f"工具执行异常：{e}"
             ui.on_tool_error(tool_name, result)
+            self._update_web_count(tool_name, success=False)
             return False, {"content": result, "tool_id": tool_id}
         else:
             # 截断过长结果
@@ -255,8 +260,24 @@ class ToolExecutor:
             if cacheable:
                 self._result_cache[cache_key] = result
             ui.on_tool_done(tool_name, result)
+            # web 工具成败更新：成功（非错误前缀）清零，失败累计
+            self._update_web_count(
+                tool_name, success=not result.startswith(("错误：", "Error:")))
 
         return True, {"content": result, "tool_id": tool_id}
+
+    def _update_web_count(self, tool_name: str, success: bool) -> None:
+        """web 工具连续失败熔断计数：成功清零，失败 +1。
+
+        原逻辑按调用总数累计，3 次后永久卡死（即使成功过）。改为连续失败熔断：
+        一旦某次成功，计数清零恢复可用；仅连续失败达到上限才拒绝。
+        """
+        if tool_name not in self._web_tool_names:
+            return
+        if success:
+            self._web_call_count = 0
+        else:
+            self._web_call_count += 1
 
     # ── 结果截断 ──────────────────────────────────────────────────
 

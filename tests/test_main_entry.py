@@ -52,3 +52,19 @@ class TestMainEntry:
              patch("core.main._smoke_test") as msmoke:
             main()
         msmoke.assert_called_once()
+
+    def test_daemon_flag_runs_tray_daemon(self):
+        """--daemon：分流到托盘守护循环（bundle 二次进入），不启动 TUI/不抢锁。"""
+        with patch.object(sys, "argv", ["core/main.py", "--daemon"]), \
+             patch("core.tray_daemon.main") as mdaemon_main, \
+             patch("core.main.ensure_aide_root") as mroot, \
+             patch("core.main.acquire_instance_lock") as mlock, \
+             patch("core.main.decorate_console"), \
+             patch("core.main.ensure_daemon") as mdaemon, \
+             patch("ui.textual_app.app.AideApp") as App:
+            main()
+        mdaemon_main.assert_called_once()
+        mroot.assert_not_called()
+        mlock.assert_not_called()
+        mdaemon.assert_not_called()
+        App.assert_not_called()

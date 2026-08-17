@@ -4,6 +4,9 @@
 否则残留 PID 被复用后再次 `aide` 会误报 "Aide is already running"。
 """
 
+import sys
+from pathlib import Path
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -67,3 +70,40 @@ class TestKillTui:
         from unittest.mock import patch as mpatch
         with mpatch("pathlib.Path.unlink", side_effect=OSError):
             daemon._kill_tui()  # 不抛
+
+
+class TestBundleMode:
+    """Bundle 模式（sys.frozen）：托盘以 `Aide --daemon` 运行，TUI 命令直指可执行文件。"""
+
+    def test_project_root_is_executable_dir_when_frozen(self, monkeypatch):
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        daemon = TrayDaemon()
+        assert daemon._project_root == Path(sys.executable).parent
+
+    def test_get_tui_command_frozen_windows(self, monkeypatch):
+        """frozen + Windows：cmd /c title + Aide.exe。"""
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr("core.tray_daemon.IS_WINDOWS", True)
+        cmd = TrayDaemon()._get_tui_command()
+        assert cmd[0] == "cmd"
+        assert sys.executable in cmd[2]
+
+    def test_get_tui_command_frozen_posix(self, monkeypatch):
+        """frozen + 非 Windows：直接返回可执行文件路径。"""
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr("core.tray_daemon.IS_WINDOWS", False)
+        cmd = TrayDaemon()._get_tui_command()
+        assert cmd == [sys.executable]
+
+    def test_get_tui_command_source_prefers_dist_build(self, tmp_path, monkeypatch):
+        """源码模式：dist/Aide 构建产物存在时优先用它，而非 uv 源码。"""
+        monkeypatch.setattr(sys, "frozen", False, raising=False)
+        monkeypatch.setattr("core.tray_daemon.IS_WINDOWS", False)
+        root = tmp_path
+        dist_exe = root / "dist" / "Aide" / "Aide"
+        dist_exe.parent.mkdir(parents=True)
+        dist_exe.write_text("")
+        # property 无 setter，patch 类级
+        monkeypatch.setattr(TrayDaemon, "_project_root", root)
+        cmd = TrayDaemon()._get_tui_command()
+        assert cmd == [str(dist_exe)]
