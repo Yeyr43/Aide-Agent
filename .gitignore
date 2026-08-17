@@ -27,4 +27,6 @@ htmlcov/
 .pytest_cache/
 
 # 规划/设计文档（工作文件，不进入仓库）
-docs/
+docs/*
+# 例外：插件规范文档（CLAUDE.md 引用，随发布分发）
+!docs/plugins.md

@@ -14,7 +14,7 @@ Aide Agent — 本地个人智能管家。核心不是"能做多少事"而是"�
 # 运行应用
 uv run python core/main.py
 
-# 运行全部测试（1765 个）
+# 运行全部测试（1778 个）
 uv run pytest tests/ -q
 
 # 运行单个测试文件
@@ -78,9 +78,9 @@ core/
 ├── storage.py           # JSON 读写 + Write-Actor + JSONL 工具函数
 ├── resources.py         # is_bundled() / get_resource_path() — dev/bundle 双模式路径解析
 ├── errors.py            # 统一错误类型（AideError / ProviderError / ToolError / ConfigError / SessionError）
-├── launcher.py          # 应用启动工具 — 单实例锁（Windows 校验 PID 映像名防复用）、窗口激活、控制台装饰、托盘守护进程拉起
-├── main.py              # 应用入口 + 烟雾测试（uv run python core/main.py；`--no-daemon` 跳过托盘便于调试）
-├── tray_daemon.py       # 系统托盘后台守护进程（强杀 TUI 后清理 aide.pid 实例锁）
+├── launcher.py          # 应用启动工具 — 单实例锁（Windows 校验 PID 映像名防复用）、窗口激活、控制台装饰、托盘守护进程拉起（bundle 模式以 `Aide.exe --daemon` 二次进入）
+├── main.py              # 应用入口 + 烟雾测试（uv run python core/main.py；`--no-daemon` 跳过托盘、`--daemon` 仅跑托盘循环）
+├── tray_daemon.py       # 系统托盘后台守护进程（强杀 TUI 后清理 aide.pid 实例锁；bundle 模式 TUI 命令直指当前可执行文件）
 ├── build.py             # 独立分发包构建（PyInstaller 打包 + 验证 + 安装脚本）
 ├── kernel/              # Agent 内核（零 UI 依赖）
 │   ├── bootstrap.py     # AppBootstrap — 5-phase 组合根（_init_provider / _init_tooling / _init_storage_and_context / _init_plugins / _init_kernel）
@@ -102,7 +102,7 @@ core/
 ├── context/             # 上下文管线 — 优先级队列模型
 │   ├── pipeline.py      # ContextPipeline — 收集 → 评分 → token 预算填充（async I/O）
 │   ├── ingester.py      # ContextIngester — 写入 messages/ + timeline.json（索引唯一源）
-│   ├── tokenizer.py     # 分词器 — TF-IDF / Jaccard / 时间衰减 / 同义词扩展 / _detect_language
+│   ├── tokenizer.py     # 分词器 — TF-IDF / Jaccard / 时间衰减（time_decay 统一公式）/ 同义词扩展 / _detect_language
 │   ├── overview.py      # 会话总览 + read_current_overview + restore_overview_from_checkpoint
 │   ├── relevance.py     # tokenizer + overview 的公开 API 重导出层
 │   └── token_counter.py # 上下文 token 估算 + compute_context_usage + trim_conversation_to_window（爆满兜底）
@@ -117,6 +117,7 @@ core/
 │   └── feedback.py      # FeedbackStore（stable id 匹配）+ FeedbackVerifier（L1语言/L2长度）
 ├── commands/            # 命令系统 — 17 个内置命令
 │   ├── __init__.py      # CommandRegistry + CommandDefinition + route_command()
+│   ├── context.py       # CommandContext Protocol — 公开字段（kernel/session/ingester/cmd_registry/mcp_adapter），core 命令不反查 app 私有字段
 │   └── builtin/         # handlers.py / settings_handlers.py / mcp_handlers.py / plugin_commands.py
 ├── plugins/             # 插件系统 v2 — Claude Code / OpenClaw / Aide 三格式兼容
 │   ├── contract.py      # PluginManifest + PluginAPI + ContextProvider Protocol
@@ -128,8 +129,9 @@ core/
 │   ├── hook_runner.py   # HookRunner + MatcherCompiler (7 种匹配语法) + HookContext
 │   ├── state.py         # PluginStateManager (READY/NEEDS_SETUP/DISABLED) + RequirementsChecker
 │   ├── security.py      # PluginPreflightCheck — ClawScan 级安全预检 (5 项检查)
-│   ├── watcher.py       # PluginWatcher — watchfiles 优先 + polling fallback + 500ms 防抖
+│   ├── watcher.py       # PluginWatcher — 复用 core.watcher 通用后端 + 500ms 防抖 + 按变更范围精确重载
 │   └── templates/       # hello-plugin 模板
+├── watcher.py           # 通用目录监听 — WatcherBackend/PollingBackend/WatchfilesBackend/FileWatcher（mcp 与插件共用）
 ├── sessions/            # 会话管理 — manager.py（CRUD + 回滚 + 智能标题）+ restorer.py（从磁盘恢复）
 ├── tools/               # 9 个内置工具 + 声明式清单 + ToolContext DI
 │   ├── definition.py    # ToolDefinition + ToolContext（叶子模块，避免循环导入）
@@ -139,10 +141,10 @@ core/
 │   ├── truncation.py    # 输出截断工具
 │   ├── delegate.py      # 子 agent 委托工具（一次性、用完即删）
 │   └── [read_file|write_file|run_shell|search_memory|web|search_in_files|search_chat|plugin_manager].py
-├── mcp/                 # MCP 协议适配 — adapter/protocol/transport/fault/lifecycle/watcher
+├── mcp/                 # MCP 协议适配 — adapter/protocol/transport/fault/lifecycle/watcher（watcher.py 为 core.watcher 兼容 re-export）
 ├── locale_data/         # 双语字符串（zh/en JSON）
 ├── locale.py            # t() 国际化 + build_soul + build_tools_prompt
-└── platform.py          # OS 检测（IS_WINDOWS / IS_MACOS / IS_LINUX）
+└── platform.py          # OS 检测（IS_WINDOWS / IS_MACOS / IS_LINUX）— 平台判断统一走此常量，不散落 sys.platform/os.name
 
 ui/
 ├── textual_app/
@@ -153,7 +155,7 @@ ui/
 │   ├── app.tcss         # 布局样式（暗色主题）
 │   ├── platform.py      # UI 侧平台工具
 │   ├── screens/         # home / onboarding / api_config
-│   └── widgets/         # message_list（回合树管理器）/ tree_nodes（树节点组件）/ input_box / command_palette / status_bar
+│   └── widgets/         # message_list（回合树管理器 + StickyPinMixin）/ tree_nodes（树节点组件）/ render_utils（纯渲染辅助）/ sticky_pin（钉顶状态机 mixin）/ input_box / command_palette / status_bar
 
 平台验证脚本：`core/verify_linux.sh` / `core/verify_macos.sh`
 ```
@@ -376,7 +378,7 @@ FeedbackStore 优先用 `entry_id`（来自 frontmatter）做 key，fallback 到
 
 **`command` 字段**（SKILL.md frontmatter 或 `aide.plugin.json`）：CLI 型技能声明对应可执行命令（如 `agent-browser`）。声明后 `//plugin:skill` 与 skill 工具输出附"可执行命令：`<command>`（用 run_shell 调用）"提示——**提示型不直通执行**，由 LLM 用 `run_shell` 实际运行。详见 `docs/plugins.md`。
 
-**热重载**（`watcher.py`）：watchfiles 优先 + 2s polling fallback，500ms 防抖。按变更文件类型精确重载。
+**热重载**（`plugins/watcher.py`）：复用 `core/watcher.py` 通用后端（watchfiles 优先 + 2s polling fallback），500ms 防抖。检测到变更 → 重扫各插件目录 mtime → 按变更文件类型精确重载。
 
 **命名空间隔离**：
 - 命令：`//plugin-id:skill-name`（Python 插件 `//plugin-id:cmd-name`）
@@ -460,8 +462,9 @@ Python 插件可注册：工具、命令、生命周期钩子（`register_hook()
 | **P7** | 插件系统 v2：三格式兼容 / 9 事件 Hook 系统 / 安全预检 / 状态管理 / 热重载 / 死代码清理 |
 | **P8** | 子 agent delegate 工具 / 声明式工具清单（definition.py）/ 编排判据（strategy_6 + subagent_system 完整性） |
 | **P8+ 优化批次** | 工具并发分级（只读并行/写串行/abort 兄弟）、记忆注入边界+新鲜度、自动记忆提取（/mem-auto）、上下文爆满兜底（trim_conversation_to_window） |
+| **P9 — 全面审计与硬化（1.0.0）** | 十维审计（结构/职责/死代码/重复/接口/工具/功能/适配）+ 整改：bundle 托盘断链（`--daemon` 二次进入）、CommandContext 公开属性 DI（去 `app._kernel` 鸭子类型）、通用 watcher 收敛（core/watcher.py）、god file 拆分（render_utils / sticky_pin）、time_decay 公式统一、平台判断统一 platform.py、死代码清除、meta 读取统一、build.py locale 遮蔽修复 |
 
-1765 测试全部通过。
+**当前状态**：功能开发基本完成，**1778 测试全部通过** + bundle 冒烟/`--daemon` 路由实测通过。准备发布 **v1.0.0**。
 
 ## Prompt 体系
 
