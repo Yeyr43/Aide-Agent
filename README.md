@@ -2,15 +2,55 @@
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#平台支持)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#支持范围)
 
-> 本地个人 AI 管家 — 不是"能做多少事"，而是"越用越懂你"。
+> 本地个人 AI 管家 — 不靠堆功能，靠动态 prompt 越用越贴合你的习惯。
 
-Aide 是一款运行在你电脑上的终端 AI 助手。所有对话和记忆留在本地，隐私不外泄。基于 Textual TUI 框架，纯暗主题，键盘驱动。
+Aide 是一个运行在你电脑上的终端 AI 助手。所有对话与记忆都留在本地，隐私不外泄。
 
-## 安装
+## 核心主旨
+
+Aide 的核心不是"能做多少事"，而是"越用越懂你"。
+
+它的演化不靠不断加功能，而是靠**动态 prompt**：
+
+- 一段固定的 **Soul**（角色设定）作为人格底色
+- 若干会持续积累的 **记忆**（偏好 / 工作流 / 长期记忆）
+- 每轮对话后的 **会话总览**（压缩的上下文快照）
+- 一个**反馈闭环**（校验你的语言习惯与风格偏好，反过来影响后续注入）
+
+这些内容一起构成发给模型的 prompt。积累得越多，模型的行为就越贴合你的习惯。
+
+**关键原则**：用户可控。系统默认**不自动**修改 prompt 内容——更新由你手动触发（`/reflect`），生成结果需要你审查确认后才生效。自动提取（`/mem-auto`）是显式开关，默认关闭。
+
+## 技术栈、功能、特点
+
+**技术栈**：Python 3.13+ · Textual（TUI）· pystray · asyncio · JSON 文件存储 · Pygments · httpx · ddgs
+
+**功能**：
+
+- **终端原生界面** — Textual 全栈 TUI，纯暗主题，键盘驱动。每个回合以树形展示思考 / 工具 / 正文，正文实时渲染 Markdown
+- **多模型** — OpenAI 兼容 API / Ollama 本地 / Anthropic，可自定义 base URL 接入任意兼容端点
+- **工具系统** — 8 个内置工具：文件读写 / Shell / 全局搜索 / 记忆检索 / 网页抓取 / 子 agent 委派。只读工具并行、写工具串行，高危命令拦截，工具结果错误可反馈回模型
+- **记忆系统** — `/reflect` 手动生成结构化记忆与会话总览；反馈闭环做语言与长度校验；`/mem-auto` 可选每轮自动提取（默认关）
+- **上下文管线** — 收集 → 评分 → 打包，按相关性与 token 预算注入记忆 / 总览 / 历史；窗口超限自动丢弃最老轮次兜底
+- **插件系统** — Python 插件 + Claude Code / OpenClaw / Aide 三格式技能，自动发现加载；生命周期 Hook、安全预检、热重载
+- **MCP 协议** — stdio + HTTP 传输，熔断与自动重连
+- **跨会话搜索** — 词级 TF-IDF + bigram Jaccard + 同义词扩展，时间衰减加权
+- **本地存储** — 全部数据存于本地 `~/.aide/`，零云端依赖；备份即复制文件夹
+
+**特点**（有什么说什么）：
+
+- 本地优先，数据不离开你的电脑
+- 纯文本驱动，prompt 可读可改，你始终知道它在想什么
+- 命令行界面，适合习惯终端、键盘操作的用户
+- 不自动联网、不自动改配置——所有敏感动作需要你的参与
+
+## 部署
 
 ### 一键安装（推荐）
+
+前置条件：[git](https://git-scm.com) + [uv](https://docs.astral.sh/uv/)
 
 ```powershell
 # Windows
@@ -23,8 +63,6 @@ curl -fsSL https://raw.githubusercontent.com/Yeyr43/Aide-Agent/main/install.sh |
 ```
 
 脚本自动处理：clone → 装依赖 → 配 PATH。重开终端，输入 `aide` 启动。
-
-> 前置条件：[git](https://git-scm.com) + [uv](https://docs.astral.sh/uv/)
 
 ### 二进制下载（无需 Python）
 
@@ -53,12 +91,18 @@ uv run python core/main.py
 
 冷启动向导引导你完成：语言选择 → 角色模板 → API 配置 → 个性化设置。4 步走完即可开始对话。
 
+### 日常对话
+
+在输入框直接输入内容，回车发送。`Ctrl+Q` 可强制终止 agent 正在进行的任务（不退出 Aide）。
+
 ### 输入 `/` 打开命令面板
 
 | 命令 | 说明 |
 |------|------|
 | `/help` | 列出所有命令 |
 | `/profile` | 查看当前 Soul + 动态 Prompt |
+| `/reflect` | 生成结构化记忆 + 会话总览（手动更新 prompt 的入口） |
+| `/mem-auto on` | 开启每轮自动记忆提取（默认关闭） |
 | `/compact` | 压缩当前会话上下文 |
 | `/session list` | 查看历史会话 |
 | `/memory` | 查看记忆条目状态 |
@@ -67,7 +111,7 @@ uv run python core/main.py
 | `/api add` | 添加 API 配置 |
 | `/model` | 切换模型 |
 | `/language` | 切换语言 |
-| `/export` / `/import` | 导出/导入数据 |
+| `/export` / `/import` | 导出 / 导入数据 |
 | `/clear` | 清空会话 |
 | `/rollback` | 回滚到指定轮次 |
 
@@ -83,20 +127,7 @@ uv run python core/main.py
 
 适合设为开机自启。
 
-## 特性
-
-- **终端原生 TUI** — Textual 全栈框架，纯暗主题 (`#0c0c0c`)，键盘驱动；每回合以树形展示思考/工具/正文，正文实时 Markdown 渲染
-- **多模型** — OpenAI 兼容 API / Ollama 本地 / Anthropic，可自定义 base URL 接入任意兼容端点
-- **工具系统** — 8 个内置工具（文件读写 / Shell / 全局搜索 / 记忆检索 / 网页抓取）+ 子 agent 委派 + 只读并行执行 / 写串行 + 高危命令拦截
-- **优先级队列上下文** — 收集 → 评分 → 打包，Soul/工具/技能/记忆/总览/历史窗口按相关性与 token 预算注入；记忆注入带边界与新鲜度标注，超窗口自动丢弃最老轮次兜底
-- **记忆系统** — 手动 `/reflect` 生成结构化记忆 + 会话总览 + 反馈闭环（L1 语言 / L2 长度校验）；`/mem-auto` 可选每轮自动提取（默认关）
-- **插件系统** — Python 插件 + Claude Code / OpenClaw / Aide 三格式技能，自动发现加载；9 类生命周期 Hook + 5 项安全预检 + 热重载
-- **MCP 协议** — stdio + HTTP Transport，熔断 + 自动重连，工具级错误正确反馈给模型
-- **语义搜索** — 词级 TF-IDF + bigram Jaccard + 同义词扩展，时间衰减加权，跨会话全文检索
-- **本地隐私** — 所有对话与记忆存于本地 `~/.aide/`，零云端依赖，备份即复制文件夹
-- **跨平台** — Windows / macOS / Linux
-
-## 平台支持
+## 支持范围
 
 | 平台 | 备注 |
 |------|------|
@@ -104,19 +135,9 @@ uv run python core/main.py
 | macOS | ✅ 需 `pyobjc-framework-Quartz`（一键安装自动处理） |
 | Linux | ✅ 需 GTK3 + AppIndicator（`apt install python3-gi gir1.2-gtk-3.0 gir1.2-appindicator3-0.1`） |
 
-## 技术栈
+**模型**：OpenAI 兼容 API（含 DeepSeek 等）/ Ollama 本地 / Anthropic。
 
-Python 3.13+ · Textual 0.80+ · Pydantic 2 · pystray · Pygments · httpx · ddgs
-
-## 开发
-
-```bash
-uv sync                     # 安装依赖
-uv run python core/main.py # 启动应用
-uv run pytest tests/ -q     # 运行全部测试（1175 个）
-```
-
-架构与设计文档见 [CLAUDE.md](CLAUDE.md)（核心模块职责、关键模式、已知陷阱）与 [CONTEXT.md](CONTEXT.md)（设计演变与批判性收敛记录）。
+**明确不做**（保持简单）：Planner、向量搜索、自动摘要（摘要归 `/reflect` 手动触发）、自动修改 prompt（默认关闭）。
 
 ## 开源协议
 
