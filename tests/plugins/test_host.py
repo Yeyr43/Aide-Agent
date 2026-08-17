@@ -475,10 +475,12 @@ class TestLoadSafetyAndFallback:
     async def test_stat_oserror_continues(self, host, tmp_path, monkeypatch):
         _write_python_plugin(host, "stat-p", _BASIC_PLUGIN)
         monkeypatch.setattr("sys.platform", "linux")
-        # 只对入口文件 stat 抛错，触发 _load_python_plugin 世界可写检查的
-        # except OSError 分支；其它 Path 操作保持真实。
-        # 注意：preflight.check 会遍历文件调 is_file()（内部走 self.stat()），
-        # 必须 mock 掉——否则 Python 3.13 的 pathlib 会在那里拦截 fake_stat。
+        # 触发 _load_python_plugin 世界可写检查（host.py:247）的 except OSError 分支。
+        # 三个 mock 缺一不可：
+        #  - preflight.check：跳过它遍历文件调 is_file()
+        #  - Path.exists=True：绕过 240 行入口存在检查（Python 3.13 的 exists 内部
+        #    直接 self.stat()，会被 fake_stat 拦截且不吞 OSError）
+        #  - Path.stat fake：只对入口文件抛错，命中 247 行
         entry = host._config.plugins_dir / "stat-p" / "main.py"
         real_stat = Path.stat
 
@@ -490,6 +492,7 @@ class TestLoadSafetyAndFallback:
         with patch("core.plugins.security.PluginPreflightCheck.check",
                    new=AsyncMock(return_value=PreflightResult(
                        passed=True, warnings=[], blocked=False))), \
+             patch("pathlib.Path.exists", return_value=True), \
              patch("pathlib.Path.stat", fake_stat):
             info = await host.load("stat-p")
         assert info is not None
