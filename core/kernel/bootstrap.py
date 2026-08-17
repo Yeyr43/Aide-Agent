@@ -148,6 +148,8 @@ class AppBootstrap:
         tool_registry.hook_runner = hook_runner
         # 子 agent delegate 工具也需访问 hook_runner（PermissionRequest / SubagentStop）
         tool_registry.tool_context.hook_runner = hook_runner
+        # plugin 管理工具需访问 PluginHost（Phase 4 后才可注入）
+        tool_registry.tool_context.plugin_host = plugin_host
 
         # Phase 5: 内核装配
         kernel = AppBootstrap._init_kernel(

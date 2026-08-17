@@ -85,6 +85,7 @@ class PluginManifestV2:
     aide_python_entry: str = ""        # __init__.py 路径
     aide_permissions: list[str] = field(default_factory=list)
     aide_requires: dict = field(default_factory=dict)
+    command: str = ""                  # 可执行命令（LLM 用 run_shell 调用，提示型不直通）
 
     # 内部
     root_dir: Path = field(default_factory=Path)
@@ -127,6 +128,7 @@ class PluginManifestV2:
             aide_python_entry=aide.get("pythonPlugin", ""),
             aide_permissions=aide.get("permissions", []),
             aide_requires=aide.get("requires", {}),
+            command=raw.get("command", ""),
             root_dir=plugin_dir,
             format="claude_code",
         )
@@ -170,6 +172,7 @@ class PluginManifestV2:
             description=meta.get("description", ""),
             skills=[skill],
             aide_requires=requires,
+            command=meta.get("command", ""),
             root_dir=plugin_dir,
             format="openclaw_skill",
         )
@@ -194,6 +197,7 @@ class PluginManifestV2:
             aide_python_entry=raw.get("entry", "__init__.py"),
             aide_permissions=raw.get("permissions", []),
             aide_requires=raw.get("requires", {}),
+            command=raw.get("command", ""),
             root_dir=plugin_dir,
             format="aide_native",
         )

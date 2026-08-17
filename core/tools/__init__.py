@@ -16,7 +16,7 @@ from .retry import RetryConfig, async_retry
 # 重导出供 discovery.py 的 `from core.tools import <tool>` 使用（noqa：re-export 层）
 from . import (  # noqa: F401
     read_file, write_file, run_shell, search_memory, web,
-    search_in_files, search_chat, delegate,
+    search_in_files, search_chat, delegate, plugin_manager,
 )
 from core.locale import t
 

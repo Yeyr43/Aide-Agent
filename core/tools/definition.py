@@ -36,6 +36,7 @@ class ToolContext:
         provider: LLM provider（子 agent delegate 工具使用）
         tool_registry: 工具注册中心（子 agent delegate 工具复用，自引用）
         hook_runner: 生命周期钩子运行时（子 agent 的 PermissionRequest/SubagentStop）
+        plugin_host: 插件宿主（plugin 管理工具使用；Phase 4 后注入）
     """
     search_index: SearchIndex | None = None
     sessions_root: Path | None = None
@@ -44,6 +45,7 @@ class ToolContext:
     provider: object | None = None
     tool_registry: object | None = None
     hook_runner: object | None = None
+    plugin_host: object | None = None
 
 
 @dataclass

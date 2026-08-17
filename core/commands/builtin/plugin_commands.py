@@ -1,4 +1,4 @@
-"""/plugin /plugins 指令 — 插件管理 + 状态面板。"""
+"""/plugins 指令 — 插件管理统一入口（合并原 /plugin + /plugins）。"""
 
 from __future__ import annotations
 
@@ -10,64 +10,8 @@ from core.setup import aide_dir
 logger = logging.getLogger(__name__)
 
 
-async def handle_plugin(app, args: str) -> str:
-    """插件管理入口。
-
-    无参数: 自动加载所有发现的插件 + 列出状态
-    子命令:
-      load <id>    — 加载插件
-      unload <id>  — 卸载插件
-      reload <id>  — 重载插件
-    """
-    parts = args.strip().split(maxsplit=1)
-    sub = parts[0] if parts else ""
-    rest = parts[1] if len(parts) > 1 else ""
-
-    kernel = app._kernel
-
-    # ── 无参数：自动加载所有发现插件 + 列出 ──
-    if not sub:
-        manifests = kernel._plugins.discover()
-        if not manifests:
-            return t("cmd.plugin.no_plugins")
-
-        lines = [t("cmd.plugin.title") + "\n"]
-        loaded_count = 0
-        new_count = 0
-        failed: list[str] = []
-
-        for m in manifests:
-            if kernel._plugins.is_loaded(m.id):
-                loaded_count += 1
-                lines.append(f"- ✅ **{m.name or m.id}** v{m.version}")
-            else:
-                info = await kernel.load_plugin(m.id)
-                if info:
-                    new_count += 1
-                    lines.append(f"- 🆙 **{info.name}** v{info.manifest.version}（{t('cmd.plugin.loaded')}）")
-                else:
-                    failed.append(m.id)
-                    lines.append(f"- ❌ **{m.id}** v{m.version} — {t('cmd.plugin.load_failed')}")
-
-            if m.description:
-                lines.append(f"  {m.description}")
-
-        lines.append("")
-        summary_parts = []
-        if loaded_count:
-            summary_parts.append(t("cmd.plugin.count_loaded", n=loaded_count))
-        if new_count:
-            summary_parts.append(t("cmd.plugin.count_new", n=new_count))
-        if failed:
-            summary_parts.append(t("cmd.plugin.count_failed", n=len(failed)))
-        lines.append("、".join(summary_parts))
-
-        if failed:
-            lines.append(f"\n{t('cmd.plugin.failed_list', names=', '.join(failed))}")
-        lines.append("\n" + t("cmd.plugin.hint"))
-        return "\n".join(lines)
-
-    # ── 显式子命令 ──
+async def _plugin_subcommand(kernel, sub: str, rest: str) -> str:
+    """执行插件子命令（load/unload/reload/enable/disable）。"""
     if sub == "load":
         if not rest:
             return t("cmd.plugin.usage_load")
@@ -76,14 +20,14 @@ async def handle_plugin(app, args: str) -> str:
             return t("cmd.plugin.load_ok", name=info.name, version=info.manifest.version)
         return t("cmd.plugin.load_error", id=rest)
 
-    elif sub == "unload":
+    if sub == "unload":
         if not rest:
             return t("cmd.plugin.usage_unload")
         if await kernel.unload_plugin(rest):
             return t("cmd.plugin.unload_ok", id=rest)
         return t("cmd.plugin.unload_error", id=rest)
 
-    elif sub == "reload":
+    if sub == "reload":
         if not rest:
             return t("cmd.plugin.usage_reload")
         info = await kernel._plugins.reload(rest)
@@ -91,29 +35,30 @@ async def handle_plugin(app, args: str) -> str:
             return t("cmd.plugin.reload_ok", name=info.name, version=info.manifest.version)
         return t("cmd.plugin.reload_error", id=rest)
 
-    elif sub == "enable":
+    if sub == "enable":
         if not rest:
-            return "/plugin enable <id> — 启用已禁用的插件"
+            return "/plugins enable <id> — 启用已禁用的插件"
         await kernel._plugins.enable_plugin(rest)
         return f"✅ {rest} 已启用"
 
-    elif sub == "disable":
+    if sub == "disable":
         if not rest:
-            return "/plugin disable <id> — 禁用插件（卸载其工具/命令）"
+            return "/plugins disable <id> — 禁用插件（卸载其工具/命令）"
         await kernel._plugins.disable_plugin(rest)
         return f"🚫 {rest} 已禁用"
 
-    else:
-        return t("cmd.plugin.unknown_sub", sub=sub)
+    return t("cmd.plugin.unknown_sub", sub=sub)
 
 
-# ── P7: /plugins 状态面板 ────────────────────────────────────────────────
+async def handle_plugins(app, args: str) -> str:
+    """插件管理统一入口。
 
-
-async def handle_plugins_status(app, args: str) -> str:
-    """显示所有插件状态面板（三态：Ready / Needs Setup / Disabled）。
-
-    用法: /plugins [enable|disable <id>]
+    无参数: 自动加载所有发现的插件 + 列出状态面板
+    子命令:
+      /plugins load <id>      — 加载插件
+      /plugins unload <id>    — 卸载插件
+      /plugins reload <id>    — 重载插件
+      /plugins enable|disable <id> — 启用 / 禁用
     """
     parts = args.strip().split(maxsplit=1)
     sub = parts[0] if parts else ""
@@ -122,51 +67,55 @@ async def handle_plugins_status(app, args: str) -> str:
     kernel = app._kernel
     state_mgr = kernel._plugins.state_manager
 
-    if sub == "enable" and rest:
-        await kernel._plugins.enable_plugin(rest)
-        return f"✅ {rest} 已启用"
-    elif sub == "disable" and rest:
-        await kernel._plugins.disable_plugin(rest)
-        return f"🚫 {rest} 已禁用"
+    # ── 显式子命令 ──
+    if sub in ("load", "unload", "reload", "enable", "disable"):
+        return await _plugin_subcommand(kernel, sub, rest)
 
-    # ── 加载所有已发现插件（未加载的） ──
+    plugins_dir = aide_dir() / "plugins"
+
+    # ── 无参数：加载所有已发现插件（未加载的） ──
     manifests = kernel._plugins.discover()
+    if not manifests:
+        return f"📦 无已安装插件。\n\n将插件放入 `{plugins_dir}` 目录后自动发现。"
+
     loaded_ids = {info.id for info in kernel._plugins.list_loaded()}
+    newly: list[str] = []
+    failed: list[str] = []
     for m in manifests:
         if m.id not in loaded_ids:
             try:
-                await kernel.load_plugin(m.id)
+                info = await kernel.load_plugin(m.id)
+                if info:
+                    newly.append(m.id)
+                else:
+                    failed.append(m.id)
             except Exception:
-                pass
+                failed.append(m.id)
 
     # ── 构建状态面板 ──
     entries = state_mgr.list_all()
     counts = state_mgr.count_by_status()
 
-    plugins_dir = aide_dir() / "plugins"
+    lines = ["## 📦 插件状态", f"插件目录：`{plugins_dir}`", ""]
+    if newly:
+        lines.append(f"🆙 新加载: **{', '.join(newly)}**")
+    if failed:
+        lines.append(f"❌ 加载失败: **{', '.join(failed)}**")
+    if newly or failed:
+        lines.append("")
 
-    if not entries:
-        return f"📦 无已安装插件。\n\n将插件放入 `{plugins_dir}` 目录后自动发现。"
-
-    lines = [
-        "## 📦 插件状态",
-        f"插件目录：`{plugins_dir}`",
-        "",
-        f"| Ready: **{counts['ready']}** | Needs Setup: **{counts['needs_setup']}** | Disabled: **{counts['disabled']}** |",
-        "",
-        "---",
-        "",
-    ]
+    lines.append(
+        f"| Ready: **{counts['ready']}** | Needs Setup: **{counts['needs_setup']}** | "
+        f"Disabled: **{counts['disabled']}** |")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
 
     # 按状态排序
     order = {"ready": 0, "needs_setup": 1, "disabled": 2}
     entries.sort(key=lambda e: (order.get(e.status.value, 9), e.plugin_id))
 
-    status_icons = {
-        "ready": "✅",
-        "needs_setup": "⚠️",
-        "disabled": "🚫",
-    }
+    status_icons = {"ready": "✅", "needs_setup": "⚠️", "disabled": "🚫"}
 
     for e in entries:
         icon = status_icons.get(e.status.value, "❓")
@@ -183,6 +132,6 @@ async def handle_plugins_status(app, args: str) -> str:
 
     # 用法提示
     lines.append("---")
-    lines.append("`/plugins` — 刷新状态 | `/plugin load <id>` — 加载插件 | `/plugin unload <id>` — 卸载插件")
+    lines.append("`/plugins` 刷新 | `/plugins load|unload|reload <id>` 管理加载 | `/plugins enable|disable <id>` 开关")
 
     return "\n".join(lines)

@@ -28,10 +28,10 @@ def _make_definition(name: str) -> ToolDefinition:
 
 
 class TestDiscovery:
-    def test_register_builtin_tools_adds_eight(self):
+    def test_register_builtin_tools_adds_all(self):
         registry = ToolRegistry()
         count = register_builtin_tools(registry)
-        assert count == 8
+        assert count == 9
         names = registry.list_names()
         assert "read_file" in names
         assert "write_file" in names
@@ -41,14 +41,16 @@ class TestDiscovery:
         assert "search_in_files" in names
         assert "search_chat" in names
         assert "delegate" in names
+        assert "plugin" in names
 
     def test_builtin_tools_definitions_are_named(self):
-        """BUILTIN_TOOLS 是 8 个含 name 的 ToolDefinition。"""
-        assert len(BUILTIN_TOOLS) == 8
+        """BUILTIN_TOOLS 是 9 个含 name 的 ToolDefinition。"""
+        assert len(BUILTIN_TOOLS) == 9
         assert all(isinstance(t, ToolDefinition) for t in BUILTIN_TOOLS)
         assert all(t.name for t in BUILTIN_TOOLS)
         names = [t.name for t in BUILTIN_TOOLS]
         assert "delegate" in names
+        assert "plugin" in names
 
     def test_register_plugin_tools_noop(self):
         registry = ToolRegistry()

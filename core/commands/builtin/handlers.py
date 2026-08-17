@@ -421,12 +421,8 @@ def register_builtin_commands(registry) -> None:
         handler=handle_import,
     ))
     registry.register(CommandDefinition(
-        name="/plugin", description=t("cmd.plugin.desc"),
-        handler=_handle_plugin,
-    ))
-    registry.register(CommandDefinition(
-        name="/plugins", description="插件状态面板 — Ready / Needs Setup / Disabled",
-        handler=_handle_plugins_status,
+        name="/plugins", description="插件管理 — 加载 + 列出状态（原 /plugin 与 /plugins 合并）",
+        handler=_handle_plugins,
     ))
     # P4 Batch 2: 新增命令
     registry.register(CommandDefinition(
@@ -477,5 +473,4 @@ def register_builtin_commands(registry) -> None:
     ))
 
 
-from core.commands.builtin.plugin_commands import handle_plugin as _handle_plugin  # noqa: E402
-from core.commands.builtin.plugin_commands import handle_plugins_status as _handle_plugins_status  # noqa: E402
+from core.commands.builtin.plugin_commands import handle_plugins as _handle_plugins  # noqa: E402

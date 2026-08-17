@@ -30,6 +30,7 @@ class PluginManifest:
     slots: list[str] = field(default_factory=list)
     provides: list[str] = field(default_factory=list)
     root_dir: Path = field(default_factory=Path)    # 插件根目录
+    command: str = ""    # 可执行命令（LLM 用 run_shell 调用；未声明则无）
 
     @classmethod
     def from_dir(cls, plugin_dir: Path) -> "PluginManifest | None":

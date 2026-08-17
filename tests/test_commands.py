@@ -109,13 +109,13 @@ class TestMemAuto:
         names = [c.name for c in registry.list_all()]
         expected = [
             "/help", "/profile", "/reflect", "/export", "/import",
-            "/plugin", "/plugins",
+            "/plugins",
             "/session", "/memory", "/mem-auto", "/tools", "/think",
             "/clear", "/rollback", "/mcp", "/language", "/api", "/model",
         ]
         for cmd in expected:
             assert cmd in names, f"Missing command: {cmd}"
-        assert len(names) == 18
+        assert len(names) == 17
 
     def test_session_route(self):
         result = route_command("/session list")
@@ -164,12 +164,12 @@ class TestCommandHandlers:
         mock_registry.list_all.return_value = [
             CommandDefinition(name=n, description="test", handler=handle_help)
             for n in ["/help", "/profile", "/compact", "/export", "/import",
-                       "/plugin", "/session", "/memory", "/tools", "/update",
+                       "/plugins", "/session", "/memory", "/tools", "/update",
                        "/clear", "/rollback", "/mcp", "/language", "/api", "/model"]
         ]
         result = await handle_help(MagicMock(_cmd_registry=mock_registry), "")
         assert "可用命令" in result
-        for cmd in ["/help", "/profile", "/compact", "/export", "/import", "/plugin",
+        for cmd in ["/help", "/profile", "/compact", "/export", "/import", "/plugins",
                      "/session", "/memory", "/tools", "/clear", "/mcp",
                      "/rollback"]:
             assert cmd in result

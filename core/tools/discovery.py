@@ -3,7 +3,7 @@
 from core.tools import ToolRegistry
 from core.tools import (
     read_file, write_file, run_shell, search_memory, web, search_in_files,
-    search_chat, delegate,
+    search_chat, delegate, plugin_manager,
 )
 
 
@@ -18,6 +18,7 @@ BUILTIN_TOOLS = (
     search_in_files.definition,
     search_chat.definition,
     delegate.definition,
+    plugin_manager.definition,
 )
 
 

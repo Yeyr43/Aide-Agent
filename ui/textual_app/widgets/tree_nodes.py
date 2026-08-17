@@ -267,8 +267,11 @@ class TreeNode(Static):
     # ── 交互 ──
 
     def on_click(self, event: Click) -> None:
+        # 阻止 Textual 默认行为（focus / 文本选中），节点交互完全自定义
+        event.prevent_default()
         if event.button == 3:  # 右键 → 复制
             self._copy_to_clipboard()
+            event.stop()
             return
         if event.button != 1:  # 仅左键检测双击
             return
@@ -277,6 +280,7 @@ class TreeNode(Static):
         now = time.monotonic()
         if 0 < (now - self._last_click) * 1000 < DOUBLE_CLICK_MS:
             self._toggle()
+            event.stop()  # 双击折叠/展开不传播，避免触发选中/复制
         self._last_click = now
 
     def _copy_to_clipboard(self) -> None:
@@ -541,7 +545,7 @@ class ErrorNode(TreeNode):
 
 
 class SystemNode(TreeNode):
-    """系统/命令节点：● 琥珀。折叠显示首行，过长可展开。"""
+    """系统/命令节点：● 琥珀。命令结果不可折叠（直接完整显示）。"""
 
     _bullet_style = BULLET_SYSTEM
     _kind = "system"
@@ -549,7 +553,8 @@ class SystemNode(TreeNode):
     def __init__(self, text: str, **kwargs) -> None:
         super().__init__(plain_text=text, **kwargs)
         self._text = text
-        self._collapsible = len(text) > 80
+        # 命令结果 / 系统通知永远完整显示，不允许折叠
+        self._collapsible = False
         self._expanded = False
         self._refresh()
 

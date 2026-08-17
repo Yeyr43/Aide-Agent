@@ -779,3 +779,58 @@ class TestLoadSkillNameVsDir:
         self._write_skill(host, "x-agent-browser", "agent-browser")
         info = await host.load("no-such-plugin")
         assert info is None
+
+
+class TestSkillCommand:
+    """技能插件的 command 声明：//plugin:skill 输出提示模型可执行命令。"""
+
+    def _write_skill(self, host, dirname, name, command=""):
+        plugin_dir = host._config.plugins_dir / dirname
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+        fm = f"---\nname: {name}\ndescription: demo"
+        if command:
+            fm += f"\ncommand: {command}"
+        fm += "\n---\n# Demo\n用法\n"
+        (plugin_dir / "SKILL.md").write_text(fm, encoding="utf-8")
+        return plugin_dir
+
+    async def test_skill_command_field_parsed(self, host):
+        self._write_skill(host, "demo-browser", "demo-browser", "demo-browser")
+        info = await host.load("demo-browser")
+        assert info is not None
+        assert info.manifest.command == "demo-browser"
+
+    async def test_skill_command_output_has_exec_hint(self, host):
+        """//plugin:skill 输出含可执行命令提示。"""
+        self._write_skill(host, "demo-browser", "demo-browser", "demo-browser")
+        await host.load("demo-browser")
+        cmd = host._command_registry.get("//demo-browser:demo-browser")
+        out = await cmd.handler(None, "")
+        assert "可执行命令" in out
+        assert "demo-browser" in out
+        assert "run_shell" in out
+
+    async def test_skill_tool_output_has_exec_hint(self, host):
+        """skill 工具输出含可执行命令提示。"""
+        self._write_skill(host, "demo-browser", "demo-browser", "demo-browser")
+        await host.load("demo-browser")
+        tool = host._tool_registry.get("skill_demo-browser_demo-browser")
+        assert tool is not None
+        out = await tool.execute({})
+        assert "可执行命令" in out
+
+    async def test_skill_provider_has_exec_hint(self, host):
+        """上下文 provider 注入时含可执行命令提示。"""
+        self._write_skill(host, "demo-browser", "demo-browser", "demo-browser")
+        await host.load("demo-browser")
+        providers = host.get_context_providers()
+        text = await providers[0].provide("demo-browser:demo-browser 打开网页", None)
+        assert "可执行命令" in text
+
+    async def test_skill_without_command_no_hint(self, host):
+        """未声明 command → 不附加提示（无回归）。"""
+        self._write_skill(host, "plain-skill", "plain-skill")
+        await host.load("plain-skill")
+        cmd = host._command_registry.get("//plain-skill:plain-skill")
+        out = await cmd.handler(None, "")
+        assert "可执行命令" not in out

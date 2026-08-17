@@ -117,7 +117,7 @@ core/
 │   ├── entries.py       # MemoryEntry dataclass + parse_memory_file() + format_memory_entry() — 结构化记忆解析/回写
 │   ├── recall.py        # 记忆召回 — 搜索 agent/*.md + 会话目录
 │   └── feedback.py      # FeedbackStore（stable id 匹配）+ FeedbackVerifier（L1语言/L2长度）
-├── commands/            # 命令系统 — 18 个内置命令
+├── commands/            # 命令系统 — 17 个内置命令
 │   ├── __init__.py      # CommandRegistry + CommandDefinition + route_command()
 │   └── builtin/         # handlers.py / settings_handlers.py / mcp_handlers.py / plugin_commands.py
 ├── plugins/             # 插件系统 v2 — Claude Code / OpenClaw / Aide 三格式兼容
@@ -133,14 +133,14 @@ core/
 │   ├── watcher.py       # PluginWatcher — watchfiles 优先 + polling fallback + 500ms 防抖
 │   └── templates/       # hello-plugin 模板
 ├── sessions/            # 会话管理 — manager.py（CRUD + 回滚 + 智能标题）+ restorer.py（从磁盘恢复）
-├── tools/               # 8 个内置工具 + 声明式清单 + ToolContext DI
+├── tools/               # 9 个内置工具 + 声明式清单 + ToolContext DI
 │   ├── definition.py    # ToolDefinition + ToolContext（叶子模块，避免循环导入）
 │   ├── __init__.py      # ToolRegistry（含 ToolContext 注入 + 重试）
 │   ├── discovery.py     # BUILTIN_TOOLS 声明式清单（收集各模块 definition）
 │   ├── retry.py         # RetryConfig + ErrorClass + async_retry
 │   ├── truncation.py    # 输出截断工具
 │   ├── delegate.py      # 子 agent 委托工具（一次性、用完即删）
-│   └── [read_file|write_file|run_shell|search_memory|web|search_in_files|search_chat].py
+│   └── [read_file|write_file|run_shell|search_memory|web|search_in_files|search_chat|plugin_manager].py
 ├── mcp/                 # MCP 协议适配 — adapter/protocol/transport/fault/lifecycle/watcher
 ├── locale_data/         # 双语字符串（zh/en JSON）
 ├── locale.py            # t() 国际化 + build_soul + build_tools_prompt

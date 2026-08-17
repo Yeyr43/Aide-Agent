@@ -52,11 +52,13 @@ class ExternalSkillProvider:
     """
 
     def __init__(self, name: str, description: str,
-                 content: str, references: dict[str, str] | None = None) -> None:
+                 content: str, references: dict[str, str] | None = None,
+                 command: str = "") -> None:
         self._name = name
         self._description = description
         self._content = content
         self._references = references or {}
+        self._command = command
 
     async def provide(self, user_msg: str, session_dir) -> str:
         if not user_msg or not self._content:
@@ -67,6 +69,8 @@ class ExternalSkillProvider:
         if name_lower not in msg_lower and name_lower.replace(":", " ") not in msg_lower:
             return ""
         parts = [f"## 技能: {self._name}\n{self._content}"]
+        if self._command:
+            parts.append(f"\n> 可执行命令：`{self._command}`（用 run_shell 调用，参数直接传给命令）")
         for ref_name, ref_text in self._references.items():
             parts.append(f"\n### {ref_name}\n{ref_text}")
         return "\n".join(parts)
@@ -132,6 +136,7 @@ class PluginHost:
                         "SKILL.md" if fmt in ("claude_code", "openclaw_skill") else "__init__.py"
                     ),
                     root_dir=entry,
+                    command=manifest_v2.command,
                 )
                 manifests.append(manifest)
                 continue
@@ -217,6 +222,7 @@ class PluginHost:
                     "SKILL.md" if fmt in ("claude_code", "openclaw_skill") else "__init__.py"
                 ),
                 root_dir=plugin_dir,
+                command=manifest_v2.command,
             )
 
             # 提取 hooks（所有格式通用）
@@ -374,12 +380,16 @@ class PluginHost:
             skill_desc = skill.description[:80]
             skill_content = skill.content
             skill_refs = skill.references or {}
+            skill_command = manifest.command
 
             async def make_skill_handler(content=skill_content, desc=skill_desc,
-                                         refs=None, sname=ns_skill_name):
+                                         refs=None, sname=ns_skill_name,
+                                         command=skill_command):
                 refs = refs or {}
                 async def handler(app, args: str) -> str:
                     parts = [f"## {sname}\n\n{desc}\n\n{content}"]
+                    if command:
+                        parts.append(f"\n> 可执行命令：`{command}`（用 run_shell 调用，参数直接传给命令）")
                     for ref_name, ref_text in refs.items():
                         parts.append(f"\n### {ref_name}\n{ref_text}")
                     return "\n".join(parts)
@@ -395,10 +405,13 @@ class PluginHost:
             # ── 2. 注册 skill_<plugin>:<name> 工具 ──
             tool_name = f"skill_{plugin_id}_{skill_name}"
 
-            async def make_skill_executor(content=skill_content, refs=None):
+            async def make_skill_executor(content=skill_content, refs=None,
+                                          command=skill_command):
                 refs = refs or {}
                 async def execute(arguments: dict) -> str:
                     parts = [content]
+                    if command:
+                        parts.append(f"\n> 可执行命令：`{command}`（用 run_shell 调用，参数直接传给命令）")
                     for ref_name, ref_text in refs.items():
                         parts.append(f"\n### {ref_name}\n{ref_text}")
                     return "\n\n".join(parts)
@@ -418,6 +431,7 @@ class PluginHost:
             # ── 3. 注册为 ContextProvider ──
             provider = ExternalSkillProvider(
                 ns_skill_name, skill_desc, skill_content, skill_refs,
+                command=manifest.command,
             )
             # 只登记到 _skill_providers（get_context_providers 会返回它）。
             # 曾同时 append 到 api._context_providers → 同一 provider 被返回两次，
