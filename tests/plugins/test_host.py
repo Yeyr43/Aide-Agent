@@ -740,3 +740,42 @@ class TestLoadExternalSkill:
         tool = host._tool_registry.get("skill_full_s")
         assert tool is not None
         assert "c" in await tool.execute({})
+
+
+class TestLoadSkillNameVsDir:
+    """回归：SKILL.md 的 name frontmatter 与目录名不一致时，
+    load(discover 返回的 id) 必须仍能定位真实目录并加载。
+    OpenClaw 插件常见：目录 openclaw-agent-browser 但 name=agent-browser。
+    """
+
+    def _write_skill(self, host, dirname, name):
+        plugin_dir = host._config.plugins_dir / dirname
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+        (plugin_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: A test skill\n---\n# Skill\n",
+            encoding="utf-8")
+        return plugin_dir
+
+    async def test_load_by_skill_name(self, host):
+        """目录名 x-agent-browser，SKILL.md name=agent-browser → load('agent-browser') 成功。"""
+        plugin_dir = self._write_skill(host, "x-agent-browser", "agent-browser")
+        manifests = host.discover()
+        assert [m.id for m in manifests if m.kind == "skill"] == ["agent-browser"]
+        assert manifests[0].root_dir == plugin_dir
+
+        info = await host.load("agent-browser")
+        assert info is not None
+        assert info.manifest.root_dir == plugin_dir
+        assert info.loaded is True
+
+    async def test_load_by_directory_name_still_works(self, host):
+        """目录名兜底：load('x-agent-browser') 也成功（旧行为兼容）。"""
+        self._write_skill(host, "x-agent-browser", "agent-browser")
+        info = await host.load("x-agent-browser")
+        assert info is not None
+
+    async def test_load_unmatched_id_returns_none(self, host):
+        """既不是 discover id 也不是目录名 → 返回 None。"""
+        self._write_skill(host, "x-agent-browser", "agent-browser")
+        info = await host.load("no-such-plugin")
+        assert info is None

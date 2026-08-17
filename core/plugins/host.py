@@ -158,6 +158,22 @@ class PluginHost:
 
     # ── 加载/卸载 ──
 
+    def _resolve_plugin_dir(self, plugin_id: str, plugins_dir: Path) -> Path | None:
+        """解析插件目录：优先按 discover 的 manifest.id 匹配真实目录。
+
+        discover 的 id 来自 SKILL.md 的 name frontmatter，可能与目录名不一致
+        （OpenClaw 插件常见：目录 openclaw-agent-browser 但 name=agent-browser）。
+        load(m.id) 若按 id 直接拼目录会找不到，必须先回查 manifest 的 root_dir。
+        找不到再按目录名兜底（旧行为兼容）。
+        """
+        for manifest in self.discover():
+            if manifest.id == plugin_id:
+                return manifest.root_dir
+        candidate = (plugins_dir / plugin_id).resolve()
+        if str(candidate).startswith(str(plugins_dir)):
+            return candidate
+        return None
+
     async def load(self, plugin_id: str) -> PluginInfo | None:
         """加载并激活单个插件。
 
@@ -166,9 +182,9 @@ class PluginHost:
         """
         # 安全门：不允许路径逃逸
         plugins_dir = self._config.plugins_dir.resolve()
-        plugin_dir = (plugins_dir / plugin_id).resolve()
-        if not str(plugin_dir).startswith(str(plugins_dir)):
-            logger.warning(f"拒绝加载插件 {plugin_id}: 路径逃逸")
+        plugin_dir = self._resolve_plugin_dir(plugin_id, plugins_dir)
+        if plugin_dir is None:
+            logger.warning(f"拒绝加载插件 {plugin_id}: 路径逃逸或目录不存在")
             return None
 
         # ── P7: ClawScan 安全预检 ──

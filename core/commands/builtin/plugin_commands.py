@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from core.locale import t
+from core.setup import aide_dir
 
 logger = logging.getLogger(__name__)
 
@@ -142,11 +143,14 @@ async def handle_plugins_status(app, args: str) -> str:
     entries = state_mgr.list_all()
     counts = state_mgr.count_by_status()
 
+    plugins_dir = aide_dir() / "plugins"
+
     if not entries:
-        return "📦 无已安装插件。\n\n将插件放入 `~/.aide/plugins/` 目录后自动发现。"
+        return f"📦 无已安装插件。\n\n将插件放入 `{plugins_dir}` 目录后自动发现。"
 
     lines = [
         "## 📦 插件状态",
+        f"插件目录：`{plugins_dir}`",
         "",
         f"| Ready: **{counts['ready']}** | Needs Setup: **{counts['needs_setup']}** | Disabled: **{counts['disabled']}** |",
         "",

@@ -108,6 +108,22 @@ uv run python core/main.py
 
 输入 `//` 弹出技能命令面板。
 
+### 插件
+
+插件统一放在 **`~/.aide/plugins/`** 目录（每个插件一个子文件夹），放入后自动发现，无需重启。
+
+- **Aide 原生插件**：文件夹含 `aide.plugin.json` + `__init__.py`
+- **Claude Code 插件**：文件夹含 `.claude-plugin/plugin.json`
+- **OpenClaw 技能**：文件夹含 `SKILL.md`（`name` frontmatter 即插件 id）
+
+> ⚠️ 不要放到 Aide 安装目录或项目根目录——那里不会被扫描。用 `/plugins` 命令可查看当前插件目录路径。
+
+```bash
+# 以 OpenClaw 技能为例
+mkdir -p ~/.aide/plugins
+git clone <仓库> ~/.aide/plugins/your-skill   # 或直接把解压出的文件夹放进来
+```
+
 ### 系统托盘
 
 启动后自动最小化到托盘。右键托盘图标：
