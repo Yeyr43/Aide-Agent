@@ -58,8 +58,9 @@ class UIBridge:
         self._msg_list().add_tool_error(tool_name, error)
 
     def on_max_turns(self) -> None:
+        from core.kernel.fc_loop import MAX_LOOP_TURNS
         self._msg_list().add_system_notice(
-            t("ui.bridge.max_turns")
+            t("ui.bridge.max_turns", rounds=MAX_LOOP_TURNS)
         )
 
     def on_replace_streamed_text(self, clean_text: str) -> None:

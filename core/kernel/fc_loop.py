@@ -2,8 +2,8 @@
 
 组装上下文 → LLM 决定（tool_call 或 reply）→ 并行调工具 → 结果喂回 → 循环。
 
-循环轮数上限 MAX_LOOP_TURNS（30，宽松——允许"测试所有工具"这类多工具任务跑完）；
-每个工具的"单次调用"可尝试 max_turns 次（默认 5）——同一（工具, 参数）反复失败
+循环轮数上限 MAX_LOOP_TURNS（50，宽松——允许"测试所有工具"、多步进程管理等长任务跑完）；
+每个工具的"单次调用"可尝试 max_turns 次（默认 10）——同一（工具, 参数）反复失败
 超过上限即停止重试该调用，防止工具卡死无限循环。
 
 工具错误不作为阻断信号，全部喂回 LLM 让其自行降级。
@@ -27,7 +27,7 @@ from core.errors import ProviderError
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TURNS = 10     # 单工具调用可尝试的次数上限（每个 (工具, 参数) 独立计数）
-MAX_LOOP_TURNS = 30        # 循环总轮数上限（多工具任务需要较多轮）
+MAX_LOOP_TURNS = 50        # 循环总轮数上限（多工具任务需要较多轮）
 
 
 def _sanitize_messages(messages: list[dict],

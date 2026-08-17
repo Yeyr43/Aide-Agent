@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 from pathlib import Path
 
+from core.kernel.fc_loop import MAX_LOOP_TURNS
 from ui.textual_app.bridge import UIBridge
 
 
@@ -86,7 +87,9 @@ class TestUIBridgeToolEvents:
         bridge.on_max_turns()
         msg_list.add_system_notice.assert_called_once()
         call_arg = msg_list.add_system_notice.call_args[0][0]
-        assert "30" in call_arg  # 循环轮数上限
+        # 消息动态带上 MAX_LOOP_TURNS 轮数（单一来源，不硬编码）
+        assert "最大工具调用轮次" in call_arg
+        assert str(MAX_LOOP_TURNS) in call_arg
 
 
 class TestUIBridgeStreamingReplace:
