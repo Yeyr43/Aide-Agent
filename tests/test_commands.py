@@ -104,7 +104,7 @@ class TestMemAuto:
         assert "用法" in result
 
     def test_all_commands_registered(self):
-        """P7: 18 个内置命令（新增 /mem-auto）。"""
+        """18 个内置命令（新增 /mem-auto + //plugin 手动调用插件工具）。"""
         registry = CommandRegistry()
         names = [c.name for c in registry.list_all()]
         expected = [
@@ -112,10 +112,11 @@ class TestMemAuto:
             "/plugins",
             "/session", "/memory", "/mem-auto", "/tools", "/think",
             "/clear", "/rollback", "/mcp", "/language", "/api", "/model",
+            "//plugin",
         ]
         for cmd in expected:
             assert cmd in names, f"Missing command: {cmd}"
-        assert len(names) == 17
+        assert len(names) == 18
 
     def test_session_route(self):
         result = route_command("/session list")

@@ -3,9 +3,10 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-from core.commands.builtin.plugin_commands import handle_plugins
+from core.commands.builtin.plugin_commands import handle_plugins, handle_plugin_call
 from core.plugins.contract import PluginManifest
 from core.plugins.state import PluginStateEntry, PluginStatus
+from core.tools import ToolRegistry, ToolDefinition
 
 
 def _app_with_plugins(manifests, loaded_ids=(), load_plugin=None,
@@ -254,3 +255,105 @@ class TestPluginsUnknownArg:
         app = _app_with_plugins([])
         result = await handle_plugins(app, "discover")
         assert "无已安装插件" in result
+
+
+# ── //plugin 统一调用器 ─────────────────────────────────────────────────
+
+
+def _plugin_call_app(plugins=None, registry=None):
+    """构造 mock app：host 返回插件信息，tool_registry 执行真实工具。
+
+    plugins: {plugin_id: [ToolDefinition, ...]} 或 None
+    """
+    host = MagicMock()
+    host._plugins = MagicMock()
+    info_by_id = {}
+    infos = []
+    for pid, tools in (plugins or {}).items():
+        info = MagicMock()
+        info.id = pid
+        info.api._tools = tools
+        info_by_id[pid] = info
+        infos.append(info)
+    host._plugins.get.side_effect = lambda pid: info_by_id.get(pid)
+    host.list_loaded.return_value = infos
+
+    if registry is None:
+        registry = ToolRegistry()
+        for tools in (plugins or {}).values():
+            for tool in tools:
+                registry.register(tool)
+
+    app = MagicMock()
+    app.kernel._plugins = host
+    app.kernel.tool_registry = registry
+    return app
+
+
+class TestPluginCall:
+    async def _greet_tool(self):
+        async def greet(args):
+            return f"Hello, {args.get('name', 'World')}!"
+        return ToolDefinition(
+            name="greet", description="Greet someone",
+            parameters={"type": "object", "properties": {
+                "name": {"type": "string", "description": "名字"},
+            }, "required": ["name"]},
+            execute=greet,
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_args_lists_all(self):
+        tool = await self._greet_tool()
+        app = _plugin_call_app({"demo": [tool]})
+        result = await handle_plugin_call(app, "")
+        assert "demo" in result
+        assert "greet" in result
+
+    @pytest.mark.asyncio
+    async def test_no_loaded_plugins(self):
+        app = _plugin_call_app({})
+        result = await handle_plugin_call(app, "")
+        assert "暂无" in result
+
+    @pytest.mark.asyncio
+    async def test_plugin_only_lists_tools(self):
+        tool = await self._greet_tool()
+        app = _plugin_call_app({"demo": [tool]})
+        result = await handle_plugin_call(app, "demo")
+        assert "greet" in result
+
+    @pytest.mark.asyncio
+    async def test_unknown_plugin(self):
+        app = _plugin_call_app({})
+        result = await handle_plugin_call(app, "nope")
+        assert "未加载" in result
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool(self):
+        tool = await self._greet_tool()
+        app = _plugin_call_app({"demo": [tool]})
+        result = await handle_plugin_call(app, "demo nope")
+        assert "没有工具" in result
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_kv(self):
+        tool = await self._greet_tool()
+        app = _plugin_call_app({"demo": [tool]})
+        result = await handle_plugin_call(app, "demo greet name=Claude")
+        assert result == "Hello, Claude!"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_json(self):
+        tool = await self._greet_tool()
+        app = _plugin_call_app({"demo": [tool]})
+        result = await handle_plugin_call(app, 'demo greet {"name": "JSON"}')
+        assert result == "Hello, JSON!"
+
+    @pytest.mark.asyncio
+    async def test_missing_required_shows_usage(self):
+        tool = await self._greet_tool()
+        app = _plugin_call_app({"demo": [tool]})
+        result = await handle_plugin_call(app, "demo greet")
+        assert "用法" in result
+        assert "name" in result

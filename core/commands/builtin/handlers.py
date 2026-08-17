@@ -424,6 +424,10 @@ def register_builtin_commands(registry) -> None:
         name="/plugins", description="插件管理 — 加载 + 列出状态（原 /plugin 与 /plugins 合并）",
         handler=_handle_plugins,
     ))
+    registry.register(CommandDefinition(
+        name="//plugin", description="手动调用插件工具（//plugin <插件ID> <工具> [参数]）",
+        handler=_handle_plugin_call,
+    ))
     # P4 Batch 2: 新增命令
     registry.register(CommandDefinition(
         name="/session", description=t("cmd.session.desc"),
@@ -474,3 +478,4 @@ def register_builtin_commands(registry) -> None:
 
 
 from core.commands.builtin.plugin_commands import handle_plugins as _handle_plugins  # noqa: E402
+from core.commands.builtin.plugin_commands import handle_plugin_call as _handle_plugin_call  # noqa: E402

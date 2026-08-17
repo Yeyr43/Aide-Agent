@@ -1,4 +1,6 @@
-"""/plugins 指令 — 插件管理统一入口（合并原 /plugin + /plugins）。"""
+"""/plugins 指令 — 插件管理统一入口（合并原 /plugin + /plugins）。
+//plugin 指令 — 手动调用插件工具（统一调用器）。
+"""
 
 from __future__ import annotations
 
@@ -7,8 +9,73 @@ import logging
 from core.commands.context import CommandContext
 from core.locale import t
 from core.setup import aide_dir
+from core.plugins.host import parse_tool_command_args, build_tool_command_usage
 
 logger = logging.getLogger(__name__)
+
+
+async def handle_plugin_call(app: CommandContext, args: str) -> str:
+    """//plugin — 手动调用插件工具（统一调用器，兜底可用的工具命令）。
+
+    用法:
+      //plugin                         — 列出所有已加载插件的工具
+      //plugin <plugin_id>             — 列出该插件的工具
+      //plugin <plugin_id> <tool>      — 调用工具（无参数）
+      //plugin <plugin_id> <tool> <args> — 调用工具（参数支持 JSON 或 key=value）
+    """
+    kernel = app.kernel
+    if kernel is None:
+        return "⚠️ 内核未初始化"
+    host = kernel._plugins
+    tool_registry = kernel.tool_registry
+
+    parts = args.strip().split(None, 2)
+    if not parts:
+        # 列出所有插件的工具
+        loaded = host.list_loaded()
+        usable = [
+            info for info in loaded
+            if info.api and info.api._tools
+        ]
+        if not usable:
+            return "暂无已加载的插件工具。用 `/plugins` 加载插件后即可手动调用。"
+        lines = ["## 🔧 插件工具（`//plugin <id> <tool> [args]` 调用）\n"]
+        for info in usable:
+            tools = [x.name for x in info.api._tools]
+            lines.append(f"### {info.id}")
+            lines.append("  " + "  ".join(f"`{x}`" for x in tools))
+        lines.append("\n---\n也可直接输入 `//` 从命令面板选中工具命令调用。")
+        return "\n".join(lines)
+
+    plugin_id = parts[0]
+    info = host._plugins.get(plugin_id)
+    if info is None or not info.api:
+        return f"❌ 插件 {plugin_id} 未加载（用 `/plugins` 查看状态）"
+
+    tool_names = [x.name for x in info.api._tools]
+    if len(parts) == 1:
+        if not tool_names:
+            return f"插件 {plugin_id} 没有可调用的工具"
+        return (
+            f"## 🔧 {plugin_id} 工具\n\n"
+            + "\n".join(f"- `{x}` — `//plugin {plugin_id} {x}`" for x in tool_names)
+        )
+
+    tool_name = parts[1]
+    if tool_name not in tool_names:
+        return f"❌ 插件 {plugin_id} 没有工具 {tool_name}（可用: {', '.join(tool_names)}）"
+
+    tool = tool_registry.get(tool_name)
+    if tool is None:
+        return f"❌ 工具 {tool_name} 未注册（可能已被卸载）"
+
+    raw_args = parts[2] if len(parts) > 2 else ""
+    arguments = parse_tool_command_args(raw_args)
+    schema = tool.parameters if isinstance(tool.parameters, dict) else {}
+    required = schema.get("required", []) or []
+    if not arguments and required:
+        return build_tool_command_usage(f"//plugin {plugin_id} {tool_name}", tool)
+    return await tool_registry.execute(tool_name, arguments)
 
 
 async def _plugin_subcommand(kernel, sub: str, rest: str) -> str:

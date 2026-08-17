@@ -385,6 +385,8 @@ FeedbackStore 优先用 `entry_id`（来自 frontmatter）做 key，fallback 到
 - 工具：`skill_{plugin_id}_{skill_name}`
 - ContextProvider 键：原生技能 `plugin_id`，外部技能 `ns_skill_name`
 
+**手动调用插件工具**：插件工具默认只由 LLM 触发。`_load_python_plugin` 加载时为每个工具自动注册 `//<plugin-id>:<tool>` 命令（参数支持 JSON / key=value，经 `parse_tool_command_args` 解析，走 ToolRegistry.execute 完整路径）；命令名与插件显式命令冲突时插件命令优先。统一调用器 `//plugin <id> <tool> [args]`（`plugin_commands.py:handle_plugin_call`）兜底可用。另注册**友好名别名**（`_register_command_alias`）：`//plugin-id:cmd` → `//cmd`，使插件帮助里写的 `//wx login` 真正可路由；同名裸名只保留先注册者。
+
 ### 生命周期 Hook 系统（9 事件全部接线）
 
 `HookRunner`（`hook_runner.py`）支持 9 种事件 + 7 种匹配语法 + 环境变量注入 + JSON 输出：

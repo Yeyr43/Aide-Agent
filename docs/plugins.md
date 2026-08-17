@@ -104,6 +104,34 @@ command: agent-browser   # 可选：对应可执行命令
 | 工具 | `skill_<plugin>_<skill>` | `skill_agent-browser_agent-browser` |
 | 技能命令 | `//<plugin>:<skill>` | `//agent-browser:agent-browser` |
 | 插件命令 | `//<plugin>:<cmd>` | `//my-plugin:my-cmd` |
+| 手动调用工具命令 | `//<plugin>:<tool>` | `//weixin-bot:wx_status` |
+
+## 手动调用插件工具
+
+插件工具默认只由主 agent（LLM）通过 Function Calling 触发。从命令行 **手动调用** 有两种方式：
+
+**方式一：自动注册的工具命令**（输入 `//` 直接选中）
+
+加载 Python 插件时，每个工具自动注册为一条 `//<plugin>:<tool>` 命令：
+
+```
+//weixin-bot:wx_status               # 无参数工具
+//weixin-bot:wx_send to=xxx text=yyy  # key=value 参数
+//weixin-bot:wx_send {"to":"...","text":"..."}  # JSON 参数
+```
+
+**方式二：统一调用器** `//plugin`
+
+```
+//plugin                          # 列出所有插件的工具
+//plugin weixin-bot               # 列出该插件的工具
+//plugin weixin-bot wx_status     # 调用工具
+//plugin weixin-bot wx_send to=xxx text=yyy
+```
+
+参数支持 **JSON** 或 **key=value**（值自动转 true/false/数字）。工具执行走完整路径（安全/超时/hooks），与 LLM 调用等价。必要参数缺失时返回用法提示。
+
+**友好名别名**：插件命令的裸名也会注册为别名——插件帮助里写的 `//wx login` 可直接使用（`//weixin-bot:wx` → `//wx`）。多个插件注册同名裸名时只保留先注册者（命名空间命令不受影响）。
 
 ## 安装方式
 

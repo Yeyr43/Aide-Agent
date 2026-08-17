@@ -7,7 +7,9 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from core.config import Config
 from core.tools import ToolRegistry
 from core.commands import CommandRegistry
-from core.plugins.host import PluginHost, PluginInfo, ExternalSkillProvider
+from core.plugins.host import (
+    PluginHost, PluginInfo, ExternalSkillProvider, parse_tool_command_args,
+)
 from core.plugins.contract import PluginManifest
 from core.plugins.adapter import ExtractedSkill, ExtractedCommand, ExtractedHook
 from core.plugins.state import PluginStatus
@@ -834,3 +836,181 @@ class TestSkillCommand:
         cmd = host._command_registry.get("//plain-skill:plain-skill")
         out = await cmd.handler(None, "")
         assert "可执行命令" not in out
+
+
+class TestManualInvocation:
+    """手动调用插件工具：自动注册 //plugin_id:tool 命令 + 友好名别名。"""
+
+    def _write_plugin(self, host, pid, body):
+        plugin_dir = host._config.plugins_dir / pid
+        plugin_dir.mkdir()
+        (plugin_dir / "aide.plugin.json").write_text(json.dumps({
+            "id": pid, "name": pid, "entry": "main.py",
+        }))
+        (plugin_dir / "main.py").write_text(body)
+        return plugin_dir
+
+    _TOOL_PLUGIN = '''
+from core.plugins.sdk import define_plugin
+from core.tools import ToolDefinition
+
+async def greet(args):
+    return f"Hello, {args.get('name', 'World')}!"
+
+@define_plugin("demo")
+def register(api):
+    api.register_tool(ToolDefinition(
+        name="greet",
+        description="Greet someone",
+        parameters={"type": "object", "properties": {
+            "name": {"type": "string", "description": "name"},
+        }, "required": ["name"]},
+        execute=greet,
+    ))
+'''
+
+    async def test_tool_command_auto_registered(self, host):
+        self._write_plugin(host, "demo", self._TOOL_PLUGIN)
+        await host.load("demo")
+        cmd = host._command_registry.get("//demo:greet")
+        assert cmd is not None
+        assert cmd.source == "plugin:demo"
+        assert "greet" in cmd.description
+
+    async def test_tool_command_executes_kv(self, host):
+        self._write_plugin(host, "demo", self._TOOL_PLUGIN)
+        await host.load("demo")
+        cmd = host._command_registry.get("//demo:greet")
+        assert await cmd.handler(MagicMock(), "name=Claude") == "Hello, Claude!"
+
+    async def test_tool_command_executes_json(self, host):
+        self._write_plugin(host, "demo", self._TOOL_PLUGIN)
+        await host.load("demo")
+        cmd = host._command_registry.get("//demo:greet")
+        assert await cmd.handler(MagicMock(), '{"name": "JSON"}') == "Hello, JSON!"
+
+    async def test_tool_command_missing_required_shows_usage(self, host):
+        self._write_plugin(host, "demo", self._TOOL_PLUGIN)
+        await host.load("demo")
+        cmd = host._command_registry.get("//demo:greet")
+        out = await cmd.handler(MagicMock(), "")
+        assert "用法" in out
+        assert "//demo:greet" in out
+
+    async def test_tool_command_unload_removed(self, host):
+        self._write_plugin(host, "demo", self._TOOL_PLUGIN)
+        await host.load("demo")
+        assert host._command_registry.get("//demo:greet") is not None
+        await host.unload("demo")
+        assert host._command_registry.get("//demo:greet") is None
+
+    async def test_command_collision_skips_tool_command(self, host):
+        """插件命令与工具同名 → 插件命令优先，自动工具命令跳过。"""
+        self._write_plugin(host, "demo", '''
+from core.plugins.sdk import define_plugin
+from core.tools import ToolDefinition
+from core.commands import CommandDefinition
+
+async def tool_fn(args):
+    return "tool"
+
+async def cmd_fn(app, args):
+    return "command"
+
+@define_plugin("demo")
+def register(api):
+    api.register_tool(ToolDefinition(
+        name="shared", description="t",
+        parameters={"type": "object", "properties": {}}, execute=tool_fn))
+    api.register_command(CommandDefinition(
+        name="shared", description="c", handler=cmd_fn))
+''')
+        await host.load("demo")
+        cmd = host._command_registry.get("//demo:shared")
+        assert cmd is not None
+        assert await cmd.handler(MagicMock(), "") == "command"  # 插件命令赢
+
+    async def test_friendly_alias_registered(self, host):
+        """//demo:wx 注册友好名 //wx，插件帮助里的命令可直接路由。"""
+        self._write_plugin(host, "demo", '''
+from core.plugins.sdk import define_plugin
+from core.commands import CommandDefinition
+
+async def cmd_fn(app, args):
+    return "ok:" + args
+
+@define_plugin("demo")
+def register(api):
+    api.register_command(CommandDefinition(
+        name="wx", description="Weixin", handler=cmd_fn))
+''')
+        await host.load("demo")
+        assert host._command_registry.get("//demo:wx") is not None
+        alias = host._command_registry.get("//wx")
+        assert alias is not None
+        assert await alias.handler(MagicMock(), "login") == "ok:login"
+        r = host._command_registry.route("//wx login")
+        assert r is not None and r[0].name == "//wx"
+
+    async def test_friendly_alias_collision_keeps_first(self, host):
+        """两个插件注册同名裸命令 → 只保留先注册者（命名空间仍各自可用）。"""
+        for pid in ("p1", "p2"):
+            self._write_plugin(host, pid, f'''
+from core.plugins.sdk import define_plugin
+from core.commands import CommandDefinition
+
+async def cmd_fn(app, args):
+    return "cmd:" + args
+
+@define_plugin("{pid}")
+def register(api):
+    api.register_command(CommandDefinition(
+        name="dup", description="dup", handler=cmd_fn))
+''')
+        await host.load("p1")
+        await host.load("p2")
+        alias = host._command_registry.get("//dup")
+        assert alias is not None
+        assert alias.source == "plugin:p1"
+        # 命名空间命令各自保留
+        assert host._command_registry.get("//p1:dup") is not None
+        assert host._command_registry.get("//p2:dup") is not None
+
+    async def test_alias_unload_removed(self, host):
+        self._write_plugin(host, "demo", '''
+from core.plugins.sdk import define_plugin
+from core.commands import CommandDefinition
+
+async def cmd_fn(app, args):
+    return "ok"
+
+@define_plugin("demo")
+def register(api):
+    api.register_command(CommandDefinition(
+        name="wx", description="w", handler=cmd_fn))
+''')
+        await host.load("demo")
+        assert host._command_registry.get("//wx") is not None
+        await host.unload("demo")
+        assert host._command_registry.get("//wx") is None
+
+
+class TestParseToolCommandArgs:
+    def test_empty(self):
+        assert parse_tool_command_args("") == {}
+        assert parse_tool_command_args("   ") == {}
+
+    def test_json_object(self):
+        assert parse_tool_command_args('{"to": "u1", "text": "hi"}') == {
+            "to": "u1", "text": "hi"}
+
+    def test_json_invalid_falls_back(self):
+        assert parse_tool_command_args("{bad json") == {}
+
+    def test_key_value_pairs(self):
+        assert parse_tool_command_args("to=u1 text=hi") == {
+            "to": "u1", "text": "hi"}
+
+    def test_scalar_conversion(self):
+        args = parse_tool_command_args("n=5 flag=true off=false none=null s=1.5")
+        assert args == {"n": 5, "flag": True, "off": False, "none": None, "s": 1.5}

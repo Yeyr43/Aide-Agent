@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import sys
 from pathlib import Path
@@ -42,6 +43,80 @@ class PluginInfo:
     @property
     def name(self) -> str:
         return self.manifest.name or self.manifest.id
+
+
+# ── 手动调用插件工具：参数解析 ───────────────────────────────────────────
+
+
+def _convert_scalar(value: str):
+    """key=value 参数值轻量转换：true/false/null/数字 → 原生类型。"""
+    v = value.strip()
+    low = v.lower()
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    if low in ("null", "none"):
+        return None
+    try:
+        return int(v)
+    except ValueError:
+        pass
+    try:
+        return float(v)
+    except ValueError:
+        pass
+    return v
+
+
+def build_tool_command_usage(cmd_name: str, tool) -> str:
+    """生成手动调用插件工具的必要参数缺失提示。
+
+    Args:
+        cmd_name: 显示用的命令名（//plugin_id:tool 或 //plugin <id> <tool>）
+        tool: ToolDefinition（用于取 parameters / description）
+    """
+    schema = tool.parameters if isinstance(tool.parameters, dict) else {}
+    required = schema.get("required", []) or []
+    props = schema.get("properties", {}) or {}
+    hints = " ".join(
+        f"{r}={'<' + str(props.get(r, {}).get('description') or r) + '>'}"
+        for r in required
+    )
+    desc = (tool.description or "").strip()
+    return (
+        f"用法: `{cmd_name} {hints}`\n"
+        f"参数支持 JSON（如 `{cmd_name} {json.dumps({r: '...' for r in required[:1]}, ensure_ascii=False)}`）"
+        f"或 key=value（`{cmd_name} {hints}`）。"
+        + (f"\n\n{desc}" if desc else "")
+    )
+
+
+def parse_tool_command_args(args: str) -> dict:
+    """解析手动调用插件工具的参数（//插件ID:工具 或 //plugin 后面的参数）。
+
+    支持两种格式：
+      - JSON：{"to": "...", "text": "..."}
+      - key=value 对：to=xxx text=yyy（值自动转 true/false/数字）
+
+    空参数返回 {}。
+    """
+    text = (args or "").strip()
+    if not text:
+        return {}
+    if text.startswith("{") or text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    result: dict = {}
+    for token in text.split():
+        if "=" in token:
+            k, v = token.split("=", 1)
+            result[k.strip()] = _convert_scalar(v.strip())
+    return result
 
 
 # ── P7: 外部技能 ContextProvider ────────────────────────────────────────
@@ -162,6 +237,59 @@ class PluginHost:
             if info.api:
                 providers.extend(info.api._context_providers)
         return providers
+
+    # ── 手动调用：工具命令 / 友好名别名 ─────────────────────────────────
+
+    def _register_tool_command(self, plugin_id: str, tool) -> None:
+        """把插件工具注册为可手动调用的 //<plugin_id>:<tool> 命令。
+
+        插件工具本只由 LLM 通过 Function Calling 触发；注册成命令后，
+        // 面板可直接选中调用（参数支持 JSON 或 key=value，经
+        ToolRegistry.execute 走完整执行路径：安全/超时/hooks）。
+        """
+        from core.commands import CommandDefinition
+        tool_name = tool.name
+        cmd_name = f"//{plugin_id}:{tool_name}"
+        if self._command_registry.get(cmd_name) is not None:
+            return  # 命令名已被占用（插件显式命令或其它来源）
+        tool_registry = self._tool_registry
+        schema = tool.parameters if isinstance(tool.parameters, dict) else {}
+        required = schema.get("required", []) or []
+
+        async def handler(app, args: str) -> str:
+            arguments = parse_tool_command_args(args)
+            if not arguments and required:
+                return build_tool_command_usage(cmd_name, tool)
+            return await tool_registry.execute(tool_name, arguments)
+
+        self._command_registry.register(CommandDefinition(
+            name=cmd_name,
+            description=f"手动调用插件工具 {tool_name}: {tool.description or ''}".strip(),
+            handler=handler,
+            source=f"plugin:{plugin_id}",
+        ))
+
+    def _register_command_alias(self, cmd) -> None:
+        """注册插件命令的友好名别名：//plugin_id:cmd → //cmd（未被占用时）。
+
+        插件在自身帮助/上下文里通常写友好名（如 //wx login），但实际注册名是
+        带命名空间前缀的 //weixin-bot:wx，直接打 //wx 会路由失败。注册裸名
+        别名后帮助文本真正可用。多个插件注册同名裸名时只保留先注册者。
+        """
+        from core.commands import CommandDefinition
+        name = cmd.name
+        if not name.startswith("//") or ":" not in name:
+            return
+        bare = "//" + name.split(":", 1)[1]
+        if bare == name or self._command_registry.get(bare) is not None:
+            return
+        self._command_registry.register(CommandDefinition(
+            name=bare,
+            description=cmd.description,
+            handler=cmd.handler,
+            source=cmd.source,
+            kind=cmd.kind,
+        ))
 
     # ── 加载/卸载 ──
 
@@ -324,6 +452,10 @@ class PluginHost:
             self._tool_registry.register(tool)
         for cmd in api._commands:
             self._command_registry.register(cmd)
+            self._register_command_alias(cmd)  # 友好名：//plugin_id:cmd → //cmd
+        # 自动把工具注册为可手动调用的 //plugin_id:<tool> 命令（命令名被占用则跳过）
+        for tool in api._tools:
+            self._register_tool_command(plugin_id, tool)
         for slot_name in api._provided_slots:
             self._slot_registry.declare(slot_name)
 
@@ -403,6 +535,7 @@ class PluginHost:
                 handler=await make_skill_handler(),
             ))
             self._command_registry.register(api._commands[-1])
+            self._register_command_alias(api._commands[-1])  # 友好名：//plugin:skill → //skill
 
             # ── 2. 注册 skill_<plugin>:<name> 工具 ──
             tool_name = f"skill_{plugin_id}_{skill_name}"
@@ -454,6 +587,7 @@ class PluginHost:
                              (lambda app, args: f"## {n}\n\n{d}\n\n{c}"))(),
                 ))
                 self._command_registry.register(api._commands[-1])
+                self._register_command_alias(api._commands[-1])  # 友好名：//plugin:cmd → //cmd
         except Exception:
             logger.debug(f"提取 {plugin_id} 命令失败", exc_info=True)
 
