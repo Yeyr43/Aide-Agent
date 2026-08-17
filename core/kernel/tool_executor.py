@@ -34,7 +34,7 @@ def _run_shell_tool_timeout(arguments: dict) -> float:
         timeout = 30.0
     return min(float(timeout), _RUN_SHELL_MAX_TIMEOUT) + 2.0
 TOOL_RESULT_MAX_CHARS = 8000   # 工具结果最大字符数（超出截断）
-MAX_WEB_CALLS = 3              # 单次 FC 循环中 web 工具总调用上限
+MAX_WEB_CALLS = 10             # 单次 FC 循环中 web 工具连续失败熔断上限（成功清零）
 
 
 class ToolExecutor:

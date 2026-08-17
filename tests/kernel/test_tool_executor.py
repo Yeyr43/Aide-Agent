@@ -43,11 +43,11 @@ class TestWebCircuitBreaker:
         assert ex._web_call_count == 0, "成功应清零计数"
 
     async def test_blocked_after_consecutive_failures(self):
-        """连续失败 3 次 → 第 4 次当前轮拒绝。"""
+        """连续失败 MAX_WEB_CALLS 次 → 下一次当前轮拒绝。"""
         ex, reg = _make_executor()
         reg.execute.return_value = "错误：请求超时"
-        for u in ("a", "b", "c"):
-            await _run(ex, args=f'{{"url":"{u}"}}')
+        for i in range(MAX_WEB_CALLS):
+            await _run(ex, args=f'{{"url":"fail{i}"}}')
         assert ex._web_call_count == MAX_WEB_CALLS
         ok, content = await _run(ex, args='{"url":"d"}')
         assert not ok
