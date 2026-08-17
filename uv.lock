@@ -4,7 +4,7 @@ requires-python = ">=3.13"
 
 [[package]]
 name = "aide"
-version = "1.0.1"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "ddgs" },
@@ -880,7 +880,7 @@ wheels = [
 
 [[package]]
 name = "socksio"
-version = "1.0.1"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f8/5c/48a7d9495be3d1c651198fd99dbb6ce190e2274d0f28b9051307bdec6b85/socksio-1.0.0.tar.gz", hash = "sha256:f88beb3da5b5c38b9890469de67d0cb0f9d494b78b106ca1845f96c10b91c4ac", size = 19055, upload-time = "2020-04-17T15:50:34.664Z" }
 wheels = [
