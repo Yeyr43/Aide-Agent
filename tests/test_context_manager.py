@@ -67,8 +67,9 @@ class TestTurnSummary:
             "我来搜索一下",
             [{"function": {"name": "web"}}]
         )
-        assert "[工具调用]" in summary
-        assert "web" in summary
+        assert "工具[web]" in summary
+        assert "问：搜索今天天气" in summary
+        assert "我来搜索一下" in summary  # assistant 回答纳入摘要（长任务上下文连贯）
 
     def test_long_message_truncated(self):
         long_msg = "这是一条非常长的消息" * 10

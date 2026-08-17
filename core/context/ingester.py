@@ -23,22 +23,33 @@ logger = logging.getLogger(__name__)
 # ── 摘要生成（规则模板，不用 LLM）───────────────────────────────────
 
 
-def _turn_summary(user_msg: str, assistant_msg: str, tool_calls: list[dict] | None = None) -> str:
-    """生成一句话事件概览，用于 timeline.json。
+def _preview(text: str, limit: int = 80) -> str:
+    """文本预览：去换行 + 截断。"""
+    s = (text or "").replace("\n", " ").strip()
+    if len(s) > limit:
+        s = s[:limit] + "…"
+    return s
 
+
+def _turn_summary(user_msg: str, assistant_msg: str, tool_calls: list[dict] | None = None) -> str:
+    """生成轮次摘要（timeline.json / 搜索索引）。
+
+    含用户问题 + assistant 回答（或工具调用），让"最近对话"索引承载对话实质。
+    仅用户预览时，长任务里模型记不住自己在早期轮次的回答/工作 → 对话不连贯。
     纯规则生成，<1ms。
     """
-    user_preview = user_msg[:80].replace("\n", " ").strip()
-    if len(user_msg) > 80:
-        user_preview += "…"
+    user_p = _preview(user_msg)
+    asst_p = _preview(assistant_msg)
 
     if tool_calls:
         tool_names = ", ".join(
             tc.get("function", {}).get("name", "?") for tc in tool_calls
         )
-        return t("ctx.ingest_tool_call", tools=tool_names, preview=user_preview)
-
-    return user_preview
+        base = f"问：{user_p} → 工具[{tool_names}]"
+        return f"{base}：{asst_p}" if asst_p else base
+    if asst_p:
+        return f"问：{user_p} → 答：{asst_p}"
+    return user_p
 
 
 # ── ContextIngester ───────────────────────────────────────────────────
